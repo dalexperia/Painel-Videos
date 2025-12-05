@@ -95,6 +95,7 @@ const ScheduledVideos: React.FC = () => {
         year: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
+        timeZone: 'UTC', // Display the time as it is in UTC
       }).format(date);
     } catch (e) {
       return 'Data inválida';
