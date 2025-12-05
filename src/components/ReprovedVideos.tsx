@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { Trash2, PlayCircle, AlertCircle, RefreshCw, Undo2, LayoutGrid, List, Download } from 'lucide-react';
+import StatusIcon from './StatusIcon';
 
 interface Video {
   id: string;
@@ -9,6 +10,7 @@ interface Video {
   description?: string;
   tags?: string[] | string;
   hashtags?: string[] | string;
+  status?: 'Created' | 'Posted' | string;
 }
 
 type ViewMode = 'grid' | 'list';
@@ -30,7 +32,7 @@ const ReprovedVideos: React.FC = () => {
     try {
       const { data, error } = await supabase
         .from('shorts_apostilas')
-        .select('id, link_s3, title, description, tags, hashtags')
+        .select('id, link_s3, title, description, tags, hashtags, status')
         .eq('failed', true);
 
       if (error) throw error;
@@ -145,6 +147,9 @@ const ReprovedVideos: React.FC = () => {
                     preload="metadata"
                   />
                 </div>
+                <div className="absolute top-2 right-2 bg-black/30 backdrop-blur-sm p-1 rounded-full">
+                  <StatusIcon status={video.status} />
+                </div>
                 <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors duration-300">
                   <div className="bg-white/20 backdrop-blur-sm p-3 rounded-full opacity-0 group-hover:opacity-100 scale-75 group-hover:scale-100 transition-all duration-300">
                     <PlayCircle size={32} className="text-white fill-white/20" />
@@ -205,9 +210,12 @@ const ReprovedVideos: React.FC = () => {
               </div>
             </div>
             <div className="flex-grow min-w-0">
-              <h3 className="font-semibold text-gray-800 truncate" title={video.title}>
-                {video.title || 'Vídeo sem título'}
-              </h3>
+              <div className="flex items-center gap-2 mb-1">
+                <StatusIcon status={video.status} />
+                <h3 className="font-semibold text-gray-800 truncate" title={video.title}>
+                  {video.title || 'Vídeo sem título'}
+                </h3>
+              </div>
               <p className="text-sm text-gray-500 line-clamp-2" title={video.description}>
                 {video.description || 'Sem descrição disponível.'}
               </p>

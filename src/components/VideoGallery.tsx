@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { Trash2, Download, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Send, Save, X } from 'lucide-react';
+import { Trash2, Download, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Send, Save, X, Calendar } from 'lucide-react';
 import StatusIcon from './StatusIcon';
+import PostModal from './PostModal';
 
-interface Video {
+export interface Video {
   id: string;
   baserow_id: number;
   link_s3: string;
@@ -12,7 +13,8 @@ interface Video {
   description?: string;
   tags?: string[] | string;
   hashtags?: string[] | string;
-  status?: 'Created' | 'Posted' | string;
+  status?: 'Created' | 'Posted' | 'Scheduled' | string;
+  publish_at?: string;
 }
 
 type ViewMode = 'grid' | 'list';
@@ -25,6 +27,7 @@ const VideoGallery: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [postingId, setPostingId] = useState<string | null>(null);
+  const [videoToPost, setVideoToPost] = useState<Video | null>(null);
 
   useEffect(() => {
     fetchVideos();
@@ -89,9 +92,9 @@ const VideoGallery: React.FC = () => {
     try {
       const { data, error } = await supabase
         .from('shorts_apostilas')
-        .select('id, baserow_id, link_s3, title, description, tags, hashtags, status, link_drive')
+        .select('id, baserow_id, link_s3, title, description, tags, hashtags, status, link_drive, publish_at')
         .eq('failed', false)
-        .eq('status', 'Created');
+        .in('status', ['Created', 'Scheduled']);
 
       if (error) throw error;
 
@@ -108,12 +111,11 @@ const VideoGallery: React.FC = () => {
     }
   };
 
-  const handlePost = async (video: Video, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handlePost = async (video: Video, options: { scheduleDate?: string } = {}) => {
     if (postingId) return;
     setPostingId(video.id);
 
-    const payload = {
+    const payload: any = {
       id: video.id,
       baserow_id: video.baserow_id,
       title: video.title || '',
@@ -123,6 +125,13 @@ const VideoGallery: React.FC = () => {
       link_drive: video.link_drive || '',
       link_s3: video.link_s3
     };
+
+    if (options.scheduleDate) {
+      payload['Privacy Status'] = 'private';
+      payload['Publish At'] = options.scheduleDate;
+    } else {
+      payload['Privacy Status'] = 'public';
+    }
 
     try {
       const response = await fetch('https://n8n-main.oficinadamultape.com.br/webhook/postar-video', {
@@ -135,14 +144,15 @@ const VideoGallery: React.FC = () => {
         throw new Error(`Webhook respondeu com status: ${response.status}`);
       }
 
-      alert('Vídeo enviado para postagem com sucesso!');
-      setVideos(videos.filter(v => v.id !== video.id));
+      alert(`Vídeo enviado para ${options.scheduleDate ? 'agendamento' : 'postagem'} com sucesso! O status será atualizado em breve.`);
+      // O vídeo não é mais removido da lista localmente.
 
     } catch (err) {
       console.error("Erro ao postar o vídeo:", err);
       alert('Erro ao postar o vídeo. O webhook pode estar offline ou ocorreu um erro. Verifique o console.');
     } finally {
       setPostingId(null);
+      setVideoToPost(null);
     }
   };
 
@@ -204,7 +214,7 @@ const VideoGallery: React.FC = () => {
         <div className="text-center py-20 bg-white rounded-lg shadow-sm border border-gray-100">
           <PlayCircle size={48} className="mx-auto text-gray-300 mb-4" />
           <h3 className="text-gray-800 text-xl font-semibold">Nenhum vídeo na fila</h3>
-          <p className="text-gray-500 text-sm mt-2">Não há vídeos com o status "Created" no momento.</p>
+          <p className="text-gray-500 text-sm mt-2">Não há vídeos com o status "Created" ou "Scheduled" no momento.</p>
         </div>
       );
     }
@@ -243,18 +253,18 @@ const VideoGallery: React.FC = () => {
                 <h3 className="font-semibold text-gray-800 mb-1 line-clamp-2 min-h-[3rem]" title={video.title}>
                   {video.title || 'Vídeo sem título'}
                 </h3>
-                <p className="text-xs text-gray-500 mb-4 line-clamp-2 flex-grow" title={video.description}>
+                <p className="text-xs text-gray-500 mb-2 line-clamp-2 flex-grow" title={video.description}>
                   {video.description || 'Sem descrição disponível.'}
                 </p>
                 <div className="mt-auto pt-4 flex items-center justify-between gap-2 border-t border-gray-100">
                   <button
-                    onClick={(e) => handlePost(video, e)}
+                    onClick={(e) => { e.stopPropagation(); setVideoToPost(video); }}
                     disabled={!!postingId}
                     className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-green-600 bg-green-50 hover:bg-green-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Postar vídeo"
+                    title="Postar ou Agendar"
                   >
                     {postingId === video.id ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-green-600"></div> : <Send size={16} />}
-                    <span>{postingId === video.id ? 'Postando...' : 'Postar'}</span>
+                    <span>{postingId === video.id ? 'Enviando...' : 'Postar'}</span>
                   </button>
                   <button
                     onClick={(e) => handleDownload(video.link_s3, video.title || 'video', e)}
@@ -313,13 +323,13 @@ const VideoGallery: React.FC = () => {
             </div>
             <div className="flex items-center gap-2 self-end sm:self-center">
               <button
-                onClick={(e) => handlePost(video, e)}
+                onClick={(e) => { e.stopPropagation(); setVideoToPost(video); }}
                 disabled={!!postingId}
                 className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-green-600 bg-green-50 hover:bg-green-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Postar vídeo"
+                title="Postar ou Agendar"
               >
                 {postingId === video.id ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-green-600"></div> : <Send size={16} />}
-                <span className="hidden lg:inline">{postingId === video.id ? 'Postando...' : 'Postar'}</span>
+                <span className="hidden lg:inline">{postingId === video.id ? 'Enviando...' : 'Postar'}</span>
               </button>
               <button
                 onClick={(e) => handleDownload(video.link_s3, video.title || 'video', e)}
@@ -463,10 +473,10 @@ const VideoGallery: React.FC = () => {
                 </button>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={(e) => handlePost(selectedVideo, e)}
+                    onClick={() => setVideoToPost(selectedVideo)}
                     disabled={!!postingId}
                     className="p-3 bg-green-600/20 hover:bg-green-600/40 text-green-300 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Postar"
+                    title="Postar ou Agendar"
                   >
                     {postingId === selectedVideo.id ? <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-green-300"></div> : <Send size={20} />}
                   </button>
@@ -496,6 +506,13 @@ const VideoGallery: React.FC = () => {
           </div>
         </div>
       )}
+
+      <PostModal 
+        video={videoToPost}
+        onClose={() => setVideoToPost(null)}
+        onPost={handlePost}
+        isPosting={!!postingId}
+      />
     </div>
   );
 };

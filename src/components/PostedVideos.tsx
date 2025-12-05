@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, Youtube, X } from 'lucide-react';
+import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, Youtube, X, Calendar } from 'lucide-react';
 
 interface Video {
   id: string;
@@ -8,6 +8,7 @@ interface Video {
   title?: string;
   description?: string;
   youtube_id?: string;
+  publish_at?: string;
 }
 
 type ViewMode = 'grid' | 'list';
@@ -29,7 +30,7 @@ const PostedVideos: React.FC = () => {
     try {
       const { data, error } = await supabase
         .from('shorts_apostilas')
-        .select('id, link_s3, title, description, youtube_id')
+        .select('id, link_s3, title, description, youtube_id, publish_at')
         .eq('failed', false)
         .eq('status', 'Posted');
 
@@ -143,9 +144,15 @@ const PostedVideos: React.FC = () => {
                 <h3 className="font-semibold text-gray-800 mb-1 line-clamp-2 min-h-[3rem]" title={video.title}>
                   {video.title || 'Vídeo sem título'}
                 </h3>
-                <p className="text-xs text-gray-500 mb-4 line-clamp-2 flex-grow" title={video.description}>
+                <p className="text-xs text-gray-500 mb-2 line-clamp-2 flex-grow" title={video.description}>
                   {video.description || 'Sem descrição disponível.'}
                 </p>
+                {video.publish_at && (
+                  <div className="mb-3 text-xs text-gray-600 font-medium flex items-center gap-1.5 bg-gray-50 p-1.5 rounded-md">
+                    <Calendar size={14} className="text-gray-500 flex-shrink-0" />
+                    <span>{new Date(video.publish_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                )}
                 <div className="mt-auto pt-4 flex items-center gap-2 border-t border-gray-100">
                   {video.youtube_id ? (
                     <a
@@ -220,6 +227,12 @@ const PostedVideos: React.FC = () => {
               <p className="text-sm text-gray-500 line-clamp-2" title={video.description}>
                 {video.description || 'Sem descrição disponível.'}
               </p>
+              {video.publish_at && (
+                <div className="mt-2 text-xs text-gray-600 font-medium flex items-center gap-1.5">
+                  <Calendar size={14} className="text-gray-500" />
+                  <span>Publicado: {new Date(video.publish_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-2 self-end sm:self-center">
               {video.youtube_id ? (

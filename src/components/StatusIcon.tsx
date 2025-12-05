@@ -1,7 +1,7 @@
 import React from 'react';
 
 interface StatusIconProps {
-  status?: 'Created' | 'Posted' | string;
+  status?: 'Created' | 'Posted' | 'Scheduled' | string;
 }
 
 const StatusIcon: React.FC<StatusIconProps> = ({ status }) => {
@@ -11,6 +11,9 @@ const StatusIcon: React.FC<StatusIconProps> = ({ status }) => {
   if (status === 'Posted') {
     colorClass = 'bg-green-500';
     title = 'Status: Postado';
+  } else if (status === 'Scheduled') {
+    colorClass = 'bg-blue-500';
+    title = 'Status: Agendado';
   } else {
     colorClass = 'bg-red-500';
     title = 'Status: Não Postado';
