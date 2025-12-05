@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import VideoGallery from './components/VideoGallery';
 import ReprovedVideos from './components/ReprovedVideos';
 import PostedVideos from './components/PostedVideos';
-import { Video, Clapperboard, Trash2, Youtube } from 'lucide-react';
+import ScheduledVideos from './components/ScheduledVideos';
+import { Video, Clapperboard, Trash2, Youtube, Calendar } from 'lucide-react';
 
-type View = 'gallery' | 'reproved' | 'posted';
+type View = 'gallery' | 'reproved' | 'posted' | 'scheduled';
 
 function App() {
   const [view, setView] = useState<View>('gallery');
@@ -29,6 +30,17 @@ function App() {
               >
                 <Video size={18} />
                 <span className="hidden sm:inline">Fila</span>
+              </button>
+              <button
+                onClick={() => setView('scheduled')}
+                className={`py-4 px-2 sm:px-3 font-medium transition-all duration-200 flex items-center gap-2 border-b-2 ${
+                  view === 'scheduled'
+                    ? 'text-purple-600 border-purple-600'
+                    : 'text-gray-500 hover:text-purple-600 border-transparent hover:border-purple-200'
+                }`}
+              >
+                <Calendar size={18} />
+                <span className="hidden sm:inline">Agendados</span>
               </button>
               <button
                 onClick={() => setView('posted')}
@@ -58,6 +70,7 @@ function App() {
       </header>
       <main>
         {view === 'gallery' && <VideoGallery />}
+        {view === 'scheduled' && <ScheduledVideos />}
         {view === 'posted' && <PostedVideos />}
         {view === 'reproved' && <ReprovedVideos />}
       </main>
