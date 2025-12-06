@@ -49,10 +49,10 @@ const Dashboard: React.FC = () => {
       setError(null);
       try {
         const [postedRes, scheduledRes, inQueueRes, reprovedRes] = await Promise.all([
-          supabase.from('shorts_apostilas').select('*', { count: 'exact', head: true }).eq('status', 'Posted'),
-          supabase.from('shorts_apostilas').select('*', { count: 'exact', head: true }).not('publish_at', 'is', null).gt('publish_at', new Date().toISOString()),
-          supabase.from('shorts_apostilas').select('*', { count: 'exact', head: true }).eq('failed', false).eq('status', 'Created').is('publish_at', null),
-          supabase.from('shorts_apostilas').select('*', { count: 'exact', head: true }).eq('failed', true),
+          supabase.from('shorts_youtube').select('*', { count: 'exact', head: true }).eq('status', 'Posted'),
+          supabase.from('shorts_youtube').select('*', { count: 'exact', head: true }).not('publish_at', 'is', null).gt('publish_at', new Date().toISOString()),
+          supabase.from('shorts_youtube').select('*', { count: 'exact', head: true }).eq('failed', false).eq('status', 'Created').is('publish_at', null),
+          supabase.from('shorts_youtube').select('*', { count: 'exact', head: true }).eq('failed', true),
         ]);
 
         if (postedRes.error) throw postedRes.error;
