@@ -116,9 +116,12 @@ const ScheduleModal: React.FC<ScheduleModalProps> = ({ video, isOpen, onClose, o
                     {video.tags[0]}
                   </span>
                 )}
-                <span className="text-xs text-gray-500 font-mono bg-gray-100 px-1.5 py-0.5 rounded">
-                  {formatDuration(video.duration)}
-                </span>
+                {/* Só exibe a duração se ela existir e for maior que 0 */}
+                {video.duration && video.duration > 0 ? (
+                  <span className="text-xs text-gray-500 font-mono bg-gray-100 px-1.5 py-0.5 rounded">
+                    {formatDuration(video.duration)}
+                  </span>
+                ) : null}
               </div>
             </div>
           </div>
