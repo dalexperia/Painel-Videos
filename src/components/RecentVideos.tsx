@@ -318,7 +318,15 @@ const RecentVideos: React.FC = () => {
                 </h3>
                 <div className="flex items-center gap-2 text-sm text-gray-500 mb-4">
                   <Sparkles size={14} className="text-brand-500" />
-                  <span>Criado em {new Date(video.created_at).toLocaleDateString('pt-BR')}</span>
+                  <span>
+                    Criado em {new Date(video.created_at).toLocaleString('pt-BR', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </span>
                 </div>
                 
                 <div className="mt-auto pt-4 flex items-center gap-2 border-t border-gray-100">
@@ -373,7 +381,15 @@ const RecentVideos: React.FC = () => {
               <div className="flex flex-wrap items-center gap-3 mt-1">
                 <div className="flex items-center gap-2 text-sm text-gray-500">
                   <Sparkles size={14} className="text-brand-500" />
-                  <span>Criado em {new Date(video.created_at).toLocaleDateString('pt-BR')}</span>
+                  <span>
+                    Criado em {new Date(video.created_at).toLocaleString('pt-BR', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </span>
                 </div>
                 {video.channel && (
                   <div className="flex items-center gap-1 text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
@@ -482,7 +498,15 @@ const RecentVideos: React.FC = () => {
               <div className="flex flex-wrap gap-2 mb-4">
                 <div className="flex items-center gap-2 text-sm text-brand-300 bg-brand-500/20 rounded-md px-3 py-1.5">
                   <Sparkles size={16} />
-                  <span className="font-medium">Criado em {new Date(selectedVideo.created_at).toLocaleDateString('pt-BR')}</span>
+                  <span className="font-medium">
+                    Criado em {new Date(selectedVideo.created_at).toLocaleString('pt-BR', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </span>
                 </div>
                 {selectedVideo.channel && (
                   <div className="flex items-center gap-2 text-sm text-blue-300 bg-blue-500/20 rounded-md px-3 py-1.5">
