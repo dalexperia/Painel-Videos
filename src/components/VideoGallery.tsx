@@ -1,519 +1,366 @@
 import React, { useState, useEffect } from 'react';
+import { Play, Clock, MoreVertical, Calendar as CalendarIcon, CheckCircle2, XCircle, AlertCircle, ListFilter, LayoutGrid } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
-import { Trash2, Download, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Send, Save, X, Calendar } from 'lucide-react';
-import StatusIcon from './StatusIcon';
-import PostModal from './PostModal';
+import { formatDuration } from '../utils/format';
+import ScheduleModal from './ScheduleModal';
 
-export interface Video {
+interface Video {
   id: string;
-  baserow_id: number;
-  link_s3: string;
-  link_drive?: string;
-  title?: string;
-  description?: string;
-  tags?: string[] | string;
-  hashtags?: string[] | string;
-  status?: 'Created' | 'Posted' | 'Scheduled' | string;
-  publish_at?: string;
+  title: string;
+  link_s3?: string;
+  thumbnail_url?: string;
+  duration?: number;
+  created_at: string;
+  publish_at?: string | null;
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'scheduled';
+  tags?: string[];
+  failed?: boolean;
+  dbStatus?: string; // Status original do banco (Created, Posted, etc)
 }
 
-type ViewMode = 'grid' | 'list';
+// Removido 'queue' do tipo
+type TabType = 'all' | 'scheduled' | 'posted' | 'failed';
 
-const VideoGallery: React.FC = () => {
+const VideoGallery = () => {
+  // Determina o contexto atual baseado na URL
+  const getCurrentContext = () => {
+    const path = window.location.href.toLowerCase();
+    
+    // REMOVIDO O BLOCO DE FILA/AGUARDANDO
+    
+    if (path.includes('agendados') || path.includes('scheduled')) {
+      return { 
+        isSpecializedView: true, 
+        forcedTab: 'scheduled' as TabType, 
+        title: 'Vídeos Agendados', 
+        subtitle: 'Conteúdo programado para publicação' 
+      };
+    }
+    if (path.includes('postados') || path.includes('posted')) {
+      return { 
+        isSpecializedView: true, 
+        forcedTab: 'posted' as TabType, 
+        title: 'Vídeos Postados', 
+        subtitle: 'Histórico de publicações realizadas' 
+      };
+    }
+    if (path.includes('reprovados') || path.includes('failed')) {
+      return { 
+        isSpecializedView: true, 
+        forcedTab: 'failed' as TabType, 
+        title: 'Vídeos Reprovados', 
+        subtitle: 'Conteúdo que precisa de atenção' 
+      };
+    }
+    
+    // Visão Geral (Dashboard/Galeria completa)
+    return { 
+      isSpecializedView: false, 
+      forcedTab: 'all' as TabType, 
+      title: 'Galeria de Vídeos', 
+      subtitle: 'Gerencie e publique seus conteúdos' 
+    };
+  };
+
+  const context = getCurrentContext();
+  
   const [videos, setVideos] = useState<Video[]>([]);
+  const [loading, setLoading] = useState(true);
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
-  const [editedVideo, setEditedVideo] = useState<Partial<Video> & { tags_str?: string; hashtags_str?: string } | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>('grid');
-  const [postingId, setPostingId] = useState<string | null>(null);
-  const [videoToPost, setVideoToPost] = useState<Video | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  
+  // Estado para navegação interna (quando não é uma rota específica)
+  const [galleryTab, setGalleryTab] = useState<TabType>('all');
+
+  // Define qual aba está ativa: a forçada pela URL ou a selecionada manualmente
+  const activeTab = context.isSpecializedView ? context.forcedTab : galleryTab;
 
   useEffect(() => {
     fetchVideos();
   }, []);
 
-  useEffect(() => {
-    if (selectedVideo) {
-      const tags = selectedVideo.tags || '';
-      const hashtags = selectedVideo.hashtags || '';
-
-      setEditedVideo({
-        ...selectedVideo,
-        tags_str: Array.isArray(tags) ? tags.join(', ') : tags,
-        hashtags_str: Array.isArray(hashtags)
-          ? hashtags.map(h => (h.startsWith('#') ? h : `#${h}`)).join(' ')
-          : hashtags,
-      });
-    } else {
-      setEditedVideo(null);
-    }
-  }, [selectedVideo]);
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    if (!editedVideo) return;
-    const { name, value } = e.target;
-    setEditedVideo({ ...editedVideo, [name]: value });
-  };
-
-  const handleSaveChanges = async () => {
-    if (!editedVideo || !selectedVideo) return;
-
-    const tagsToSave = editedVideo.tags_str?.split(',').map(tag => tag.trim()).filter(Boolean) || [];
-    const hashtagsToSave = editedVideo.hashtags_str?.split(' ').map(tag => tag.trim().replace(/^#/, '')).filter(Boolean) || [];
-
-    try {
-      const { data, error } = await supabase
-        .from('shorts_youtube')
-        .update({
-          title: editedVideo.title,
-          description: editedVideo.description,
-          tags: tagsToSave,
-          hashtags: hashtagsToSave,
-        })
-        .eq('id', selectedVideo.id)
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      alert('Alterações salvas com sucesso!');
-      setVideos(videos.map(v => v.id === data.id ? data : v));
-      setSelectedVideo(null);
-    } catch (err) {
-      console.error("Erro ao salvar alterações:", err);
-      alert('Erro ao salvar as alterações. Verifique o console para mais detalhes.');
-    }
-  };
-
   const fetchVideos = async () => {
-    setLoading(true);
-    setError(null);
     try {
+      setLoading(true);
+      
       const { data, error } = await supabase
         .from('shorts_youtube')
-        .select('id, baserow_id, link_s3, title, description, tags, hashtags, status, link_drive, publish_at')
-        .eq('failed', false)
-        .eq('status', 'Created')
-        .is('publish_at', null);
+        .select('*')
+        .order('created_at', { ascending: false });
 
       if (error) throw error;
-
-      const validVideos = (data || []).filter((video): video is Video => 
-        video && video.link_s3 && video.link_s3.trim() !== ''
-      );
       
-      setVideos(validVideos);
+      if (data) {
+        const mappedVideos: Video[] = data.map((item: any) => {
+          let status: Video['status'] = 'processing';
+          
+          if (item.failed) {
+            status = 'failed';
+          } else if (item.status === 'Posted') {
+            status = 'completed';
+          } else if (item.publish_at && new Date(item.publish_at) > new Date()) {
+            status = 'scheduled';
+          } else if (item.status === 'Created') {
+            status = 'completed'; // Pronto para agendar
+          }
 
-    } catch (err: any) {
-      setError('Não foi possível carregar os vídeos. Tente novamente mais tarde.');
+          return {
+            id: item.id,
+            title: item.title || 'Sem título',
+            link_s3: item.link_s3,
+            duration: item.duration || 0,
+            created_at: item.created_at,
+            publish_at: item.publish_at,
+            status: status,
+            tags: [],
+            failed: item.failed,
+            dbStatus: item.status
+          };
+        });
+        setVideos(mappedVideos);
+      }
+    } catch (error) {
+      console.error('Erro ao buscar vídeos:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const handlePost = async (video: Video, options: { scheduleDate?: string } = {}) => {
-    if (postingId) return;
-    setPostingId(video.id);
-
-    const payload: any = {
-      id: video.id,
-      baserow_id: video.baserow_id,
-      title: video.title || '',
-      description: video.description || '',
-      tags: Array.isArray(video.tags) ? video.tags : (video.tags || '').split(',').map(t => t.trim()).filter(Boolean),
-      hashtags: Array.isArray(video.hashtags) ? video.hashtags : (typeof video.hashtags === 'string' ? video.hashtags.split(' ').map(t => t.trim()).filter(Boolean) : []),
-      link_drive: video.link_drive || '',
-      link_s3: video.link_s3
-    };
-
-    if (options.scheduleDate) {
-      payload['Privacy Status'] = 'private';
-      payload['Publish At'] = options.scheduleDate;
-    } else {
-      payload['Privacy Status'] = 'public';
-    }
-
-    try {
-      const response = await fetch('https://n8n-main.oficinadamultape.com.br/webhook/postar-video', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Webhook respondeu com status: ${response.status}`);
-      }
-
-      alert(`Vídeo enviado para ${options.scheduleDate ? 'agendamento' : 'postagem'} com sucesso! O status será atualizado em breve.`);
-      // O vídeo não é mais removido da lista localmente.
-
-    } catch (err) {
-      console.error("Erro ao postar o vídeo:", err);
-      alert('Erro ao postar o vídeo. O webhook pode estar offline ou ocorreu um erro. Verifique o console.');
-    } finally {
-      setPostingId(null);
-      setVideoToPost(null);
-    }
+  const handleScheduleClick = (video: Video) => {
+    setSelectedVideo(video);
+    setIsModalOpen(true);
   };
 
-  const handleReprove = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!window.confirm('Tem certeza que deseja reprovar este vídeo? Ele será movido para a lista de reprovados.')) return;
+  const handleConfirmSchedule = async (date: Date, immediate: boolean) => {
+    if (!selectedVideo) return;
 
     try {
       const { error } = await supabase
         .from('shorts_youtube')
-        .update({ failed: true })
-        .eq('id', id);
+        .update({
+          publish_at: immediate ? new Date().toISOString() : date.toISOString(),
+        })
+        .eq('id', selectedVideo.id);
 
       if (error) throw error;
-      setVideos(videos.filter((video) => video.id !== id));
-      if (selectedVideo?.id === id) setSelectedVideo(null);
-    } catch (err) {
-      console.error("Erro ao reprovar o vídeo:", err);
-      alert('Erro ao reprovar o vídeo. Verifique o console para mais detalhes.');
+      fetchVideos();
+    } catch (error) {
+      console.error('Erro ao agendar:', error);
+      alert('Erro ao agendar o vídeo.');
     }
   };
 
-  const handleDownload = (url: string, title: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    try {
-      const link = document.createElement('a');
-      link.href = url;
-      const safeTitle = (title || 'video').replace(/[^a-z0-9]/gi, '_').toLowerCase();
-      const fileExtension = url.split('.').pop()?.split('?')[0] || 'mp4';
-      link.setAttribute('download', `${safeTitle}.${fileExtension}`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (err) {
-      alert('Não foi possível iniciar o download.');
+  // Lógica de Filtragem
+  const filteredVideos = videos.filter(video => {
+    switch (activeTab) {
+      // REMOVIDO CASE QUEUE
+      
+      case 'scheduled':
+        return !video.failed && video.publish_at && new Date(video.publish_at) > new Date();
+      
+      case 'posted':
+        return !video.failed && video.dbStatus === 'Posted';
+      
+      case 'failed':
+        return video.failed;
+        
+      case 'all':
+      default:
+        return true;
     }
-  };
+  });
 
-  const renderContent = () => {
-    if (loading) {
-      return (
-        <div className="flex justify-center items-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+  const tabs: { id: TabType; label: string; icon: React.ReactNode }[] = [
+    { id: 'all', label: 'Todos', icon: <LayoutGrid size={18} /> },
+    // REMOVIDO ABA AGUARDANDO/FILA
+    { id: 'scheduled', label: 'Agendados', icon: <CalendarIcon size={18} /> },
+    { id: 'posted', label: 'Postados', icon: <CheckCircle2 size={18} /> },
+    { id: 'failed', label: 'Erros', icon: <AlertCircle size={18} /> },
+  ];
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-600"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="container mx-auto px-4 py-8 max-w-7xl">
+      <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900">
+            {context.title}
+          </h2>
+          <p className="text-gray-500 mt-1">
+            {context.subtitle}
+          </p>
         </div>
-      );
-    }
+        <button className="bg-brand-600 text-white px-4 py-2 rounded-lg hover:bg-brand-700 transition-colors shadow-sm font-medium self-start md:self-auto">
+          Novo Upload
+        </button>
+      </div>
 
-    if (error) {
-      return (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg relative flex items-center justify-center" role="alert">
-          <AlertCircle className="mr-2" />
-          <span>{error}</span>
-        </div>
-      );
-    }
-
-    if (videos.length === 0) {
-      return (
-        <div className="text-center py-20 bg-white rounded-lg shadow-sm border border-gray-100">
-          <PlayCircle size={48} className="mx-auto text-gray-300 mb-4" />
-          <h3 className="text-gray-800 text-xl font-semibold">Nenhum vídeo na fila</h3>
-          <p className="text-gray-500 text-sm mt-2">Não há vídeos com o status "Created" no momento.</p>
-        </div>
-      );
-    }
-
-    if (viewMode === 'grid') {
-      return (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {videos.map((video) => (
-            <div 
-              key={video.id} 
-              className="group bg-white rounded-xl shadow-md hover:shadow-lg transition-all duration-300 border border-gray-100 overflow-hidden flex flex-col hover:-translate-y-1"
+      {/* Navegação por abas (apenas se não estiver em uma rota específica) */}
+      {!context.isSpecializedView && (
+        <div className="flex overflow-x-auto pb-2 mb-6 gap-2 no-scrollbar">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setGalleryTab(tab.id)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all ${
+                activeTab === tab.id
+                  ? 'bg-gray-900 text-white shadow-md'
+                  : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+              }`}
             >
-              <div 
-                className="relative aspect-video bg-gray-900 cursor-pointer overflow-hidden"
-                onClick={() => setSelectedVideo(video)}
-              >
-                <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-800 to-gray-900">
+              {tab.icon}
+              {tab.label}
+              <span className={`ml-1 text-xs py-0.5 px-1.5 rounded-full ${
+                activeTab === tab.id ? 'bg-white/20' : 'bg-gray-100'
+              }`}>
+                {videos.filter(v => {
+                  if (tab.id === 'all') return true;
+                  // REMOVIDO FILTRO QUEUE
+                  if (tab.id === 'scheduled') return !v.failed && v.publish_at && new Date(v.publish_at) > new Date();
+                  if (tab.id === 'posted') return !v.failed && v.dbStatus === 'Posted';
+                  if (tab.id === 'failed') return v.failed;
+                  return false;
+                }).length}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {filteredVideos.length === 0 ? (
+        <div className="text-center py-16 bg-white rounded-xl border border-gray-200 border-dashed">
+          <div className="mx-auto w-12 h-12 bg-gray-50 rounded-full flex items-center justify-center mb-3">
+            <ListFilter className="text-gray-400" size={24} />
+          </div>
+          <h3 className="text-lg font-medium text-gray-900">Nenhum vídeo encontrado</h3>
+          <p className="text-gray-500 mt-1">
+            Não há vídeos nesta categoria.
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          {filteredVideos.map((video) => (
+            <div key={video.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow duration-200 group flex flex-col">
+              {/* Thumbnail / Video Preview */}
+              <div className="relative aspect-video bg-gray-900 group-hover:bg-gray-800 transition-colors">
+                {video.link_s3 ? (
                   <video 
                     src={video.link_s3}
-                    className="w-full h-full object-cover opacity-60 group-hover:opacity-40 transition-opacity"
+                    className="w-full h-full object-cover opacity-80 group-hover:opacity-60 transition-opacity"
                     muted
                     preload="metadata"
+                    onMouseOver={(e) => e.currentTarget.play().catch(() => {})}
+                    onMouseOut={(e) => {
+                      e.currentTarget.pause();
+                      e.currentTarget.currentTime = 0;
+                    }}
                   />
-                </div>
-                <div className="absolute top-2 right-2 bg-black/30 backdrop-blur-sm p-1 rounded-full">
-                  <StatusIcon status={video.status} />
-                </div>
-                <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors duration-300">
-                  <div className="bg-white/20 backdrop-blur-sm p-3 rounded-full opacity-0 group-hover:opacity-100 scale-75 group-hover:scale-100 transition-all duration-300">
-                    <PlayCircle size={32} className="text-white fill-white/20" />
+                ) : (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <Play className="text-gray-600" size={48} />
                   </div>
+                )}
+
+                <div className="absolute bottom-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded font-mono backdrop-blur-sm z-10">
+                  {formatDuration(video.duration)}
+                </div>
+                
+                {/* Ações Rápidas (Overlay) */}
+                <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3 backdrop-blur-[1px] z-20">
+                  {!video.failed && video.dbStatus !== 'Posted' && (
+                    <button 
+                      onClick={() => handleScheduleClick(video)}
+                      className="bg-white text-gray-900 p-2 rounded-full hover:bg-brand-50 transition-colors transform hover:scale-105 shadow-lg"
+                      title="Agendar Publicação"
+                    >
+                      <CalendarIcon size={20} />
+                    </button>
+                  )}
+                  {video.link_s3 && (
+                    <a 
+                      href={video.link_s3} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="bg-white text-gray-900 p-2 rounded-full hover:bg-brand-50 transition-colors transform hover:scale-105 shadow-lg"
+                    >
+                      <Play size={20} fill="currentColor" />
+                    </a>
+                  )}
                 </div>
               </div>
 
-              <div className="p-4 flex flex-col flex-grow">
-                <h3 className="font-semibold text-gray-800 mb-1 line-clamp-2 min-h-[3rem]" title={video.title}>
-                  {video.title || 'Vídeo sem título'}
-                </h3>
-                <p className="text-xs text-gray-500 mb-2 line-clamp-2 flex-grow" title={video.description}>
-                  {video.description || 'Sem descrição disponível.'}
-                </p>
-                <div className="mt-auto pt-4 flex items-center justify-between gap-2 border-t border-gray-100">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setVideoToPost(video); }}
-                    disabled={!!postingId}
-                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-green-600 bg-green-50 hover:bg-green-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Postar ou Agendar"
-                  >
-                    {postingId === video.id ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-green-600"></div> : <Send size={16} />}
-                    <span>{postingId === video.id ? 'Enviando...' : 'Postar'}</span>
-                  </button>
-                  <button
-                    onClick={(e) => handleDownload(video.link_s3, video.title || 'video', e)}
-                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
-                    title="Baixar vídeo"
-                  >
-                    <Download size={16} />
-                    <span>Baixar</span>
-                  </button>
-                  <button
-                    onClick={(e) => handleReprove(video.id, e)}
-                    className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                    title="Reprovar vídeo"
-                  >
-                    <Trash2 size={18} />
+              {/* Informações do Vídeo */}
+              <div className="p-4 flex-1 flex flex-col">
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <h3 className="font-semibold text-gray-900 line-clamp-2 text-sm leading-snug" title={video.title}>
+                    {video.title}
+                  </h3>
+                  <button className="text-gray-400 hover:text-gray-600 p-1 -mr-2 -mt-2">
+                    <MoreVertical size={16} />
                   </button>
                 </div>
+                
+                <div className="flex items-center gap-2 mb-auto">
+                  {video.tags?.map(tag => (
+                    <span key={tag} className="text-[10px] font-medium px-2 py-0.5 bg-gray-100 text-gray-600 rounded-full uppercase tracking-wide">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="flex items-center justify-between text-xs text-gray-500 pt-3 border-t border-gray-50 mt-3">
+                  <span className="flex items-center gap-1" title={`Criado em: ${new Date(video.created_at).toLocaleString()}`}>
+                    <Clock size={12} />
+                    {new Date(video.created_at).toLocaleDateString('pt-BR')}
+                  </span>
+                  
+                  {/* Badge de Status */}
+                  <span className={`flex items-center gap-1 font-medium ${
+                    video.failed ? 'text-red-600' :
+                    video.dbStatus === 'Posted' ? 'text-green-600' :
+                    video.publish_at ? 'text-purple-600' :
+                    'text-blue-600'
+                  }`}>
+                    {video.failed ? (
+                      <><XCircle size={12} /> Erro</>
+                    ) : video.dbStatus === 'Posted' ? (
+                      <><CheckCircle2 size={12} /> Postado</>
+                    ) : video.publish_at ? (
+                      <><CalendarIcon size={12} /> Agendado</>
+                    ) : (
+                      <><CheckCircle2 size={12} /> Aguardando</>
+                    )}
+                  </span>
+                </div>
+                
+                {/* Data de Agendamento (se houver) */}
+                {video.publish_at && !video.failed && video.dbStatus !== 'Posted' && (
+                  <div className="mt-2 text-xs bg-purple-50 text-purple-700 px-2 py-1 rounded border border-purple-100 flex items-center gap-1">
+                    <CalendarIcon size={10} />
+                    Agendado: {new Date(video.publish_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                )}
               </div>
             </div>
           ))}
         </div>
-      );
-    }
-
-    return (
-      <div className="space-y-3">
-        {videos.map((video) => (
-          <div
-            key={video.id}
-            className="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 border border-gray-100 flex flex-col sm:flex-row items-start sm:items-center p-3 gap-4"
-          >
-            <div
-              className="relative w-full sm:w-32 h-20 bg-gray-900 rounded-md overflow-hidden cursor-pointer flex-shrink-0 group"
-              onClick={() => setSelectedVideo(video)}
-            >
-              <video
-                src={video.link_s3}
-                className="w-full h-full object-cover"
-                muted
-                preload="metadata"
-              />
-              <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
-                <PlayCircle size={24} className="text-white" />
-              </div>
-            </div>
-            <div className="flex-grow min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <StatusIcon status={video.status} />
-                <h3 className="font-semibold text-gray-800 truncate" title={video.title}>
-                  {video.title || 'Vídeo sem título'}
-                </h3>
-              </div>
-              <p className="text-sm text-gray-500 line-clamp-2" title={video.description}>
-                {video.description || 'Sem descrição disponível.'}
-              </p>
-            </div>
-            <div className="flex items-center gap-2 self-end sm:self-center">
-              <button
-                onClick={(e) => { e.stopPropagation(); setVideoToPost(video); }}
-                disabled={!!postingId}
-                className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-green-600 bg-green-50 hover:bg-green-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Postar ou Agendar"
-              >
-                {postingId === video.id ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-green-600"></div> : <Send size={16} />}
-                <span className="hidden lg:inline">{postingId === video.id ? 'Enviando...' : 'Postar'}</span>
-              </button>
-              <button
-                onClick={(e) => handleDownload(video.link_s3, video.title || 'video', e)}
-                className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
-                title="Baixar vídeo"
-              >
-                <Download size={16} />
-                <span className="hidden lg:inline">Baixar</span>
-              </button>
-              <button
-                onClick={(e) => handleReprove(video.id, e)}
-                className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                title="Reprovar vídeo"
-              >
-                <Trash2 size={18} />
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-    );
-  };
-
-  return (
-    <div className="container mx-auto px-4 py-8 max-w-7xl">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 border-b pb-4 border-gray-200">
-        <h1 className="text-3xl sm:text-4xl font-extrabold text-gray-900 tracking-tight">Fila de Postagem</h1>
-        <div className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto justify-end">
-          <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg">
-            <button 
-              onClick={() => setViewMode('grid')}
-              className={`p-1.5 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
-              title="Visualização em Grade"
-            >
-              <LayoutGrid size={20} />
-            </button>
-            <button 
-              onClick={() => setViewMode('list')}
-              className={`p-1.5 rounded-md transition-colors ${viewMode === 'list' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
-              title="Visualização em Lista"
-            >
-              <List size={20} />
-            </button>
-          </div>
-          <button 
-            onClick={fetchVideos}
-            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
-            title="Recarregar lista"
-          >
-            <RefreshCw size={22} />
-          </button>
-          <div className="bg-blue-100 text-blue-800 text-center rounded-2xl px-5 py-2 shadow-sm">
-            <div className="text-2xl font-bold leading-none">{videos.length}</div>
-            <div className="text-xs leading-none tracking-tight mt-1">{videos.length === 1 ? 'Vídeo' : 'Vídeos'}</div>
-          </div>
-        </div>
-      </div>
-
-      {renderContent()}
-
-      {selectedVideo && editedVideo && (
-        <div 
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in"
-          onClick={() => setSelectedVideo(null)}
-        >
-          <div 
-            className="relative w-full max-w-6xl mx-auto h-auto max-h-[95vh] bg-gray-900 rounded-2xl overflow-hidden shadow-2xl animate-slide-up flex flex-col lg:flex-row"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="bg-black flex items-center justify-center flex-shrink-0 lg:flex-1">
-              <video 
-                key={selectedVideo.id}
-                src={selectedVideo.link_s3} 
-                controls 
-                autoPlay 
-                className="w-full h-auto max-h-[50vh] lg:max-h-full object-contain"
-              >
-                Seu navegador não suporta a tag de vídeo.
-              </video>
-            </div>
-            
-            <div className="p-6 flex flex-col text-white overflow-y-auto flex-1 lg:w-[400px] lg:flex-shrink-0 lg:flex-initial">
-              <h2 className="text-2xl font-bold mb-6">Editar Detalhes</h2>
-              <div className="space-y-4 flex-grow">
-                <div>
-                  <label htmlFor="title" className="block text-sm font-medium text-gray-400 mb-1">Título</label>
-                  <input
-                    type="text"
-                    name="title"
-                    id="title"
-                    value={editedVideo.title || ''}
-                    onChange={handleInputChange}
-                    className="w-full bg-gray-800 border-gray-700 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500 transition"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="description" className="block text-sm font-medium text-gray-400 mb-1">Descrição</label>
-                  <textarea
-                    name="description"
-                    id="description"
-                    rows={4}
-                    value={editedVideo.description || ''}
-                    onChange={handleInputChange}
-                    className="w-full bg-gray-800 border-gray-700 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500 transition"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="tags_str" className="block text-sm font-medium text-gray-400 mb-1">Tags</label>
-                  <input
-                    type="text"
-                    name="tags_str"
-                    id="tags_str"
-                    value={editedVideo.tags_str || ''}
-                    onChange={handleInputChange}
-                    placeholder="Ex: concurso, direito, adm"
-                    className="w-full bg-gray-800 border-gray-700 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500 transition"
-                  />
-                   <p className="text-xs text-gray-500 mt-1">Separadas por vírgula.</p>
-                </div>
-                <div>
-                  <label htmlFor="hashtags_str" className="block text-sm font-medium text-gray-400 mb-1">Hashtags</label>
-                  <input
-                    type="text"
-                    name="hashtags_str"
-                    id="hashtags_str"
-                    value={editedVideo.hashtags_str || ''}
-                    onChange={handleInputChange}
-                    placeholder="Ex: #concurso #estudos"
-                    className="w-full bg-gray-800 border-gray-700 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500 transition"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">Separadas por espaço.</p>
-                </div>
-              </div>
-              <div className="mt-8 pt-6 border-t border-gray-700 flex items-center justify-between gap-3 flex-wrap">
-                <button
-                  onClick={handleSaveChanges}
-                  className="p-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors font-semibold"
-                  title="Salvar Alterações"
-                >
-                  <Save size={20} />
-                </button>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setVideoToPost(selectedVideo)}
-                    disabled={!!postingId}
-                    className="p-3 bg-green-600/20 hover:bg-green-600/40 text-green-300 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Postar ou Agendar"
-                  >
-                    {postingId === selectedVideo.id ? <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-green-300"></div> : <Send size={20} />}
-                  </button>
-                  <button
-                    onClick={(e) => handleDownload(selectedVideo.link_s3, editedVideo.title || 'video', e)}
-                    className="p-3 bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 rounded-lg transition-colors"
-                    title="Baixar"
-                  >
-                    <Download size={20} />
-                  </button>
-                  <button
-                    onClick={(e) => handleReprove(selectedVideo.id, e)}
-                    className="p-3 text-red-400 hover:text-red-300 hover:bg-red-500/20 rounded-lg transition-colors"
-                    title="Reprovar"
-                  >
-                    <Trash2 size={20} />
-                  </button>
-                </div>
-              </div>
-            </div>
-             <button 
-                onClick={() => setSelectedVideo(null)}
-                className="absolute top-3 right-3 text-white/60 hover:text-white bg-black/30 hover:bg-black/50 rounded-full p-1.5 transition-colors z-20"
-              >
-                <X size={24} />
-              </button>
-          </div>
-        </div>
       )}
 
-      <PostModal 
-        video={videoToPost}
-        onClose={() => setVideoToPost(null)}
-        onPost={handlePost}
-        isPosting={!!postingId}
-      />
+      {selectedVideo && (
+        <ScheduleModal 
+          video={selectedVideo}
+          isOpen={isModalOpen}
+          onClose={() => setIsModalOpen(false)}
+          onConfirm={handleConfirmSchedule}
+        />
+      )}
     </div>
   );
 };
