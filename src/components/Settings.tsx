@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabaseClient';
 import { Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle, CheckCircle } from 'lucide-react';
 
 interface Setting {
-  id: string;
+  id: number; // Changed from string to number
   channel: string;
   webhook: string;
   is_active: boolean;
@@ -15,10 +15,10 @@ const Settings: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const [isEditing, setIsEditing] = useState<string | null>(null);
+  const [isEditing, setIsEditing] = useState<number | null>(null); // Changed from string to number
   const [currentChannel, setCurrentChannel] = useState('');
   const [currentWebhook, setCurrentWebhook] = useState('');
-  const [activatingId, setActivatingId] = useState<string | null>(null);
+  const [activatingId, setActivatingId] = useState<number | null>(null); // Changed from string to number
 
   const fetchSettings = async () => {
     setLoading(true);
@@ -66,7 +66,7 @@ const Settings: React.FC = () => {
     window.scrollTo(0, 0);
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (id: number) => { // Changed from string to number
     if (window.confirm('Tem certeza que deseja excluir este canal?')) {
       try {
         const { error } = await supabase
@@ -121,20 +121,32 @@ const Settings: React.FC = () => {
     }
   };
 
-  const handleActivate = async (id: string) => {
+  const handleActivate = async (id: number) => { // Changed from string to number
+    // console.log("Attempting to activate channel with ID:", id, "Type:", typeof id); // Removed debug log
     setActivatingId(id);
     setError(null);
     try {
-      const { error } = await supabase.rpc('set_active_channel', {
-        channel_id: id
+      const { data, error } = await supabase.rpc('set_active_channel', {
+        channel_id: id // Pass id as number
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error("Supabase RPC error activating channel:", error);
+        throw error;
+      }
 
       await fetchSettings();
     } catch (err: any) {
       console.error("Error activating channel:", err);
-      setError("Não foi possível ativar o canal.");
+      let errorMessage = "Não foi possível ativar o canal.";
+      if (err.message) {
+        errorMessage += ` Detalhes: ${err.message}`;
+      } else if (err.code) {
+        errorMessage += ` Código: ${err.code}`;
+      } else {
+        errorMessage += ` Erro desconhecido: ${JSON.stringify(err)}`;
+      }
+      setError(errorMessage);
     } finally {
       setActivatingId(null);
     }

@@ -1,17 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { Video } from './VideoGallery';
-import { Send, Calendar, X, Clock } from 'lucide-react';
+import { Send, Calendar, X, Clock, Link } from 'lucide-react'; // Added Link icon
+import { supabase } from '../lib/supabaseClient'; // Import supabase client
 
 interface PostModalProps {
   video: Video | null;
   onClose: () => void;
-  onPost: (video: Video, options: { scheduleDate?: string }) => void;
+  onPost: (video: Video, options: { scheduleDate?: string; webhookUrl: string }) => void; // Updated onPost signature
   isPosting: boolean;
 }
 
 const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting }) => {
   const [scheduleDate, setScheduleDate] = useState('');
   const [minDateTime, setMinDateTime] = useState('');
+  const [activeWebhook, setActiveWebhook] = useState<string | null>(null);
+  const [loadingWebhook, setLoadingWebhook] = useState(true);
+  const [webhookError, setWebhookError] = useState<string | null>(null);
 
   useEffect(() => {
     if (video) {
@@ -21,13 +25,53 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
       const minDateTimeValue = now.toISOString().slice(0, 16);
       setMinDateTime(minDateTimeValue);
       setScheduleDate('');
+      
+      // Fetch active webhook when modal opens
+      fetchActiveWebhook();
     }
   }, [video]);
 
+  const fetchActiveWebhook = async () => {
+    setLoadingWebhook(true);
+    setWebhookError(null);
+    try {
+      const { data, error } = await supabase
+        .from('shorts_settings')
+        .select('webhook')
+        .eq('is_active', true)
+        .single();
+
+      if (error) {
+        if (error.code === 'PGRST116') { // No rows found
+          setWebhookError('Nenhum canal ativo encontrado. Por favor, configure um canal nas configurações.');
+        } else {
+          throw error;
+        }
+      } else if (data) {
+        setActiveWebhook(data.webhook);
+      } else {
+        setWebhookError('Nenhum canal ativo encontrado. Por favor, configure um canal nas configurações.');
+      }
+    } catch (err: any) {
+      console.error("Error fetching active webhook:", err);
+      setWebhookError('Erro ao carregar o webhook ativo.');
+    } finally {
+      setLoadingWebhook(false);
+    }
+  };
+
   if (!video) return null;
 
+  const handlePost = (options: { scheduleDate?: string }) => {
+    if (!activeWebhook) {
+      alert(webhookError || 'Não foi possível determinar o webhook ativo. Verifique as configurações.');
+      return;
+    }
+    onPost(video, { ...options, webhookUrl: activeWebhook });
+  };
+
   const handlePublishNow = () => {
-    onPost(video, {});
+    handlePost({});
   };
 
   const handleSchedule = () => {
@@ -37,10 +81,11 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
     }
     // Format date to include seconds for the payload, as required format YYYY-MM-DDTHH:mm:ss
     const formattedDate = `${scheduleDate}:00`;
-    onPost(video, { scheduleDate: formattedDate });
+    handlePost({ scheduleDate: formattedDate });
   };
 
-  const isScheduleButtonDisabled = isPosting || !scheduleDate;
+  const isPostButtonDisabled = isPosting || loadingWebhook || !!webhookError;
+  const isScheduleButtonDisabled = isPostButtonDisabled || !scheduleDate;
 
   return (
     <div 
@@ -59,10 +104,27 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
             </p>
           </div>
 
-          <div className="mt-8 space-y-4">
+          <div className="mt-6 mb-8 p-4 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800 flex items-start gap-3">
+            <Link size={18} className="flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold">Webhook Ativo:</p>
+              {loadingWebhook ? (
+                <div className="flex items-center gap-2 mt-1">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                  <span>Carregando...</span>
+                </div>
+              ) : webhookError ? (
+                <p className="text-red-600 mt-1">{webhookError}</p>
+              ) : (
+                <p className="break-all mt-1">{activeWebhook}</p>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-4">
             <button
               onClick={handlePublishNow}
-              disabled={isPosting}
+              disabled={isPostButtonDisabled}
               className="w-full flex items-center justify-center gap-3 px-4 py-3 text-base font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-blue-400 disabled:cursor-not-allowed disabled:scale-100"
             >
               {isPosting ? (
