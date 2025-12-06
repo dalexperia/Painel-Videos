@@ -139,20 +139,24 @@ const RecentVideos: React.FC = () => {
         throw new Error('URL do Webhook não está definida.');
       }
 
-      // 1. Determinar privacy_status e posting_date com base na modal
+      // 1. Determinar privacy_status e publish_at com base na modal
       const isScheduled = !!options.scheduleDate;
       
       let privacy_status: string;
-      let posting_date: string;
+      let publish_at: string;
 
       if (isScheduled) {
-        // Se for AGENDADO:
+        // REGRA 2: Agendar
+        // Privacy Status: private
+        // Publish At: [Data e Hora da Publicação]
         privacy_status = 'private';
-        posting_date = options.scheduleDate!; // Data escolhida na modal
+        publish_at = options.scheduleDate!; // Data escolhida na modal (ISO String)
       } else {
-        // Se for POSTAR AGORA:
+        // REGRA 1: Postar agora
+        // Privacy Status: public
+        // Publish At: now() (Enviamos o timestamp atual)
         privacy_status = 'public';
-        posting_date = new Date().toISOString(); // Data atual (now)
+        publish_at = new Date().toISOString();
       }
 
       // 2. Construir o Payload Exato
@@ -166,9 +170,14 @@ const RecentVideos: React.FC = () => {
         channel: video.channel || "",
         baserow_id: video.baserow_id || 0,
         id: video.id,
-        // Campos condicionais definidos acima
+        
+        // CORREÇÃO: Adicionando as chaves exatas conforme solicitado no print (Title Case com espaços)
+        "Privacy Status": privacy_status,
+        "Publish At": publish_at,
+
+        // Mantendo snake_case para garantir compatibilidade caso o backend use ambos
         privacy_status: privacy_status,
-        posting_date: posting_date
+        publish_at: publish_at
       };
 
       console.log('Enviando payload para Webhook:', payload);
@@ -189,20 +198,12 @@ const RecentVideos: React.FC = () => {
       
       console.log('Webhook disparado com sucesso!');
 
-      // 4. Se for agendamento, atualizar o banco de dados para remover da lista de recentes
+      // 4. Se for agendamento, removemos da lista local para feedback visual (Optimistic UI)
+      // IMPORTANTE: Não atualizamos o banco de dados aqui. O backend é responsável por isso.
       if (isScheduled) {
-        const { error } = await supabase
-          .from('shorts_youtube')
-          .update({
-            publish_at: posting_date,
-          })
-          .eq('id', video.id);
-
-        if (error) throw error;
-        
         // Remove da lista local
         setVideos(prev => prev.filter(v => v.id !== video.id));
-        alert('Vídeo agendado com sucesso!');
+        alert('Vídeo agendado com sucesso! O processamento será concluído pelo backend.');
       } else {
         alert('Solicitação de publicação imediata enviada!');
       }
