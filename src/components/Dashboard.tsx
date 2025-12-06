@@ -2,16 +2,15 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  PieChart, Pie, Cell, BarChart, Bar, Legend
+  PieChart, Pie, Cell, Legend
 } from 'recharts';
 import { 
-  Youtube, Calendar, Video, Trash2, AlertCircle, Loader2, 
+  Youtube, Calendar, Sparkles, Trash2, AlertCircle, Loader2, 
   TrendingUp, Activity, Layers, Zap 
 } from 'lucide-react';
 
 // --- Utilitários e Configurações ---
 
-// Paleta de cores moderna e vibrante para os canais
 const COLORS = [
   '#6366f1', // Indigo
   '#ec4899', // Pink
@@ -23,9 +22,8 @@ const COLORS = [
   '#06b6d4', // Cyan
 ];
 
-// Função para gerar cor consistente baseada no nome do canal
 const getChannelColor = (channelName: string, index: number) => {
-  if (!channelName) return '#9ca3af'; // Cinza para sem canal
+  if (!channelName) return '#9ca3af';
   return COLORS[index % COLORS.length];
 };
 
@@ -90,11 +88,10 @@ const Dashboard: React.FC = () => {
     const fetchData = async () => {
       setLoading(true);
       try {
-        // Buscamos todos os dados relevantes para processar no front
-        // Em produção com milhares de registros, isso deveria ser uma View ou RPC no Supabase
+        // Adicionado link_s3 para validação de integridade
         const { data, error } = await supabase
           .from('shorts_youtube')
-          .select('id, status, channel, created_at, publish_at, failed');
+          .select('id, status, channel, created_at, publish_at, failed, link_s3');
 
         if (error) throw error;
         setRawData(data || []);
@@ -109,40 +106,89 @@ const Dashboard: React.FC = () => {
     fetchData();
   }, []);
 
-  // --- Processamento de Dados (Memoized) ---
+  // --- Processamento de Dados (Lógica Ajustada) ---
 
-  const stats = useMemo(() => {
-    return {
-      posted: rawData.filter(i => i.status === 'Posted' && !i.failed).length,
-      scheduled: rawData.filter(i => i.publish_at && new Date(i.publish_at) > new Date() && !i.failed).length,
-      inQueue: rawData.filter(i => i.status === 'Created' && !i.publish_at && !i.failed).length,
-      reproved: rawData.filter(i => i.failed).length,
-    };
-  }, [rawData]);
+  const channelStats = useMemo(() => {
+    const channels: Record<string, { 
+      name: string, 
+      total: number, 
+      posted: number, 
+      scheduled: number, 
+      recent: number, 
+      reproved: number 
+    }> = {};
 
-  // Dados por Canal
-  const channelData = useMemo(() => {
-    const channels: Record<string, { name: string, total: number, posted: number, scheduled: number, queue: number }> = {};
+    const now = new Date();
 
     rawData.forEach(item => {
-      const channelName = item.channel || 'Sem Canal';
-      if (!channels[channelName]) {
-        channels[channelName] = { name: channelName, total: 0, posted: 0, scheduled: 0, queue: 0 };
+      // 0. Validação de Integridade: Ignora itens sem link de vídeo (fantasmas)
+      if (!item.link_s3 || item.link_s3.trim() === '') {
+        return;
       }
+
+      const channelName = item.channel || 'Sem Canal';
       
-      channels[channelName].total++;
+      if (!channels[channelName]) {
+        channels[channelName] = { 
+          name: channelName, 
+          total: 0, 
+          posted: 0, 
+          scheduled: 0, 
+          recent: 0, 
+          reproved: 0 
+        };
+      }
+
+      let categorized = false;
+
+      // LÓGICA ESTRITA:
       
-      if (item.failed) return; // Não conta status específicos se falhou, mas conta no total de volume
-      
-      if (item.status === 'Posted') channels[channelName].posted++;
-      else if (item.publish_at && new Date(item.publish_at) > new Date()) channels[channelName].scheduled++;
-      else if (item.status === 'Created') channels[channelName].queue++;
+      // 1. Reprovados: Flag de falha ativa (Prioridade Máxima)
+      if (item.failed) {
+        channels[channelName].reproved++;
+        categorized = true;
+      } 
+      // 2. Agendados: Status 'Posted' E Data Futura
+      else if (item.status === 'Posted' && item.publish_at && item.publish_at.trim() !== '' && new Date(item.publish_at) > now) {
+        channels[channelName].scheduled++;
+        categorized = true;
+      }
+      // 3. Postados: Status 'Posted' (Se não caiu no if acima, é porque a data é passada/presente ou nula)
+      else if (item.status === 'Posted') {
+        channels[channelName].posted++;
+        categorized = true;
+      } 
+      // 4. Recentes: Status 'Created' E SEM DATA DE PUBLICAÇÃO
+      else if (item.status === 'Created') {
+        // Correção: Só conta como recente se NÃO tiver data de publicação definida.
+        // Isso alinha com a query da tela de Recentes (.is('publish_at', null))
+        if (!item.publish_at || item.publish_at.trim() === '') {
+          channels[channelName].recent++;
+          categorized = true;
+        }
+      }
+
+      // Incrementa o total APENAS se foi categorizado em um dos grupos válidos
+      if (categorized) {
+        channels[channelName].total++;
+      }
     });
 
+    // Ordena por volume total
     return Object.values(channels).sort((a, b) => b.total - a.total);
   }, [rawData]);
 
-  // Dados para o Gráfico de Timeline (Últimos 7 dias)
+  // Totais Globais
+  const globalStats = useMemo(() => {
+    return channelStats.reduce((acc, curr) => ({
+      posted: acc.posted + curr.posted,
+      scheduled: acc.scheduled + curr.scheduled,
+      recent: acc.recent + curr.recent,
+      reproved: acc.reproved + curr.reproved
+    }), { posted: 0, scheduled: 0, recent: 0, reproved: 0 });
+  }, [channelStats]);
+
+  // Dados para o Gráfico de Timeline
   const timelineData = useMemo(() => {
     const days = 7;
     const data: any[] = [];
@@ -155,12 +201,12 @@ const Dashboard: React.FC = () => {
       
       const dayStats: any = { name: dateStr };
       
-      // Inicializa contadores para cada canal top
-      channelData.forEach(c => dayStats[c.name] = 0);
+      channelStats.forEach(c => dayStats[c.name] = 0);
 
-      // Preenche
       rawData.forEach(item => {
-        if (!item.created_at) return;
+        // Aplica o mesmo filtro de integridade aqui
+        if (!item.created_at || !item.link_s3 || item.link_s3.trim() === '') return;
+        
         const itemDate = new Date(item.created_at);
         if (itemDate.getDate() === d.getDate() && itemDate.getMonth() === d.getMonth()) {
           const cName = item.channel || 'Sem Canal';
@@ -173,7 +219,7 @@ const Dashboard: React.FC = () => {
       data.push(dayStats);
     }
     return data;
-  }, [rawData, channelData]);
+  }, [rawData, channelStats]);
 
   if (loading) {
     return (
@@ -208,32 +254,32 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* KPI Cards - Bento Grid Top */}
+      {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard 
-          title="Vídeos Postados" 
-          value={stats.posted} 
+          title="Postados" 
+          value={globalStats.posted} 
           icon={<Youtube size={24} />} 
           colorClass="text-green-600"
           bgClass="bg-green-100"
         />
         <StatCard 
           title="Agendados" 
-          value={stats.scheduled} 
+          value={globalStats.scheduled} 
           icon={<Calendar size={24} />} 
           colorClass="text-purple-600"
           bgClass="bg-purple-100"
         />
         <StatCard 
-          title="Na Fila" 
-          value={stats.inQueue} 
-          icon={<Video size={24} />} 
+          title="Recentes" 
+          value={globalStats.recent} 
+          icon={<Sparkles size={24} />} 
           colorClass="text-blue-600"
           bgClass="bg-blue-100"
         />
         <StatCard 
           title="Reprovados" 
-          value={stats.reproved} 
+          value={globalStats.reproved} 
           icon={<Trash2 size={24} />} 
           colorClass="text-red-600"
           bgClass="bg-red-100"
@@ -243,7 +289,7 @@ const Dashboard: React.FC = () => {
       {/* Main Charts Section */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* Timeline Chart (Ocupa 2 colunas) */}
+        {/* Timeline Chart */}
         <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
           <div className="flex items-center justify-between mb-6">
             <div>
@@ -259,7 +305,7 @@ const Dashboard: React.FC = () => {
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={timelineData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>
-                  {channelData.map((channel, index) => (
+                  {channelStats.map((channel, index) => (
                     <linearGradient key={channel.name} id={`color${index}`} x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor={getChannelColor(channel.name, index)} stopOpacity={0.3}/>
                       <stop offset="95%" stopColor={getChannelColor(channel.name, index)} stopOpacity={0}/>
@@ -282,7 +328,7 @@ const Dashboard: React.FC = () => {
                 <Tooltip content={<CustomTooltip />} />
                 <Legend iconType="circle" wrapperStyle={{ paddingTop: '20px' }} />
                 
-                {channelData.map((channel, index) => (
+                {channelStats.map((channel, index) => (
                   <Area
                     key={channel.name}
                     type="monotone"
@@ -298,7 +344,7 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Distribution Chart (Ocupa 1 coluna) */}
+        {/* Distribution Chart */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col">
           <div className="mb-6">
             <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
@@ -313,7 +359,7 @@ const Dashboard: React.FC = () => {
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={channelData}
+                    data={channelStats}
                     cx="50%"
                     cy="50%"
                     innerRadius={60}
@@ -321,7 +367,7 @@ const Dashboard: React.FC = () => {
                     paddingAngle={5}
                     dataKey="total"
                   >
-                    {channelData.map((entry, index) => (
+                    {channelStats.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={getChannelColor(entry.name, index)} strokeWidth={0} />
                     ))}
                   </Pie>
@@ -331,13 +377,15 @@ const Dashboard: React.FC = () => {
             </div>
             {/* Central Text */}
             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <span className="text-3xl font-bold text-gray-900">{rawData.length}</span>
+              <span className="text-3xl font-bold text-gray-900">
+                {channelStats.reduce((acc, curr) => acc + curr.total, 0)}
+              </span>
               <span className="text-xs text-gray-500 uppercase tracking-wider">Total</span>
             </div>
           </div>
 
           <div className="mt-4 space-y-3">
-            {channelData.slice(0, 4).map((channel, index) => (
+            {channelStats.slice(0, 4).map((channel, index) => (
               <div key={channel.name} className="flex items-center justify-between text-sm">
                 <div className="flex items-center gap-2">
                   <div 
@@ -346,7 +394,9 @@ const Dashboard: React.FC = () => {
                   />
                   <span className="text-gray-600 truncate max-w-[120px]">{channel.name}</span>
                 </div>
-                <span className="font-semibold text-gray-900">{Math.round((channel.total / rawData.length) * 100)}%</span>
+                <span className="font-semibold text-gray-900">
+                  {channel.total > 0 ? Math.round((channel.total / channelStats.reduce((acc, curr) => acc + curr.total, 0)) * 100) : 0}%
+                </span>
               </div>
             ))}
           </div>
@@ -360,7 +410,7 @@ const Dashboard: React.FC = () => {
           Performance por Canal
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-          {channelData.map((channel, index) => (
+          {channelStats.map((channel, index) => (
             <div 
               key={channel.name} 
               className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm hover:shadow-md transition-shadow relative overflow-hidden"
@@ -398,13 +448,19 @@ const Dashboard: React.FC = () => {
                     />
                     <div 
                       className="bg-blue-400 h-full" 
-                      style={{ width: `${(channel.queue / channel.total) * 100}%` }} 
-                      title="Fila"
+                      style={{ width: `${(channel.recent / channel.total) * 100}%` }} 
+                      title="Recentes"
+                    />
+                     <div 
+                      className="bg-red-400 h-full" 
+                      style={{ width: `${(channel.reproved / channel.total) * 100}%` }} 
+                      title="Reprovados"
                     />
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 pt-2">
+                {/* Grid de Estatísticas do Canal */}
+                <div className="grid grid-cols-2 gap-2 pt-2">
                   <div className="text-center p-2 bg-green-50 rounded-lg">
                     <div className="text-lg font-bold text-green-700">{channel.posted}</div>
                     <div className="text-[10px] uppercase tracking-wide text-green-600 font-semibold">Postados</div>
@@ -414,8 +470,12 @@ const Dashboard: React.FC = () => {
                     <div className="text-[10px] uppercase tracking-wide text-purple-600 font-semibold">Agendados</div>
                   </div>
                   <div className="text-center p-2 bg-blue-50 rounded-lg">
-                    <div className="text-lg font-bold text-blue-700">{channel.queue}</div>
-                    <div className="text-[10px] uppercase tracking-wide text-blue-600 font-semibold">Fila</div>
+                    <div className="text-lg font-bold text-blue-700">{channel.recent}</div>
+                    <div className="text-[10px] uppercase tracking-wide text-blue-600 font-semibold">Recentes</div>
+                  </div>
+                  <div className="text-center p-2 bg-red-50 rounded-lg">
+                    <div className="text-lg font-bold text-red-700">{channel.reproved}</div>
+                    <div className="text-[10px] uppercase tracking-wide text-red-600 font-semibold">Reprovados</div>
                   </div>
                 </div>
               </div>

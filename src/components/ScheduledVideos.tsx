@@ -8,7 +8,7 @@ interface Video {
   title?: string;
   description?: string;
   publish_at?: string;
-  channel?: string; // Added channel field
+  channel?: string;
 }
 
 type ViewMode = 'grid' | 'list';
@@ -28,11 +28,12 @@ const ScheduledVideos: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      // Added 'channel' to the select query
+      // Lógica corrigida: Status Posted E Data futura
       const { data, error } = await supabase
         .from('shorts_youtube')
         .select('id, link_s3, title, description, publish_at, channel')
         .eq('failed', false)
+        .eq('status', 'Posted') // Garante que só pega se estiver com status Posted
         .not('publish_at', 'is', null)
         .gt('publish_at', new Date().toISOString())
         .order('publish_at', { ascending: true });

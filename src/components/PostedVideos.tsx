@@ -8,6 +8,7 @@ interface Video {
   title?: string;
   description?: string;
   youtube_id?: string;
+  publish_at?: string;
 }
 
 type ViewMode = 'grid' | 'list';
@@ -27,11 +28,15 @@ const PostedVideos: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
+      const now = new Date().toISOString();
+      
+      // Lógica corrigida: Status Posted E (Data passada OU Data nula)
       const { data, error } = await supabase
         .from('shorts_youtube')
-        .select('id, link_s3, title, description, youtube_id')
+        .select('id, link_s3, title, description, youtube_id, publish_at')
         .eq('failed', false)
-        .eq('status', 'Posted');
+        .eq('status', 'Posted')
+        .or(`publish_at.lte.${now},publish_at.is.null`);
 
       if (error) throw error;
 
@@ -44,6 +49,7 @@ const PostedVideos: React.FC = () => {
     } catch (err: any)
     {
       setError('Não foi possível carregar os vídeos postados.');
+      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -107,7 +113,7 @@ const PostedVideos: React.FC = () => {
         <div className="text-center py-20 bg-white rounded-lg shadow-sm border border-gray-100">
           <PlayCircle size={48} className="mx-auto text-gray-300 mb-4" />
           <h3 className="text-gray-800 text-xl font-semibold">Nenhum vídeo postado</h3>
-          <p className="text-gray-500 text-sm mt-2">Ainda não há vídeos com o status "Posted".</p>
+          <p className="text-gray-500 text-sm mt-2">Ainda não há vídeos publicados (com data passada).</p>
         </div>
       );
     }
