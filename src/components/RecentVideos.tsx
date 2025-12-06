@@ -3,21 +3,8 @@ import { supabase } from '../lib/supabaseClient';
 import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, X, Calendar, Sparkles, Tv } from 'lucide-react';
 import PostModal, { Video as PostModalVideo } from './PostModal';
 
-// Interface compatível com PostModal
-interface Video {
-  id: string;
-  link_s3: string;
-  title?: string;
-  description?: string;
-  publish_at?: string | null;
-  created_at: string;
-  channel?: string;
-  duration?: number;
-  // Campos adicionais para compatibilidade
-  url: string;
-  status: string;
-  failed?: boolean;
-}
+// Reutiliza a interface do PostModal para consistência
+type Video = PostModalVideo;
 
 type ViewMode = 'grid' | 'list';
 
@@ -42,9 +29,10 @@ const RecentVideos: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
+      // Seleciona explicitamente os campos necessários
       const { data, error } = await supabase
         .from('shorts_youtube')
-        .select('*')
+        .select('*') // Seleciona tudo para garantir que pegamos link_drive, baserow_id, etc.
         .eq('status', 'Created')
         .is('publish_at', null)
         .eq('failed', false)
@@ -52,13 +40,24 @@ const RecentVideos: React.FC = () => {
 
       if (error) throw error;
 
+      // Mapeamento explícito para garantir que nenhum campo fique undefined
       const validVideos = (data || []).filter((item): item is any => 
         item && item.link_s3 && item.link_s3.trim() !== ''
       ).map((item: any) => ({
-        ...item,
-        url: item.link_s3, // Mapeia link_s3 para url
+        id: item.id,
+        baserow_id: item.baserow_id || 0, // Garante int
+        title: item.title || '',
+        description: item.description || '',
+        link_s3: item.link_s3,
+        link_drive: item.link_drive || '',
+        channel: item.channel || '',
+        hashtags: item.hashtags || [],
+        tags: item.tags || [],
+        duration: item.duration || 0,
         status: item.status || 'Created',
-        duration: item.duration || 0
+        created_at: item.created_at,
+        failed: item.failed || false,
+        url: item.link_s3 // Compatibilidade
       }));
       
       setVideos(validVideos);
@@ -71,7 +70,7 @@ const RecentVideos: React.FC = () => {
     }
   };
 
-  const handleReprove = async (id: string, e: React.MouseEvent) => {
+  const handleReprove = async (id: string | number, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!window.confirm('Tem certeza que deseja reprovar este vídeo? Ele será movido para a lista de reprovados.')) return;
 
@@ -130,83 +129,87 @@ const RecentVideos: React.FC = () => {
     setIsPostModalOpen(true);
   };
 
-  // Lógica unificada de Postagem (Idêntica ao VideoGallery)
+  // Lógica de Postagem com Payload Completo e Correto
   const handlePost = async (video: PostModalVideo, options: { scheduleDate?: string; webhookUrl: string }) => {
     setIsPosting(true);
-    console.log('--- RECENTES: INÍCIO DO PROCESSO DE POSTAGEM ---');
-    console.log('Vídeo ID:', video.id);
-    console.log('Opções:', options);
+    console.log('--- INÍCIO DO PROCESSO DE POSTAGEM ---');
 
     try {
-      // SE scheduleDate EXISTE = AGENDAMENTO (Update no Banco)
-      if (options.scheduleDate) {
-        console.log('MODO: AGENDAMENTO (Atualizando banco de dados...)');
-        
+      if (!options.webhookUrl) {
+        throw new Error('URL do Webhook não está definida.');
+      }
+
+      // 1. Determinar privacy_status e posting_date com base na modal
+      const isScheduled = !!options.scheduleDate;
+      
+      let privacy_status: string;
+      let posting_date: string;
+
+      if (isScheduled) {
+        // Se for AGENDADO:
+        privacy_status = 'private';
+        posting_date = options.scheduleDate!; // Data escolhida na modal
+      } else {
+        // Se for POSTAR AGORA:
+        privacy_status = 'public';
+        posting_date = new Date().toISOString(); // Data atual (now)
+      }
+
+      // 2. Construir o Payload Exato
+      const payload = {
+        link_drive: video.link_drive || "",
+        link_s3: video.link_s3,
+        title: video.title,
+        description: video.description || "",
+        hashtags: Array.isArray(video.hashtags) ? video.hashtags : [],
+        tags: Array.isArray(video.tags) ? video.tags : [],
+        channel: video.channel || "",
+        baserow_id: video.baserow_id || 0,
+        id: video.id,
+        // Campos condicionais definidos acima
+        privacy_status: privacy_status,
+        posting_date: posting_date
+      };
+
+      console.log('Enviando payload para Webhook:', payload);
+
+      // 3. Enviar para o Webhook
+      const response = await fetch(options.webhookUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'Sem detalhes');
+        throw new Error(`Erro no Webhook (${response.status}): ${errorText}`);
+      }
+      
+      console.log('Webhook disparado com sucesso!');
+
+      // 4. Se for agendamento, atualizar o banco de dados para remover da lista de recentes
+      if (isScheduled) {
         const { error } = await supabase
           .from('shorts_youtube')
           .update({
-            publish_at: options.scheduleDate,
+            publish_at: posting_date,
           })
           .eq('id', video.id);
 
         if (error) throw error;
         
-        console.log('Banco atualizado. Removendo da lista de recentes.');
-        alert('Vídeo agendado com sucesso!');
-        
-        // Remove da lista local pois agora tem data de publicação
+        // Remove da lista local
         setVideos(prev => prev.filter(v => v.id !== video.id));
-        
-        if (selectedVideo?.id === video.id) {
-          setSelectedVideo(null);
-        }
-
+        alert('Vídeo agendado com sucesso!');
       } else {
-        // SE scheduleDate NÃO EXISTE = POSTAR AGORA (Webhook APENAS)
-        console.log('MODO: POSTAR AGORA (Disparando Webhook APENAS)');
-        console.log('NENHUMA alteração será feita no banco de dados.');
-
-        if (!options.webhookUrl) {
-          throw new Error('URL do Webhook não está definida.');
-        }
-
-        const payload = {
-          id: video.id,
-          title: video.title,
-          url: video.url,
-          duration: video.duration,
-          channel: video.channel,
-          created_at: video.created_at,
-          action: 'post_now'
-        };
-
-        console.log('Enviando payload:', payload);
-
-        try {
-          const response = await fetch(options.webhookUrl, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(payload)
-          });
-
-          if (!response.ok) {
-            const errorText = await response.text().catch(() => 'Sem detalhes');
-            throw new Error(`Erro no Webhook (${response.status}): ${errorText}`);
-          }
-          
-          console.log('Webhook disparado com sucesso!');
-          alert('Solicitação enviada! O backend processará o vídeo em breve.');
-          
-        } catch (fetchError: any) {
-          console.error('Erro ao chamar webhook:', fetchError);
-          throw new Error(`Falha na conexão com Webhook: ${fetchError.message}`);
-        }
+        alert('Solicitação de publicação imediata enviada!');
       }
       
       setIsPostModalOpen(false);
       setVideoToPost(null);
+      if (selectedVideo?.id === video.id) setSelectedVideo(null);
       
     } catch (error: any) {
       console.error('ERRO FATAL:', error);

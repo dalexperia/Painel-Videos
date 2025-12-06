@@ -12,9 +12,9 @@ try {
   console.error("Erro ao registrar locale pt-BR:", e);
 }
 
-// Interface atualizada com TODOS os campos do banco necessários
+// Interface atualizada com TODOS os campos do banco necessários para o Payload
 export interface Video {
-  id: number | string; // Suporta int ou uuid
+  id: number | string;
   baserow_id?: number;
   title: string;
   description?: string;
@@ -29,7 +29,7 @@ export interface Video {
   created_at: string;
   failed?: boolean;
   publish_at?: string;
-  url?: string; // Mantendo para compatibilidade visual, mas o payload usa link_s3
+  url?: string; // Mantido para compatibilidade visual
 }
 
 interface PostModalProps {
@@ -80,9 +80,6 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        // Alguns webhooks retornam 400/404 para payloads desconhecidos, 
-        // mas se respondeu, a conexão existe. 
-        // Vamos considerar erro apenas se for 5xx ou falha de rede.
         if (response.status >= 500) {
            throw new Error(`Erro do Servidor: ${response.status}`);
         }
@@ -93,10 +90,6 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
         throw new Error("Timeout: O servidor demorou para responder.");
       } else if (error.message.includes('Failed to fetch')) {
         throw new Error("Falha na conexão (Network Error).");
-      } else {
-        // Se não for erro de rede, assumimos que conectou mas rejeitou o payload de teste
-        // O que é aceitável para um health check simples
-        // throw new Error(error.message); 
       }
     }
   };
