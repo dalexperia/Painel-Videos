@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, Youtube, X } from 'lucide-react';
+import { fetchYouTubeStats, formatNumber, YouTubeStats } from '../lib/youtube';
+import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, Youtube, X, Eye, ThumbsUp, Calendar } from 'lucide-react';
 
 interface Video {
   id: string;
@@ -9,12 +10,14 @@ interface Video {
   description?: string;
   youtube_id?: string;
   publish_at?: string;
+  channel?: string; // Importante para saber qual API Key usar
 }
 
 type ViewMode = 'grid' | 'list';
 
 const PostedVideos: React.FC = () => {
   const [videos, setVideos] = useState<Video[]>([]);
+  const [videoStats, setVideoStats] = useState<Record<string, YouTubeStats>>({});
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -30,21 +33,66 @@ const PostedVideos: React.FC = () => {
     try {
       const now = new Date().toISOString();
       
-      // Lógica corrigida: Status Posted E (Data passada OU Data nula)
-      const { data, error } = await supabase
+      // 1. Buscar Vídeos
+      const { data: videosData, error: videosError } = await supabase
         .from('shorts_youtube')
-        .select('id, link_s3, title, description, youtube_id, publish_at')
+        .select('id, link_s3, title, description, youtube_id, publish_at, channel')
         .eq('failed', false)
         .eq('status', 'Posted')
-        .or(`publish_at.lte.${now},publish_at.is.null`);
+        .or(`publish_at.lte.${now},publish_at.is.null`)
+        .order('publish_at', { ascending: false });
 
-      if (error) throw error;
+      if (videosError) throw videosError;
 
-      const validVideos = (data || []).filter((video): video is Video => 
+      const validVideos = (videosData || []).filter((video): video is Video => 
         video && video.link_s3 && video.link_s3.trim() !== ''
       );
       
       setVideos(validVideos);
+
+      // 2. Buscar Configurações (API Keys)
+      // Precisamos saber qual API Key usar para cada canal
+      const { data: settingsData, error: settingsError } = await supabase
+        .from('shorts_settings')
+        .select('channel, youtube_api_key');
+      
+      if (settingsError) console.error("Erro ao buscar configurações:", settingsError);
+
+      // Mapa de Canal -> API Key
+      const channelKeys: Record<string, string> = {};
+      if (settingsData) {
+        settingsData.forEach(s => {
+          if (s.channel && s.youtube_api_key) {
+            channelKeys[s.channel] = s.youtube_api_key;
+          }
+        });
+      }
+
+      // 3. Agrupar vídeos por canal para fazer requisições em lote por chave
+      const videosByChannel: Record<string, string[]> = {};
+      
+      validVideos.forEach(v => {
+        if (v.youtube_id && v.channel && channelKeys[v.channel]) {
+          if (!videosByChannel[v.channel]) {
+            videosByChannel[v.channel] = [];
+          }
+          videosByChannel[v.channel].push(v.youtube_id);
+        }
+      });
+
+      // 4. Buscar estatísticas para cada canal que tem chave
+      const allStats: Record<string, YouTubeStats> = {};
+      
+      const promises = Object.entries(videosByChannel).map(async ([channel, ids]) => {
+        const apiKey = channelKeys[channel];
+        if (apiKey) {
+          const channelStats = await fetchYouTubeStats(ids, apiKey);
+          Object.assign(allStats, channelStats);
+        }
+      });
+
+      await Promise.all(promises);
+      setVideoStats(allStats);
 
     } catch (err: any)
     {
@@ -121,153 +169,223 @@ const PostedVideos: React.FC = () => {
     if (viewMode === 'grid') {
       return (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {videos.map((video) => (
-            <div 
-              key={video.id} 
-              className="group bg-white rounded-xl shadow-md hover:shadow-lg transition-all duration-300 border border-gray-100 overflow-hidden flex flex-col hover:-translate-y-1"
-            >
+          {videos.map((video) => {
+            const stats = video.youtube_id ? videoStats[video.youtube_id] : null;
+            
+            return (
               <div 
-                className="relative aspect-video bg-gray-900 cursor-pointer overflow-hidden"
-                onClick={() => setSelectedVideo(video)}
+                key={video.id} 
+                className="group bg-white rounded-xl shadow-md hover:shadow-lg transition-all duration-300 border border-gray-100 overflow-hidden flex flex-col hover:-translate-y-1"
               >
-                <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-800 to-gray-900">
-                  <video 
-                    src={video.link_s3}
-                    className="w-full h-full object-cover opacity-60 group-hover:opacity-40 transition-opacity"
-                    muted
-                    preload="metadata"
-                  />
+                <div 
+                  className="relative aspect-video bg-gray-900 cursor-pointer overflow-hidden"
+                  onClick={() => setSelectedVideo(video)}
+                >
+                  <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-800 to-gray-900">
+                    <video 
+                      src={video.link_s3}
+                      className="w-full h-full object-cover opacity-60 group-hover:opacity-40 transition-opacity"
+                      muted
+                      preload="metadata"
+                    />
+                  </div>
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors duration-300">
+                    <div className="bg-white/20 backdrop-blur-sm p-3 rounded-full opacity-0 group-hover:opacity-100 scale-75 group-hover:scale-100 transition-all duration-300">
+                      <PlayCircle size={32} className="text-white fill-white/20" />
+                    </div>
+                  </div>
+                  
+                  {/* Data de Publicação Badge */}
+                  {video.publish_at && (
+                    <div className="absolute top-2 left-2 bg-black/60 backdrop-blur-md text-white text-[10px] px-2 py-1 rounded-md flex items-center gap-1">
+                      <Calendar size={10} />
+                      <span>{new Date(video.publish_at).toLocaleDateString('pt-BR')}</span>
+                    </div>
+                  )}
                 </div>
-                <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors duration-300">
-                  <div className="bg-white/20 backdrop-blur-sm p-3 rounded-full opacity-0 group-hover:opacity-100 scale-75 group-hover:scale-100 transition-all duration-300">
-                    <PlayCircle size={32} className="text-white fill-white/20" />
+
+                <div className="p-4 flex flex-col flex-grow">
+                  <div className="flex justify-between items-start mb-1">
+                    <h3 className="font-semibold text-gray-800 line-clamp-2 min-h-[2.5rem] text-sm" title={video.title}>
+                      {video.title || 'Vídeo sem título'}
+                    </h3>
+                  </div>
+                  
+                  {/* YouTube Stats Row */}
+                  <div className="flex items-center gap-2 mb-3 mt-1">
+                    {stats ? (
+                      <>
+                        <div className="flex items-center gap-1 text-xs font-medium text-gray-600 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100" title="Visualizações">
+                          <Eye size={12} className="text-blue-500" />
+                          <span>{formatNumber(stats.viewCount)}</span>
+                        </div>
+                        <div className="flex items-center gap-1 text-xs font-medium text-gray-600 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100" title="Curtidas">
+                          <ThumbsUp size={12} className="text-green-500" />
+                          <span>{formatNumber(stats.likeCount)}</span>
+                        </div>
+                      </>
+                    ) : video.youtube_id ? (
+                      <div className="text-[10px] text-gray-400 italic">
+                        {video.channel ? 'Sem dados' : 'Canal não config.'}
+                      </div>
+                    ) : (
+                      <div className="text-[10px] text-gray-300 italic">Não publicado</div>
+                    )}
+                  </div>
+
+                  <p className="text-xs text-gray-500 mb-4 line-clamp-2 flex-grow" title={video.description}>
+                    {video.description || 'Sem descrição disponível.'}
+                  </p>
+                  
+                  <div className="mt-auto pt-4 flex items-center gap-2 border-t border-gray-100">
+                    {video.youtube_id ? (
+                      <a
+                        href={`https://www.youtube.com/watch?v=${video.youtube_id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
+                        title="Ver no YouTube"
+                      >
+                        <Youtube size={16} />
+                        <span>YouTube</span>
+                      </a>
+                    ) : (
+                      <button
+                        disabled
+                        className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 rounded-lg cursor-not-allowed"
+                        title="Link do YouTube não disponível"
+                      >
+                        <Youtube size={16} />
+                        <span>YouTube</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={(e) => handleDownload(video.link_s3, video.title || 'video', e)}
+                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+                      title="Baixar vídeo"
+                    >
+                      <Download size={16} />
+                      <span>Baixar</span>
+                    </button>
+                    <button
+                      onClick={(e) => handleReprove(video.id, e)}
+                      className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                      title="Reprovar vídeo"
+                    >
+                      <Trash2 size={18} />
+                    </button>
                   </div>
                 </div>
               </div>
-
-              <div className="p-4 flex flex-col flex-grow">
-                <h3 className="font-semibold text-gray-800 mb-1 line-clamp-2 min-h-[3rem]" title={video.title}>
-                  {video.title || 'Vídeo sem título'}
-                </h3>
-                <p className="text-xs text-gray-500 mb-4 line-clamp-2 flex-grow" title={video.description}>
-                  {video.description || 'Sem descrição disponível.'}
-                </p>
-                <div className="mt-auto pt-4 flex items-center gap-2 border-t border-gray-100">
-                  {video.youtube_id ? (
-                    <a
-                      href={`https://www.youtube.com/watch?v=${video.youtube_id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
-                      title="Ver no YouTube"
-                    >
-                      <Youtube size={16} />
-                      <span>YouTube</span>
-                    </a>
-                  ) : (
-                    <button
-                      disabled
-                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 rounded-lg cursor-not-allowed"
-                      title="Link do YouTube não disponível"
-                    >
-                      <Youtube size={16} />
-                      <span>YouTube</span>
-                    </button>
-                  )}
-                  <button
-                    onClick={(e) => handleDownload(video.link_s3, video.title || 'video', e)}
-                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
-                    title="Baixar vídeo"
-                  >
-                    <Download size={16} />
-                    <span>Baixar</span>
-                  </button>
-                  <button
-                    onClick={(e) => handleReprove(video.id, e)}
-                    className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                    title="Reprovar vídeo"
-                  >
-                    <Trash2 size={18} />
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       );
     }
 
     return (
       <div className="space-y-3">
-        {videos.map((video) => (
-          <div
-            key={video.id}
-            className="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 border border-gray-100 flex flex-col sm:flex-row items-start sm:items-center p-3 gap-4"
-          >
+        {videos.map((video) => {
+          const stats = video.youtube_id ? videoStats[video.youtube_id] : null;
+
+          return (
             <div
-              className="relative w-full sm:w-32 h-20 bg-gray-900 rounded-md overflow-hidden cursor-pointer flex-shrink-0 group"
-              onClick={() => setSelectedVideo(video)}
+              key={video.id}
+              className="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 border border-gray-100 flex flex-col sm:flex-row items-start sm:items-center p-3 gap-4"
             >
-              <video
-                src={video.link_s3}
-                className="w-full h-full object-cover"
-                muted
-                preload="metadata"
-              />
-              <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
-                <PlayCircle size={24} className="text-white" />
+              <div
+                className="relative w-full sm:w-32 h-20 bg-gray-900 rounded-md overflow-hidden cursor-pointer flex-shrink-0 group"
+                onClick={() => setSelectedVideo(video)}
+              >
+                <video
+                  src={video.link_s3}
+                  className="w-full h-full object-cover"
+                  muted
+                  preload="metadata"
+                />
+                <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <PlayCircle size={24} className="text-white" />
+                </div>
+              </div>
+              <div className="flex-grow min-w-0">
+                <h3 className="font-semibold text-gray-800 truncate" title={video.title}>
+                  {video.title || 'Vídeo sem título'}
+                </h3>
+                
+                {/* Stats na Lista */}
+                <div className="flex items-center gap-4 mt-1 mb-1">
+                  {stats ? (
+                    <>
+                      <div className="flex items-center gap-1 text-xs text-gray-500" title="Visualizações">
+                        <Eye size={12} className="text-blue-500" />
+                        <span>{formatNumber(stats.viewCount)}</span>
+                      </div>
+                      <div className="flex items-center gap-1 text-xs text-gray-500" title="Curtidas">
+                        <ThumbsUp size={12} className="text-green-500" />
+                        <span>{formatNumber(stats.likeCount)}</span>
+                      </div>
+                    </>
+                  ) : video.youtube_id ? (
+                    <span className="text-[10px] text-gray-400">
+                       {video.channel ? 'Sem dados' : 'Canal não config.'}
+                    </span>
+                  ) : null}
+                  
+                  {video.publish_at && (
+                    <span className="text-[10px] text-gray-400 flex items-center gap-1">
+                      <Calendar size={10} />
+                      {new Date(video.publish_at).toLocaleDateString('pt-BR')}
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-sm text-gray-500 line-clamp-1" title={video.description}>
+                  {video.description || 'Sem descrição disponível.'}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 self-end sm:self-center">
+                {video.youtube_id ? (
+                  <a
+                    href={`https://www.youtube.com/watch?v=${video.youtube_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
+                    title="Ver no YouTube"
+                  >
+                    <Youtube size={16} />
+                    <span className="hidden md:inline">YouTube</span>
+                  </a>
+                ) : (
+                   <button
+                    disabled
+                    className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 rounded-lg cursor-not-allowed"
+                    title="Link do YouTube não disponível"
+                  >
+                    <Youtube size={16} />
+                    <span className="hidden md:inline">YouTube</span>
+                  </button>
+                )}
+                <button
+                  onClick={(e) => handleDownload(video.link_s3, video.title || 'video', e)}
+                  className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+                  title="Baixar vídeo"
+                >
+                  <Download size={16} />
+                  <span className="hidden md:inline">Baixar</span>
+                </button>
+                <button
+                  onClick={(e) => handleReprove(video.id, e)}
+                  className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                  title="Reprovar vídeo"
+                >
+                  <Trash2 size={18} />
+                </button>
               </div>
             </div>
-            <div className="flex-grow min-w-0">
-              <h3 className="font-semibold text-gray-800 truncate" title={video.title}>
-                {video.title || 'Vídeo sem título'}
-              </h3>
-              <p className="text-sm text-gray-500 line-clamp-2" title={video.description}>
-                {video.description || 'Sem descrição disponível.'}
-              </p>
-            </div>
-            <div className="flex items-center gap-2 self-end sm:self-center">
-              {video.youtube_id ? (
-                <a
-                  href={`https://www.youtube.com/watch?v=${video.youtube_id}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                  className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
-                  title="Ver no YouTube"
-                >
-                  <Youtube size={16} />
-                  <span className="hidden md:inline">YouTube</span>
-                </a>
-              ) : (
-                 <button
-                  disabled
-                  className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-gray-400 bg-gray-100 rounded-lg cursor-not-allowed"
-                  title="Link do YouTube não disponível"
-                >
-                  <Youtube size={16} />
-                  <span className="hidden md:inline">YouTube</span>
-                </button>
-              )}
-              <button
-                onClick={(e) => handleDownload(video.link_s3, video.title || 'video', e)}
-                className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
-                title="Baixar vídeo"
-              >
-                <Download size={16} />
-                <span className="hidden md:inline">Baixar</span>
-              </button>
-              <button
-                onClick={(e) => handleReprove(video.id, e)}
-                className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                title="Reprovar vídeo"
-              >
-                <Trash2 size={18} />
-              </button>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     );
   };
@@ -333,6 +451,23 @@ const PostedVideos: React.FC = () => {
               <h2 className="font-bold text-xl mb-2 truncate" title={selectedVideo.title || ''}>
                 {selectedVideo.title || 'Visualização'}
               </h2>
+              
+              {/* Stats no Modal */}
+              {selectedVideo.youtube_id && videoStats[selectedVideo.youtube_id] && (
+                <div className="flex items-center gap-4 mb-4">
+                  <div className="flex items-center gap-2 bg-white/10 px-3 py-1.5 rounded-lg">
+                    <Eye size={16} className="text-blue-400" />
+                    <span className="font-bold">{formatNumber(videoStats[selectedVideo.youtube_id].viewCount)}</span>
+                    <span className="text-xs text-gray-400">visualizações</span>
+                  </div>
+                  <div className="flex items-center gap-2 bg-white/10 px-3 py-1.5 rounded-lg">
+                    <ThumbsUp size={16} className="text-green-400" />
+                    <span className="font-bold">{formatNumber(videoStats[selectedVideo.youtube_id].likeCount)}</span>
+                    <span className="text-xs text-gray-400">curtidas</span>
+                  </div>
+                </div>
+              )}
+
               <p className="text-gray-300 text-sm mb-4 line-clamp-3">
                 {selectedVideo.description || 'Sem descrição.'}
               </p>

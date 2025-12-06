@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle } from 'lucide-react';
+import { Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle, Key } from 'lucide-react';
 
 interface Setting {
   id: number;
   channel: string;
   webhook: string;
+  youtube_api_key?: string;
 }
 
 const Settings: React.FC = () => {
@@ -17,6 +18,7 @@ const Settings: React.FC = () => {
   const [isEditing, setIsEditing] = useState<number | null>(null);
   const [currentChannel, setCurrentChannel] = useState('');
   const [currentWebhook, setCurrentWebhook] = useState('');
+  const [currentApiKey, setCurrentApiKey] = useState('');
 
   const fetchSettings = async () => {
     setLoading(true);
@@ -46,6 +48,7 @@ const Settings: React.FC = () => {
     setIsEditing(null);
     setCurrentChannel('');
     setCurrentWebhook('');
+    setCurrentApiKey('');
   };
 
   const handleAddNew = () => {
@@ -53,6 +56,7 @@ const Settings: React.FC = () => {
     setIsEditing(null);
     setCurrentChannel('');
     setCurrentWebhook('');
+    setCurrentApiKey('');
     window.scrollTo(0, 0);
   };
 
@@ -60,6 +64,7 @@ const Settings: React.FC = () => {
     setIsEditing(setting.id);
     setCurrentChannel(setting.channel);
     setCurrentWebhook(setting.webhook);
+    setCurrentApiKey(setting.youtube_api_key || '');
     setIsFormOpen(true);
     window.scrollTo(0, 0);
   };
@@ -92,16 +97,27 @@ const Settings: React.FC = () => {
 
     try {
       let error;
+      const payload = {
+        channel: currentChannel,
+        webhook: currentWebhook,
+        youtube_api_key: currentApiKey || null // Salva null se estiver vazio
+      };
+
       if (isEditing) {
+        // No update, não enviamos o channel se ele não deve ser alterado (embora a UI bloqueie)
+        // Mas aqui vamos atualizar tudo exceto o ID
         const { error: updateError } = await supabase
           .from('shorts_settings')
-          .update({ webhook: currentWebhook })
+          .update({ 
+            webhook: currentWebhook,
+            youtube_api_key: currentApiKey || null
+          })
           .eq('id', isEditing);
         error = updateError;
       } else {
         const { error: insertError } = await supabase
           .from('shorts_settings')
-          .insert({ channel: currentChannel, webhook: currentWebhook });
+          .insert(payload);
         error = insertError;
       }
 
@@ -132,12 +148,28 @@ const Settings: React.FC = () => {
       <div className="space-y-4">
         {settings.map((setting) => (
           <div key={setting.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 hover:border-gray-300 transition-all">
-            <div className="flex justify-between items-center">
-              <div>
+            <div className="flex justify-between items-start">
+              <div className="space-y-1">
                 <div className="flex items-center gap-3">
                   <p className="font-bold text-gray-800 text-lg">{setting.channel}</p>
+                  {!setting.youtube_api_key && (
+                    <span className="text-[10px] bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full font-medium border border-yellow-200">
+                      Sem API Key
+                    </span>
+                  )}
                 </div>
-                <p className="text-sm text-gray-500 truncate max-w-xs sm:max-w-md">{setting.webhook}</p>
+                <p className="text-sm text-gray-500 truncate max-w-xs sm:max-w-md flex items-center gap-2">
+                  <span className="font-medium text-gray-400">Webhook:</span> {setting.webhook}
+                </p>
+                {setting.youtube_api_key && (
+                  <p className="text-sm text-gray-500 truncate max-w-xs sm:max-w-md flex items-center gap-2">
+                    <Key size={14} className="text-gray-400" />
+                    <span className="font-medium text-gray-400">API Key:</span> 
+                    <span className="font-mono text-xs bg-gray-50 px-1 rounded">
+                      {setting.youtube_api_key.substring(0, 8)}...
+                    </span>
+                  </p>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <button 
@@ -201,16 +233,40 @@ const Settings: React.FC = () => {
                 />
                 {isEditing && <p className="text-xs text-gray-500 mt-1">O nome do canal não pode ser alterado.</p>}
               </div>
+              
               <div>
-                <label htmlFor="webhook" className="block text-sm font-medium text-gray-700 mb-1">Webhook URL</label>
+                <label htmlFor="webhook" className="block text-sm font-medium text-gray-700 mb-1">Webhook URL (Discord/n8n)</label>
                 <input
                   type="text"
                   id="webhook"
                   value={currentWebhook}
                   onChange={(e) => setCurrentWebhook(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-brand-500 focus:border-brand-500"
-                  placeholder="https://discord.com/api/webhooks/..."
+                  placeholder="https://..."
                 />
+              </div>
+
+              <div>
+                <label htmlFor="apiKey" className="block text-sm font-medium text-gray-700 mb-1">
+                  YouTube API Key
+                  <span className="ml-2 text-xs font-normal text-gray-500">(Opcional, para exibir visualizações/likes)</span>
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Key size={16} className="text-gray-400" />
+                  </div>
+                  <input
+                    type="text"
+                    id="apiKey"
+                    value={currentApiKey}
+                    onChange={(e) => setCurrentApiKey(e.target.value)}
+                    className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-brand-500 focus:border-brand-500 font-mono text-sm"
+                    placeholder="AIzaSy..."
+                  />
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Necessária apenas para ler estatísticas públicas. Não compartilhe sua chave privada.
+                </p>
               </div>
             </div>
             <div className="flex justify-end gap-3 mt-6">
