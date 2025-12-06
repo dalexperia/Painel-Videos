@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, X, Calendar } from 'lucide-react';
+import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, X, Calendar, Tv } from 'lucide-react';
 
 interface Video {
   id: string;
@@ -8,6 +8,7 @@ interface Video {
   title?: string;
   description?: string;
   publish_at?: string;
+  channel?: string; // Added channel field
 }
 
 type ViewMode = 'grid' | 'list';
@@ -27,9 +28,10 @@ const ScheduledVideos: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
+      // Added 'channel' to the select query
       const { data, error } = await supabase
         .from('shorts_youtube')
-        .select('id, link_s3, title, description, publish_at')
+        .select('id, link_s3, title, description, publish_at, channel')
         .eq('failed', false)
         .not('publish_at', 'is', null)
         .gt('publish_at', new Date().toISOString())
@@ -95,7 +97,7 @@ const ScheduledVideos: React.FC = () => {
         year: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
-        timeZone: 'UTC', // Display the time as it is in UTC
+        timeZone: 'UTC',
       }).format(date);
     } catch (e) {
       return 'Data inválida';
@@ -155,6 +157,13 @@ const ScheduledVideos: React.FC = () => {
                     <PlayCircle size={32} className="text-white fill-white/20" />
                   </div>
                 </div>
+                {/* Channel Badge */}
+                {video.channel && (
+                  <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-md text-white text-xs px-2 py-1 rounded-md flex items-center gap-1">
+                    <Tv size={10} />
+                    <span className="truncate max-w-[100px]">{video.channel}</span>
+                  </div>
+                )}
               </div>
 
               <div className="p-4 flex flex-col flex-grow">
@@ -214,9 +223,17 @@ const ScheduledVideos: React.FC = () => {
               <h3 className="font-semibold text-gray-800 truncate" title={video.title}>
                 {video.title || 'Vídeo sem título'}
               </h3>
-              <div className="flex items-center gap-2 text-sm text-purple-600 mt-1">
-                <Calendar size={14} />
-                <span className="font-medium">{formatPublishDate(video.publish_at)}</span>
+              <div className="flex flex-wrap items-center gap-3 mt-1">
+                <div className="flex items-center gap-2 text-sm text-purple-600">
+                  <Calendar size={14} />
+                  <span className="font-medium">{formatPublishDate(video.publish_at)}</span>
+                </div>
+                {video.channel && (
+                  <div className="flex items-center gap-1 text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
+                    <Tv size={12} />
+                    <span>{video.channel}</span>
+                  </div>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-2 self-end sm:self-center">
@@ -303,10 +320,20 @@ const ScheduledVideos: React.FC = () => {
               <h2 className="font-bold text-xl mb-2 truncate" title={selectedVideo.title || ''}>
                 {selectedVideo.title || 'Visualização'}
               </h2>
-              <div className="flex items-center gap-2 text-sm text-purple-300 bg-purple-500/20 rounded-md px-3 py-1.5 mb-4">
-                <Calendar size={16} />
-                <span className="font-medium">Agendado para: {formatPublishDate(selectedVideo.publish_at)}</span>
+              
+              <div className="flex flex-wrap gap-2 mb-4">
+                <div className="flex items-center gap-2 text-sm text-purple-300 bg-purple-500/20 rounded-md px-3 py-1.5">
+                  <Calendar size={16} />
+                  <span className="font-medium">{formatPublishDate(selectedVideo.publish_at)}</span>
+                </div>
+                {selectedVideo.channel && (
+                  <div className="flex items-center gap-2 text-sm text-blue-300 bg-blue-500/20 rounded-md px-3 py-1.5">
+                    <Tv size={16} />
+                    <span className="font-medium">{selectedVideo.channel}</span>
+                  </div>
+                )}
               </div>
+
               <p className="text-gray-300 text-sm mb-4 line-clamp-3">
                 {selectedVideo.description || 'Sem descrição.'}
               </p>

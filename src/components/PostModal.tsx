@@ -1,12 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { Video } from './VideoGallery';
-import { Send, Calendar, X, Clock, Link } from 'lucide-react'; // Added Link icon
-import { supabase } from '../lib/supabaseClient'; // Import supabase client
+import { Send, Calendar, X, Clock, Link, AlertTriangle } from 'lucide-react';
+import { supabase } from '../lib/supabaseClient';
+
+// Extend the Video interface locally to ensure we handle the channel property
+// even if the imported interface doesn't have it yet.
+interface ExtendedVideo extends Video {
+  channel?: string;
+}
 
 interface PostModalProps {
-  video: Video | null;
+  video: ExtendedVideo | null;
   onClose: () => void;
-  onPost: (video: Video, options: { scheduleDate?: string; webhookUrl: string }) => void; // Updated onPost signature
+  onPost: (video: Video, options: { scheduleDate?: string; webhookUrl: string }) => void;
   isPosting: boolean;
 }
 
@@ -16,6 +22,7 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
   const [activeWebhook, setActiveWebhook] = useState<string | null>(null);
   const [loadingWebhook, setLoadingWebhook] = useState(true);
   const [webhookError, setWebhookError] = useState<string | null>(null);
+  const [videoChannel, setVideoChannel] = useState<string | null>(null);
 
   useEffect(() => {
     if (video) {
@@ -26,35 +33,68 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
       setMinDateTime(minDateTimeValue);
       setScheduleDate('');
       
-      // Fetch active webhook when modal opens
-      fetchActiveWebhook();
+      // Fetch active webhook specific to the video's channel
+      fetchChannelAndWebhook();
     }
   }, [video]);
 
-  const fetchActiveWebhook = async () => {
+  const fetchChannelAndWebhook = async () => {
+    if (!video) return;
+
     setLoadingWebhook(true);
     setWebhookError(null);
+    setVideoChannel(null);
+
     try {
+      let channel = video.channel;
+
+      // 1. If channel is not passed in the prop, fetch it from the database
+      if (!channel) {
+        const { data: videoData, error: videoError } = await supabase
+          .from('shorts_youtube')
+          .select('channel')
+          .eq('id', video.id)
+          .single();
+
+        if (videoError) {
+          console.error("Error fetching video channel:", videoError);
+        } else if (videoData) {
+          channel = videoData.channel;
+        }
+      }
+
+      setVideoChannel(channel || null);
+
+      if (!channel) {
+        setWebhookError('Este vídeo não possui um canal associado. Verifique o cadastro do vídeo.');
+        return;
+      }
+
+      // Clean the channel string just in case
+      const cleanChannel = channel.trim();
+
+      // 2. Fetch the webhook specifically for this channel
+      // Removed .eq('is_active', true) as it might not exist in the table
       const { data, error } = await supabase
         .from('shorts_settings')
         .select('webhook')
-        .eq('is_active', true)
-        .single();
+        .eq('channel', cleanChannel)
+        .maybeSingle(); // Use maybeSingle instead of single to handle 0 rows gracefully
 
       if (error) {
-        if (error.code === 'PGRST116') { // No rows found
-          setWebhookError('Nenhum canal ativo encontrado. Por favor, configure um canal nas configurações.');
-        } else {
-          throw error;
-        }
-      } else if (data) {
+        console.error("Supabase error fetching webhook:", error);
+        throw error;
+      } 
+      
+      if (data && data.webhook) {
         setActiveWebhook(data.webhook);
       } else {
-        setWebhookError('Nenhum canal ativo encontrado. Por favor, configure um canal nas configurações.');
+        // If no data found, it means no row matched the channel name
+        setWebhookError(`Nenhum webhook encontrado para o canal "${cleanChannel}". Verifique se o nome do canal na tabela 'shorts_settings' é exatamente igual.`);
       }
     } catch (err: any) {
-      console.error("Error fetching active webhook:", err);
-      setWebhookError('Erro ao carregar o webhook ativo.');
+      console.error("Error fetching webhook:", err);
+      setWebhookError('Erro ao carregar as configurações do canal.');
     } finally {
       setLoadingWebhook(false);
     }
@@ -64,7 +104,7 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
 
   const handlePost = (options: { scheduleDate?: string }) => {
     if (!activeWebhook) {
-      alert(webhookError || 'Não foi possível determinar o webhook ativo. Verifique as configurações.');
+      alert(webhookError || 'Não foi possível determinar o webhook do canal. Verifique as configurações.');
       return;
     }
     onPost(video, { ...options, webhookUrl: activeWebhook });
@@ -102,21 +142,32 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
             <p className="text-sm text-gray-500 mt-2 line-clamp-2" title={video.title}>
               Você está postando: <strong>{video.title || 'Vídeo sem título'}</strong>
             </p>
+            {videoChannel && (
+              <span className="inline-block mt-2 px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-md font-medium">
+                Canal: {videoChannel}
+              </span>
+            )}
           </div>
 
-          <div className="mt-6 mb-8 p-4 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800 flex items-start gap-3">
-            <Link size={18} className="flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="font-semibold">Webhook Ativo:</p>
+          <div className={`mt-6 mb-8 p-4 rounded-lg text-sm flex items-start gap-3 border ${webhookError ? 'bg-red-50 border-red-200 text-red-800' : 'bg-blue-50 border-blue-200 text-blue-800'}`}>
+            {webhookError ? (
+              <AlertTriangle size={18} className="flex-shrink-0 mt-0.5 text-red-600" />
+            ) : (
+              <Link size={18} className="flex-shrink-0 mt-0.5" />
+            )}
+            <div className="flex-grow">
+              <p className="font-semibold">
+                {webhookError ? 'Erro de Configuração:' : 'Webhook Ativo:'}
+              </p>
               {loadingWebhook ? (
                 <div className="flex items-center gap-2 mt-1">
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-                  <span>Carregando...</span>
+                  <span>Carregando configurações do canal...</span>
                 </div>
               ) : webhookError ? (
-                <p className="text-red-600 mt-1">{webhookError}</p>
+                <p className="mt-1">{webhookError}</p>
               ) : (
-                <p className="break-all mt-1">{activeWebhook}</p>
+                <p className="break-all mt-1 font-mono text-xs opacity-90">{activeWebhook}</p>
               )}
             </div>
           </div>
