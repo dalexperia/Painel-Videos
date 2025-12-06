@@ -31,7 +31,7 @@ const ReprovedVideos: React.FC = () => {
     setError(null);
     try {
       const { data, error } = await supabase
-        .from('shorts_apostilas')
+        .from('shorts_youtube')
         .select('id, link_s3, title, description, tags, hashtags, status')
         .eq('failed', true);
 
@@ -56,7 +56,7 @@ const ReprovedVideos: React.FC = () => {
 
     try {
       const { error } = await supabase
-        .from('shorts_apostilas')
+        .from('shorts_youtube')
         .update({ failed: false })
         .eq('id', id);
 
@@ -73,7 +73,7 @@ const ReprovedVideos: React.FC = () => {
     if (!window.confirm('Esta ação é irreversível. Tem certeza que deseja excluir este vídeo permanentemente?')) return;
 
     try {
-      const { error } = await supabase.from('shorts_apostilas').delete().eq('id', id);
+      const { error } = await supabase.from('shorts_youtube').delete().eq('id', id);
       if (error) throw error;
       setVideos(videos.filter((video) => video.id !== id));
       if (selectedVideo?.id === id) setSelectedVideo(null);

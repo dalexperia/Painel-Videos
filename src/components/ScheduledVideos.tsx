@@ -28,7 +28,7 @@ const ScheduledVideos: React.FC = () => {
     setError(null);
     try {
       const { data, error } = await supabase
-        .from('shorts_apostilas')
+        .from('shorts_youtube')
         .select('id, link_s3, title, description, publish_at')
         .eq('failed', false)
         .not('publish_at', 'is', null)
@@ -56,7 +56,7 @@ const ScheduledVideos: React.FC = () => {
 
     try {
       const { error } = await supabase
-        .from('shorts_apostilas')
+        .from('shorts_youtube')
         .update({ failed: true })
         .eq('id', id);
 

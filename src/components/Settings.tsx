@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
     import { supabase } from '../lib/supabaseClient';
-    import { Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle } from 'lucide-react';
+    import { Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle, CheckCircle } from 'lucide-react';
 
     interface Setting {
       id: string;
       channel: string;
       webhook: string;
+      is_active: boolean;
     }
 
     const Settings: React.FC = () => {
@@ -17,6 +18,7 @@ import React, { useState, useEffect } from 'react';
       const [isEditing, setIsEditing] = useState<string | null>(null);
       const [currentChannel, setCurrentChannel] = useState('');
       const [currentWebhook, setCurrentWebhook] = useState('');
+      const [activatingId, setActivatingId] = useState<string | null>(null);
 
       const fetchSettings = async () => {
         setLoading(true);
@@ -119,6 +121,25 @@ import React, { useState, useEffect } from 'react';
         }
       };
 
+      const handleActivate = async (id: string) => {
+        setActivatingId(id);
+        setError(null);
+        try {
+          const { error } = await supabase.rpc('set_active_channel', {
+            channel_id: id
+          });
+
+          if (error) throw error;
+
+          await fetchSettings();
+        } catch (err: any) {
+          console.error("Error activating channel:", err);
+          setError("Não foi possível ativar o canal.");
+        } finally {
+          setActivatingId(null);
+        }
+      };
+
       const renderContent = () => {
         if (loading) {
           return (
@@ -131,12 +152,31 @@ import React, { useState, useEffect } from 'react';
         return (
           <div className="space-y-4">
             {settings.map((setting) => (
-              <div key={setting.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 flex justify-between items-center">
+              <div key={setting.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 flex justify-between items-center transition-all">
                 <div>
-                  <p className="font-bold text-gray-800">{setting.channel}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="font-bold text-gray-800">{setting.channel}</p>
+                    {setting.is_active && (
+                      <span className="h-2.5 w-2.5 bg-green-400 rounded-full"></span>
+                    )}
+                  </div>
                   <p className="text-sm text-gray-500 truncate max-w-xs sm:max-w-md">{setting.webhook}</p>
                 </div>
                 <div className="flex items-center gap-2">
+                  {!setting.is_active && (
+                    <button
+                      onClick={() => handleActivate(setting.id)}
+                      disabled={activatingId === setting.id}
+                      className="flex items-center gap-2 text-sm bg-gray-100 text-gray-700 px-3 py-1.5 rounded-md font-semibold hover:bg-gray-200 transition-colors disabled:bg-gray-200 disabled:cursor-wait"
+                    >
+                      {activatingId === setting.id ? (
+                        <Loader2 size={16} className="animate-spin" />
+                      ) : (
+                        <CheckCircle size={16} />
+                      )}
+                      {activatingId === setting.id ? 'Ativando...' : 'Ativar'}
+                    </button>
+                  )}
                   <button onClick={() => handleEdit(setting)} className="p-2 text-gray-500 hover:text-blue-600 transition-colors">
                     <Edit size={18} />
                   </button>

@@ -64,7 +64,7 @@ const VideoGallery: React.FC = () => {
 
     try {
       const { data, error } = await supabase
-        .from('shorts_apostilas')
+        .from('shorts_youtube')
         .update({
           title: editedVideo.title,
           description: editedVideo.description,
@@ -91,7 +91,7 @@ const VideoGallery: React.FC = () => {
     setError(null);
     try {
       const { data, error } = await supabase
-        .from('shorts_apostilas')
+        .from('shorts_youtube')
         .select('id, baserow_id, link_s3, title, description, tags, hashtags, status, link_drive, publish_at')
         .eq('failed', false)
         .eq('status', 'Created')
@@ -163,7 +163,7 @@ const VideoGallery: React.FC = () => {
 
     try {
       const { error } = await supabase
-        .from('shorts_apostilas')
+        .from('shorts_youtube')
         .update({ failed: true })
         .eq('id', id);
 

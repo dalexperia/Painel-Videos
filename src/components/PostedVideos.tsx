@@ -28,7 +28,7 @@ const PostedVideos: React.FC = () => {
     setError(null);
     try {
       const { data, error } = await supabase
-        .from('shorts_apostilas')
+        .from('shorts_youtube')
         .select('id, link_s3, title, description, youtube_id')
         .eq('failed', false)
         .eq('status', 'Posted');
@@ -55,7 +55,7 @@ const PostedVideos: React.FC = () => {
 
     try {
       const { error } = await supabase
-        .from('shorts_apostilas')
+        .from('shorts_youtube')
         .update({ failed: true })
         .eq('id', id);
 
