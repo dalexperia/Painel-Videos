@@ -32,7 +32,7 @@ const RecentVideos: React.FC = () => {
       // Seleciona explicitamente os campos necessários
       const { data, error } = await supabase
         .from('shorts_youtube')
-        .select('*') // Seleciona tudo para garantir que pegamos link_drive, baserow_id, etc.
+        .select('*')
         .eq('status', 'Created')
         .is('publish_at', null)
         .eq('failed', false)
@@ -40,12 +40,11 @@ const RecentVideos: React.FC = () => {
 
       if (error) throw error;
 
-      // Mapeamento explícito para garantir que nenhum campo fique undefined
       const validVideos = (data || []).filter((item): item is any => 
         item && item.link_s3 && item.link_s3.trim() !== ''
       ).map((item: any) => ({
         id: item.id,
-        baserow_id: item.baserow_id || 0, // Garante int
+        baserow_id: item.baserow_id || 0,
         title: item.title || '',
         description: item.description || '',
         link_s3: item.link_s3,
@@ -57,7 +56,7 @@ const RecentVideos: React.FC = () => {
         status: item.status || 'Created',
         created_at: item.created_at,
         failed: item.failed || false,
-        url: item.link_s3 // Compatibilidade
+        url: item.link_s3
       }));
       
       setVideos(validVideos);
@@ -129,7 +128,40 @@ const RecentVideos: React.FC = () => {
     setIsPostModalOpen(true);
   };
 
-  // Lógica de Postagem com Payload Completo e Correto
+  // Função auxiliar para formatar data no fuso de Recife
+  const getRecifeTime = (dateInput?: string | Date): string => {
+    const date = dateInput ? new Date(dateInput) : new Date();
+    
+    // Formata para as partes da data em Recife
+    const options: Intl.DateTimeFormatOptions = {
+      timeZone: 'America/Recife',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    };
+
+    // Obtém as partes formatadas
+    const formatter = new Intl.DateTimeFormat('pt-BR', options);
+    const parts = formatter.formatToParts(date);
+    
+    const getPart = (type: string) => parts.find(p => p.type === type)?.value || '00';
+    
+    const year = getPart('year');
+    const month = getPart('month');
+    const day = getPart('day');
+    const hour = getPart('hour');
+    const minute = getPart('minute');
+    const second = getPart('second');
+
+    // Retorna no formato ISO compatível (YYYY-MM-DDTHH:mm:ss)
+    // Adicionamos o offset fixo de -03:00 pois sabemos que é Recife/Brasília padrão
+    return `${year}-${month}-${day}T${hour}:${minute}:${second}-03:00`;
+  };
+
   const handlePost = async (video: PostModalVideo, options: { scheduleDate?: string; webhookUrl: string }) => {
     setIsPosting(true);
     console.log('--- INÍCIO DO PROCESSO DE POSTAGEM ---');
@@ -139,7 +171,6 @@ const RecentVideos: React.FC = () => {
         throw new Error('URL do Webhook não está definida.');
       }
 
-      // 1. Determinar privacy_status e publish_at com base na modal
       const isScheduled = !!options.scheduleDate;
       
       let privacy_status: string;
@@ -147,19 +178,17 @@ const RecentVideos: React.FC = () => {
 
       if (isScheduled) {
         // REGRA 2: Agendar
-        // Privacy Status: private
-        // Publish At: [Data e Hora da Publicação]
         privacy_status = 'private';
-        publish_at = options.scheduleDate!; // Data escolhida na modal (ISO String)
+        // Converte a data escolhida no input para o formato de Recife
+        publish_at = getRecifeTime(options.scheduleDate);
       } else {
         // REGRA 1: Postar agora
-        // Privacy Status: public
-        // Publish At: now() (Enviamos o timestamp atual)
         privacy_status = 'public';
-        publish_at = new Date().toISOString();
+        // Pega a hora atual em Recife
+        publish_at = getRecifeTime();
       }
 
-      // 2. Construir o Payload Exato
+      // 2. Construir o Payload
       const payload = {
         link_drive: video.link_drive || "",
         link_s3: video.link_s3,
@@ -171,11 +200,11 @@ const RecentVideos: React.FC = () => {
         baserow_id: video.baserow_id || 0,
         id: video.id,
         
-        // CORREÇÃO: Adicionando as chaves exatas conforme solicitado no print (Title Case com espaços)
+        // Chaves formatadas conforme solicitado
         "Privacy Status": privacy_status,
         "Publish At": publish_at,
 
-        // Mantendo snake_case para garantir compatibilidade caso o backend use ambos
+        // Mantendo snake_case por segurança
         privacy_status: privacy_status,
         publish_at: publish_at
       };
@@ -198,12 +227,12 @@ const RecentVideos: React.FC = () => {
       
       console.log('Webhook disparado com sucesso!');
 
-      // 4. Se for agendamento, removemos da lista local para feedback visual (Optimistic UI)
-      // IMPORTANTE: Não atualizamos o banco de dados aqui. O backend é responsável por isso.
+      // 4. Feedback ao usuário
+      // IMPORTANTE: NÃO removemos o vídeo da lista (setVideos) e NÃO atualizamos o banco.
+      // O backend processará o webhook e atualizará o status posteriormente.
+      
       if (isScheduled) {
-        // Remove da lista local
-        setVideos(prev => prev.filter(v => v.id !== video.id));
-        alert('Vídeo agendado com sucesso! O processamento será concluído pelo backend.');
+        alert(`Agendamento enviado com sucesso para ${new Date(publish_at).toLocaleString('pt-BR')}!`);
       } else {
         alert('Solicitação de publicação imediata enviada!');
       }
