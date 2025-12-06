@@ -1,222 +1,207 @@
-import React, { useState } from 'react';
-import DatePicker, { registerLocale } from 'react-datepicker';
-import "react-datepicker/dist/react-datepicker.css";
-import { ptBR } from 'date-fns/locale/pt-BR';
-import { X, Calendar, Send, CheckCircle2, AlertCircle, Image as ImageIcon, PlayCircle } from 'lucide-react';
-import { formatDuration } from '../utils/format';
-
-registerLocale('pt-BR', ptBR);
+import React, { useState, useRef } from 'react';
+import { X, Calendar, Send, CheckCircle2, AlertCircle, Clock, AlertTriangle } from 'lucide-react';
 
 interface Video {
   id: string;
-  title: string;
-  thumbnail_url?: string;
-  link_s3?: string; // Adicionado para suportar preview de vídeo
-  duration?: number;
-  tags?: string[];
+  title?: string;
+  link_s3: string;
+  channel?: string;
+  description?: string;
 }
 
 interface ScheduleModalProps {
   video: Video;
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (date: Date, immediate: boolean) => void;
+  onConfirm: (date: Date, immediate: boolean) => Promise<void>;
 }
 
 const ScheduleModal: React.FC<ScheduleModalProps> = ({ video, isOpen, onClose, onConfirm }) => {
-  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
-  const [mode, setMode] = useState<'schedule' | 'immediate'>('schedule');
+  const [mode, setMode] = useState<'now' | 'schedule'>('schedule');
+  const [date, setDate] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    d.setHours(10, 0, 0, 0);
+    const offset = d.getTimezoneOffset() * 60000;
+    const localISOTime = (new Date(d.getTime() - offset)).toISOString().slice(0, 16);
+    return localISOTime;
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const dateInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
 
-  const handleConfirm = () => {
-    onConfirm(selectedDate, mode === 'immediate');
-    onClose();
+  const handleConfirm = async () => {
+    setIsSubmitting(true);
+    try {
+      const selectedDate = new Date(date);
+      await onConfirm(selectedDate, mode === 'now');
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  // Fallback para imagem se não existir thumbnail
-  const ThumbnailPlaceholder = () => (
-    <div className="w-24 h-16 bg-gray-200 rounded-md flex items-center justify-center flex-shrink-0">
-      <ImageIcon className="text-gray-400" size={24} />
-    </div>
-  );
+  const formatDateDisplay = (dateString: string) => {
+    if (!dateString) return '';
+    try {
+      const d = new Date(dateString);
+      return new Intl.DateTimeFormat('pt-BR', {
+        day: '2-digit',
+        month: 'long',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(d);
+    } catch (e) {
+      return dateString;
+    }
+  };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-scale-in flex flex-col max-h-[90vh]">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-100">
+        <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center flex-shrink-0">
           <div>
-            <h3 className="text-lg font-semibold text-gray-900">Publicar Vídeo</h3>
-            <p className="text-xs text-gray-500">Configure os detalhes do envio</p>
+            <h2 className="text-xl font-bold text-gray-900">Publicar Vídeo</h2>
+            <p className="text-sm text-gray-500">Configure os detalhes do envio</p>
           </div>
-          <button 
-            onClick={onClose}
-            className="p-1 hover:bg-gray-100 rounded-full transition-colors text-gray-500"
-          >
-            <X size={20} />
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-full hover:bg-gray-100">
+            <X size={24} />
           </button>
         </div>
 
-        {/* Content */}
-        <div className="p-6 space-y-6">
-          {/* Video Preview Card */}
-          <div className="flex gap-4 bg-gray-50 p-3 rounded-lg border border-gray-100">
-            {video.thumbnail_url ? (
-              <img 
-                src={video.thumbnail_url} 
-                alt={video.title} 
-                className="w-24 h-16 object-cover rounded-md bg-gray-200 flex-shrink-0"
-                onError={(e) => {
-                  e.currentTarget.style.display = 'none';
-                  e.currentTarget.parentElement?.classList.add('fallback-active');
-                }}
-              />
-            ) : video.link_s3 ? (
-              // Se não tem thumbnail mas tem link do vídeo, mostra o vídeo pequeno
-              <div className="w-24 h-16 bg-black rounded-md overflow-hidden flex-shrink-0 relative">
-                <video 
-                  src={video.link_s3} 
-                  className="w-full h-full object-cover opacity-80"
-                  muted
-                />
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <PlayCircle size={16} className="text-white/80" />
-                </div>
-              </div>
-            ) : (
-              <ThumbnailPlaceholder />
-            )}
-            
-            {/* Fallback div that shows if image fails */}
-            <div className="hidden fallback-active:block">
-               {video.link_s3 ? (
-                 <div className="w-24 h-16 bg-black rounded-md overflow-hidden flex-shrink-0 relative">
-                   <video 
-                     src={video.link_s3} 
-                     className="w-full h-full object-cover opacity-80"
-                     muted
-                   />
-                   <div className="absolute inset-0 flex items-center justify-center">
-                     <PlayCircle size={16} className="text-white/80" />
-                   </div>
+        {/* Body */}
+        <div className="p-6 space-y-6 overflow-y-auto">
+          {/* Video Preview */}
+          <div className="flex gap-4 bg-gray-50 p-3 rounded-xl border border-gray-100">
+            <div className="w-24 h-16 bg-gray-800 rounded-lg overflow-hidden flex-shrink-0 relative">
+               <video src={video.link_s3} className="w-full h-full object-cover opacity-80" />
+               <div className="absolute inset-0 flex items-center justify-center">
+                 <div className="bg-white/20 p-1 rounded-full">
+                   <Clock size={12} className="text-white" />
                  </div>
-               ) : (
-                 <ThumbnailPlaceholder />
-               )}
+               </div>
             </div>
-
-            <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
-              <h4 className="text-sm font-medium text-gray-900 line-clamp-2 leading-tight" title={video.title}>
-                {video.title}
-              </h4>
-              <div className="flex items-center gap-2 mt-1">
-                {video.tags && video.tags.length > 0 && (
-                  <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-medium rounded">
-                    {video.tags[0]}
-                  </span>
-                )}
-                {/* Só exibe a duração se ela existir e for maior que 0 */}
-                {video.duration && video.duration > 0 ? (
-                  <span className="text-xs text-gray-500 font-mono bg-gray-100 px-1.5 py-0.5 rounded">
-                    {formatDuration(video.duration)}
-                  </span>
-                ) : null}
-              </div>
+            <div className="flex-1 min-w-0 flex flex-col justify-center">
+              <h3 className="font-medium text-gray-900 truncate text-sm" title={video.title}>
+                {video.title || 'Sem título'}
+              </h3>
+              {video.channel && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mt-1 w-fit">
+                  {video.channel}
+                </span>
+              )}
             </div>
           </div>
 
-          {/* Status Connection */}
-          <div className="flex items-center gap-2 text-green-600 bg-green-50 px-3 py-2 rounded-md text-sm border border-green-100">
-            <CheckCircle2 size={16} />
-            <span className="font-medium">Conexão com canal estabelecida</span>
-          </div>
+          {/* Channel Status - Dynamic Message */}
+          {video.channel ? (
+            <div className="flex items-center gap-2 text-green-700 bg-green-50 px-4 py-3 rounded-lg border border-green-100">
+              <CheckCircle2 size={18} className="flex-shrink-0" />
+              <span className="text-sm font-medium">
+                Conectado ao canal <span className="font-bold">"{video.channel}"</span>
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-amber-700 bg-amber-50 px-4 py-3 rounded-lg border border-amber-100">
+              <AlertTriangle size={18} className="flex-shrink-0" />
+              <span className="text-sm font-medium">
+                Atenção: Canal de destino não identificado
+              </span>
+            </div>
+          )}
 
-          {/* Action Selection */}
-          <div className="grid grid-cols-2 gap-3">
+          {/* Mode Selection */}
+          <div className="grid grid-cols-2 gap-4">
             <button
-              onClick={() => setMode('immediate')}
-              className={`flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 transition-all duration-200 ${
-                mode === 'immediate'
-                  ? 'border-brand-500 bg-brand-50 text-brand-700 shadow-sm'
-                  : 'border-gray-100 hover:border-gray-200 hover:bg-gray-50 text-gray-600'
+              onClick={() => setMode('now')}
+              className={`relative flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 transition-all duration-200 ${
+                mode === 'now'
+                  ? 'border-purple-600 bg-purple-50 text-purple-700 shadow-sm'
+                  : 'border-gray-100 hover:border-gray-200 text-gray-600 hover:bg-gray-50'
               }`}
             >
-              <Send size={24} className={mode === 'immediate' ? 'text-brand-600' : 'text-gray-400'} />
-              <span className="font-medium text-sm">Postar Agora</span>
+              <Send size={24} className={mode === 'now' ? 'text-purple-600' : 'text-gray-400'} />
+              <span className="font-medium">Postar Agora</span>
+              {mode === 'now' && (
+                <div className="absolute top-2 right-2 w-2.5 h-2.5 bg-purple-600 rounded-full animate-pulse" />
+              )}
             </button>
 
             <button
               onClick={() => setMode('schedule')}
               className={`relative flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 transition-all duration-200 ${
                 mode === 'schedule'
-                  ? 'border-purple-500 bg-purple-50 text-purple-700 shadow-sm'
-                  : 'border-gray-100 hover:border-gray-200 hover:bg-gray-50 text-gray-600'
+                  ? 'border-purple-600 bg-purple-50 text-purple-700 shadow-sm'
+                  : 'border-gray-100 hover:border-gray-200 text-gray-600 hover:bg-gray-50'
               }`}
             >
-              {mode === 'schedule' && (
-                <div className="absolute top-2 right-2 w-2 h-2 bg-purple-500 rounded-full animate-pulse" />
-              )}
               <Calendar size={24} className={mode === 'schedule' ? 'text-purple-600' : 'text-gray-400'} />
-              <span className="font-medium text-sm">Agendar</span>
+              <span className="font-medium">Agendar</span>
+              {mode === 'schedule' && (
+                <div className="absolute top-2 right-2 w-2.5 h-2.5 bg-purple-600 rounded-full animate-pulse" />
+              )}
             </button>
           </div>
 
           {/* Date Picker Section */}
-          <div className={`transition-all duration-300 overflow-hidden ${
-            mode === 'schedule' ? 'max-h-48 opacity-100' : 'max-h-0 opacity-50'
-          }`}>
-            <div className="space-y-2">
+          {mode === 'schedule' && (
+            <div className="space-y-2 animate-fade-in">
               <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
-                <Calendar size={14} />
+                <Calendar size={16} />
                 Data e Hora da Publicação
               </label>
-              <div className="relative">
-                <DatePicker
-                  selected={selectedDate}
-                  onChange={(date) => date && setSelectedDate(date)}
-                  showTimeSelect
-                  timeFormat="HH:mm"
-                  timeIntervals={15}
-                  dateFormat="dd 'de' MMMM 'de' yyyy, HH:mm"
-                  locale="pt-BR"
-                  className="w-full px-4 py-3 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none text-gray-700 text-sm shadow-sm"
-                  calendarClassName="shadow-xl border-0 rounded-xl font-sans"
+              
+              <div 
+                className="relative group cursor-pointer"
+                onClick={() => dateInputRef.current?.showPicker()}
+              >
+                <div className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl group-hover:border-purple-400 transition-colors flex items-center justify-between min-h-[3.5rem]">
+                  <span className="text-gray-800 font-medium text-base break-words pr-2 leading-snug">
+                    {formatDateDisplay(date)}
+                  </span>
+                  <Calendar size={20} className="text-gray-400 group-hover:text-purple-500 transition-colors flex-shrink-0" />
+                </div>
+                
+                <input
+                  ref={dateInputRef}
+                  type="datetime-local"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
                 />
               </div>
-              <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
-                <AlertCircle size={12} />
-                O vídeo será enviado para a fila e processado na data escolhida.
+              
+              <p className="text-xs text-gray-500 flex items-start gap-1.5 mt-2">
+                <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
+                <span>O vídeo será enviado para a fila e processado na data escolhida.</span>
               </p>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Footer */}
-        <div className="p-4 bg-gray-50 border-t border-gray-100 flex gap-3 justify-end">
+        <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex gap-3 justify-end flex-shrink-0">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200 bg-white"
+            className="px-4 py-2.5 text-gray-700 font-medium hover:bg-gray-100 rounded-lg transition-colors"
           >
             Cancelar
           </button>
           <button
             onClick={handleConfirm}
-            className={`px-6 py-2 text-sm font-medium text-white rounded-lg shadow-sm transition-all duration-200 flex items-center gap-2 ${
-              mode === 'immediate'
-                ? 'bg-brand-600 hover:bg-brand-700 active:bg-brand-800'
-                : 'bg-purple-600 hover:bg-purple-700 active:bg-purple-800'
-            }`}
+            disabled={isSubmitting}
+            className="flex items-center gap-2 px-6 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-lg transition-colors shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
           >
-            {mode === 'immediate' ? (
-              <>
-                <Send size={16} />
-                Confirmar Envio
-              </>
+            {isSubmitting ? (
+              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
             ) : (
               <>
-                <Calendar size={16} />
-                Confirmar Agendamento
+                {mode === 'now' ? <Send size={18} /> : <Calendar size={18} />}
+                <span>{mode === 'now' ? 'Postar Agora' : 'Confirmar Agendamento'}</span>
               </>
             )}
           </button>

@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, X, Calendar, Sparkles, Tv } from 'lucide-react';
-import ScheduleModal from './ScheduleModal';
+import PostModal, { Video as PostModalVideo } from './PostModal';
 
+// Interface compatível com PostModal
 interface Video {
   id: string;
   link_s3: string;
@@ -12,6 +13,10 @@ interface Video {
   created_at: string;
   channel?: string;
   duration?: number;
+  // Campos adicionais para compatibilidade
+  url: string;
+  status: string;
+  failed?: boolean;
 }
 
 type ViewMode = 'grid' | 'list';
@@ -19,8 +24,12 @@ type ViewMode = 'grid' | 'list';
 const RecentVideos: React.FC = () => {
   const [videos, setVideos] = useState<Video[]>([]);
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
-  const [videoToSchedule, setVideoToSchedule] = useState<Video | null>(null);
-  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  
+  // Estado para o PostModal
+  const [videoToPost, setVideoToPost] = useState<Video | null>(null);
+  const [isPostModalOpen, setIsPostModalOpen] = useState(false);
+  const [isPosting, setIsPosting] = useState(false);
+
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
@@ -43,9 +52,14 @@ const RecentVideos: React.FC = () => {
 
       if (error) throw error;
 
-      const validVideos = (data || []).filter((video): video is Video => 
-        video && video.link_s3 && video.link_s3.trim() !== ''
-      );
+      const validVideos = (data || []).filter((item): item is any => 
+        item && item.link_s3 && item.link_s3.trim() !== ''
+      ).map((item: any) => ({
+        ...item,
+        url: item.link_s3, // Mapeia link_s3 para url
+        status: item.status || 'Created',
+        duration: item.duration || 0
+      }));
       
       setVideos(validVideos);
 
@@ -85,7 +99,6 @@ const RecentVideos: React.FC = () => {
     }
 
     try {
-      // Feedback visual simples (cursor de espera)
       document.body.style.cursor = 'wait';
       
       const response = await fetch(url);
@@ -102,49 +115,105 @@ const RecentVideos: React.FC = () => {
       link.click();
       document.body.removeChild(link);
       
-      // Limpeza
       setTimeout(() => window.URL.revokeObjectURL(blobUrl), 100);
     } catch (error) {
       console.error('Erro no download:', error);
-      // Fallback: tenta abrir em nova aba se o fetch falhar (CORS, etc)
       window.open(url, '_blank');
     } finally {
       document.body.style.cursor = 'default';
     }
   };
 
-  const openScheduleModal = (video: Video, e: React.MouseEvent) => {
+  const openPostModal = (video: Video, e: React.MouseEvent) => {
     e.stopPropagation();
-    setVideoToSchedule(video);
-    setIsScheduleModalOpen(true);
+    setVideoToPost(video);
+    setIsPostModalOpen(true);
   };
 
-  const handleConfirmSchedule = async (date: Date, immediate: boolean) => {
-    if (!videoToSchedule) return;
+  // Lógica unificada de Postagem (Idêntica ao VideoGallery)
+  const handlePost = async (video: PostModalVideo, options: { scheduleDate?: string; webhookUrl: string }) => {
+    setIsPosting(true);
+    console.log('--- RECENTES: INÍCIO DO PROCESSO DE POSTAGEM ---');
+    console.log('Vídeo ID:', video.id);
+    console.log('Opções:', options);
 
     try {
-      const { error } = await supabase
-        .from('shorts_youtube')
-        .update({
-          publish_at: immediate ? new Date().toISOString() : date.toISOString(),
-          // Opcional: atualizar status se necessário, mas o filtro já cuida de remover da lista
-        })
-        .eq('id', videoToSchedule.id);
+      // SE scheduleDate EXISTE = AGENDAMENTO (Update no Banco)
+      if (options.scheduleDate) {
+        console.log('MODO: AGENDAMENTO (Atualizando banco de dados...)');
+        
+        const { error } = await supabase
+          .from('shorts_youtube')
+          .update({
+            publish_at: options.scheduleDate,
+          })
+          .eq('id', video.id);
 
-      if (error) throw error;
-      
-      // Remove o vídeo da lista pois não atende mais aos critérios (publish_at não é mais null)
-      setVideos(videos.filter(v => v.id !== videoToSchedule.id));
-      setIsScheduleModalOpen(false);
-      setVideoToSchedule(null);
-      
-      // Se o vídeo agendado estava aberto no preview, fecha o preview
-      if (selectedVideo?.id === videoToSchedule.id) {
-        setSelectedVideo(null);
+        if (error) throw error;
+        
+        console.log('Banco atualizado. Removendo da lista de recentes.');
+        alert('Vídeo agendado com sucesso!');
+        
+        // Remove da lista local pois agora tem data de publicação
+        setVideos(prev => prev.filter(v => v.id !== video.id));
+        
+        if (selectedVideo?.id === video.id) {
+          setSelectedVideo(null);
+        }
+
+      } else {
+        // SE scheduleDate NÃO EXISTE = POSTAR AGORA (Webhook APENAS)
+        console.log('MODO: POSTAR AGORA (Disparando Webhook APENAS)');
+        console.log('NENHUMA alteração será feita no banco de dados.');
+
+        if (!options.webhookUrl) {
+          throw new Error('URL do Webhook não está definida.');
+        }
+
+        const payload = {
+          id: video.id,
+          title: video.title,
+          url: video.url,
+          duration: video.duration,
+          channel: video.channel,
+          created_at: video.created_at,
+          action: 'post_now'
+        };
+
+        console.log('Enviando payload:', payload);
+
+        try {
+          const response = await fetch(options.webhookUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload)
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text().catch(() => 'Sem detalhes');
+            throw new Error(`Erro no Webhook (${response.status}): ${errorText}`);
+          }
+          
+          console.log('Webhook disparado com sucesso!');
+          alert('Solicitação enviada! O backend processará o vídeo em breve.');
+          
+        } catch (fetchError: any) {
+          console.error('Erro ao chamar webhook:', fetchError);
+          throw new Error(`Falha na conexão com Webhook: ${fetchError.message}`);
+        }
       }
-    } catch (error) {
-      console.error('Erro ao agendar:', error);
-      alert('Erro ao agendar o vídeo.');
+      
+      setIsPostModalOpen(false);
+      setVideoToPost(null);
+      
+    } catch (error: any) {
+      console.error('ERRO FATAL:', error);
+      alert(`Erro: ${error.message || 'Falha ao processar.'}`);
+    } finally {
+      setIsPosting(false);
+      console.log('--- FIM DO PROCESSO ---');
     }
   };
 
@@ -221,7 +290,7 @@ const RecentVideos: React.FC = () => {
                 
                 <div className="mt-auto pt-4 flex items-center gap-2 border-t border-gray-100">
                   <button
-                    onClick={(e) => openScheduleModal(video, e)}
+                    onClick={(e) => openPostModal(video, e)}
                     className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-colors shadow-sm"
                     title="Agendar publicação"
                   >
@@ -283,7 +352,7 @@ const RecentVideos: React.FC = () => {
             </div>
             <div className="flex items-center gap-2 self-end sm:self-center">
               <button
-                onClick={(e) => openScheduleModal(video, e)}
+                onClick={(e) => openPostModal(video, e)}
                 className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-colors shadow-sm"
                 title="Agendar publicação"
               >
@@ -398,7 +467,7 @@ const RecentVideos: React.FC = () => {
                 <button
                   onClick={(e) => {
                     setSelectedVideo(null); // Fecha preview
-                    openScheduleModal(selectedVideo, e); // Abre modal de agendamento
+                    openPostModal(selectedVideo, e); // Abre modal de agendamento
                   }}
                   className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-brand-600 hover:bg-brand-700 rounded-lg transition-colors font-semibold"
                 >
@@ -425,16 +494,16 @@ const RecentVideos: React.FC = () => {
         </div>
       )}
 
-      {/* Modal de Agendamento */}
-      {videoToSchedule && (
-        <ScheduleModal 
-          video={videoToSchedule}
-          isOpen={isScheduleModalOpen}
+      {/* Modal de Agendamento UNIFICADO */}
+      {videoToPost && (
+        <PostModal 
+          video={videoToPost}
           onClose={() => {
-            setIsScheduleModalOpen(false);
-            setVideoToSchedule(null);
+            setIsPostModalOpen(false);
+            setVideoToPost(null);
           }}
-          onConfirm={handleConfirmSchedule}
+          onPost={handlePost}
+          isPosting={isPosting}
         />
       )}
     </div>
