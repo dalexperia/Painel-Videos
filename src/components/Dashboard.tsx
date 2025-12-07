@@ -7,7 +7,7 @@ import {
 } from 'recharts';
 import { 
   Youtube, Calendar, Sparkles, Trash2, AlertCircle, Loader2, 
-  TrendingUp, Activity, Layers, Zap, Eye, ThumbsUp, MessageCircle, Trophy
+  TrendingUp, Activity, Layers, Zap, Eye, ThumbsUp, Trophy
 } from 'lucide-react';
 
 // --- Utilitários e Configurações ---
@@ -95,6 +95,7 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
+      setError(null);
       try {
         const { data, error } = await supabase
           .from('shorts_youtube')
@@ -108,7 +109,8 @@ const Dashboard: React.FC = () => {
 
       } catch (err: any) {
         console.error("Error fetching dashboard data:", err);
-        setError("Não foi possível carregar os dados do dashboard.");
+        // Mostra a mensagem real do erro para facilitar o debug
+        setError(err.message || "Não foi possível carregar os dados do dashboard.");
       } finally {
         setLoading(false);
       }
