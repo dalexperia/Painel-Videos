@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, X, Calendar, Tv } from 'lucide-react';
+import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, X, Calendar, Tv, Edit2, Save } from 'lucide-react';
 
 interface Video {
   id: string;
@@ -20,6 +20,10 @@ const ScheduledVideos: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
 
+  // Estados para edição de data
+  const [editingDateId, setEditingDateId] = useState<string | null>(null);
+  const [newDateValue, setNewDateValue] = useState<string>('');
+
   useEffect(() => {
     fetchScheduledVideos();
   }, []);
@@ -28,12 +32,11 @@ const ScheduledVideos: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      // Lógica corrigida: Status Posted E Data futura
       const { data, error } = await supabase
         .from('shorts_youtube')
         .select('id, link_s3, title, description, publish_at, channel')
         .eq('failed', false)
-        .eq('status', 'Posted') // Garante que só pega se estiver com status Posted
+        .eq('status', 'Posted')
         .not('publish_at', 'is', null)
         .gt('publish_at', new Date().toISOString())
         .order('publish_at', { ascending: true });
@@ -88,6 +91,53 @@ const ScheduledVideos: React.FC = () => {
     }
   };
 
+  const startEditingDate = (video: Video, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingDateId(video.id);
+    if (video.publish_at) {
+      const date = new Date(video.publish_at);
+      const offset = date.getTimezoneOffset() * 60000;
+      const localISOTime = (new Date(date.getTime() - offset)).toISOString().slice(0, 16);
+      setNewDateValue(localISOTime);
+    } else {
+      setNewDateValue('');
+    }
+  };
+
+  const saveDate = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!newDateValue) return;
+
+    try {
+      const isoDate = new Date(newDateValue).toISOString();
+      
+      const { error } = await supabase
+        .from('shorts_youtube')
+        .update({ publish_at: isoDate })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      setVideos(videos.map(v => v.id === id ? { ...v, publish_at: isoDate } : v));
+      setEditingDateId(null);
+      
+      // Se a data for passada, o vídeo deveria ir para "Postados"
+      if (new Date(isoDate) <= new Date()) {
+        alert("Data atualizada para o passado. Este vídeo aparecerá na aba 'Postados' após recarregar.");
+      }
+
+    } catch (err) {
+      console.error("Erro ao atualizar data:", err);
+      alert("Erro ao salvar a nova data.");
+    }
+  };
+
+  const cancelEditing = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingDateId(null);
+    setNewDateValue('');
+  };
+
   const formatPublishDate = (dateString?: string) => {
     if (!dateString) return 'Data não definida';
     try {
@@ -136,126 +186,193 @@ const ScheduledVideos: React.FC = () => {
     if (viewMode === 'grid') {
       return (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {videos.map((video) => (
-            <div 
-              key={video.id} 
-              className="group bg-white rounded-xl shadow-md hover:shadow-lg transition-all duration-300 border border-gray-100 overflow-hidden flex flex-col hover:-translate-y-1"
-            >
+          {videos.map((video) => {
+            const isEditing = editingDateId === video.id;
+            
+            return (
               <div 
-                className="relative aspect-video bg-gray-900 cursor-pointer overflow-hidden"
-                onClick={() => setSelectedVideo(video)}
+                key={video.id} 
+                className="group bg-white rounded-xl shadow-md hover:shadow-lg transition-all duration-300 border border-gray-100 overflow-hidden flex flex-col hover:-translate-y-1"
               >
-                <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-800 to-gray-900">
-                  <video 
-                    src={video.link_s3}
-                    className="w-full h-full object-cover opacity-60 group-hover:opacity-40 transition-opacity"
-                    muted
-                    preload="metadata"
-                  />
-                </div>
-                <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors duration-300">
-                  <div className="bg-white/20 backdrop-blur-sm p-3 rounded-full opacity-0 group-hover:opacity-100 scale-75 group-hover:scale-100 transition-all duration-300">
-                    <PlayCircle size={32} className="text-white fill-white/20" />
+                <div 
+                  className="relative aspect-video bg-gray-900 cursor-pointer overflow-hidden"
+                  onClick={() => setSelectedVideo(video)}
+                >
+                  <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-800 to-gray-900">
+                    <video 
+                      src={video.link_s3}
+                      className="w-full h-full object-cover opacity-60 group-hover:opacity-40 transition-opacity"
+                      muted
+                      preload="metadata"
+                    />
                   </div>
-                </div>
-                {/* Channel Badge */}
-                {video.channel && (
-                  <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-md text-white text-xs px-2 py-1 rounded-md flex items-center gap-1">
-                    <Tv size={10} />
-                    <span className="truncate max-w-[100px]">{video.channel}</span>
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors duration-300">
+                    <div className="bg-white/20 backdrop-blur-sm p-3 rounded-full opacity-0 group-hover:opacity-100 scale-75 group-hover:scale-100 transition-all duration-300">
+                      <PlayCircle size={32} className="text-white fill-white/20" />
+                    </div>
                   </div>
-                )}
-              </div>
+                  {/* Channel Badge */}
+                  {video.channel && (
+                    <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-md text-white text-xs px-2 py-1 rounded-md flex items-center gap-1">
+                      <Tv size={10} />
+                      <span className="truncate max-w-[100px]">{video.channel}</span>
+                    </div>
+                  )}
+                </div>
 
-              <div className="p-4 flex flex-col flex-grow">
-                <h3 className="font-semibold text-gray-800 mb-1 line-clamp-2 min-h-[3rem]" title={video.title}>
-                  {video.title || 'Vídeo sem título'}
-                </h3>
-                <div className="flex items-center gap-2 text-sm text-purple-600 bg-purple-50 rounded-md px-2 py-1 mb-4">
-                  <Calendar size={14} />
-                  <span className="font-medium">{formatPublishDate(video.publish_at)}</span>
-                </div>
-                <div className="mt-auto pt-4 flex items-center gap-2 border-t border-gray-100">
-                  <button
-                    onClick={(e) => handleDownload(video.link_s3, video.title || 'video', e)}
-                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
-                    title="Baixar vídeo"
-                  >
-                    <Download size={16} />
-                    <span>Baixar</span>
-                  </button>
-                  <button
-                    onClick={(e) => handleReprove(video.id, e)}
-                    className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                    title="Reprovar vídeo"
-                  >
-                    <Trash2 size={18} />
-                  </button>
+                <div className="p-4 flex flex-col flex-grow">
+                  <h3 className="font-semibold text-gray-800 mb-1 line-clamp-2 min-h-[3rem]" title={video.title}>
+                    {video.title || 'Vídeo sem título'}
+                  </h3>
+                  
+                  {/* Data e Edição */}
+                  <div className="mb-4">
+                    {isEditing ? (
+                      <div className="p-2 bg-purple-50 rounded-lg border border-purple-100 animate-fade-in">
+                        <label className="text-xs font-bold text-purple-800 block mb-1">Nova Data:</label>
+                        <div className="flex gap-1">
+                          <input 
+                            type="datetime-local" 
+                            value={newDateValue}
+                            onChange={(e) => setNewDateValue(e.target.value)}
+                            className="w-full text-xs p-1 border border-purple-200 rounded"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                          <button 
+                            onClick={(e) => saveDate(video.id, e)}
+                            className="bg-purple-600 text-white p-1 rounded hover:bg-purple-700"
+                            title="Salvar"
+                          >
+                            <Save size={14} />
+                          </button>
+                          <button 
+                            onClick={cancelEditing}
+                            className="bg-gray-200 text-gray-600 p-1 rounded hover:bg-gray-300"
+                            title="Cancelar"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div 
+                        className="flex items-center gap-2 text-sm text-purple-600 bg-purple-50 rounded-md px-2 py-1 cursor-pointer hover:bg-purple-100 transition-colors w-fit"
+                        onClick={(e) => startEditingDate(video, e)}
+                        title="Clique para editar a data"
+                      >
+                        <Calendar size={14} />
+                        <span className="font-medium">{formatPublishDate(video.publish_at)}</span>
+                        <Edit2 size={12} className="opacity-50" />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-auto pt-4 flex items-center gap-2 border-t border-gray-100">
+                    <button
+                      onClick={(e) => handleDownload(video.link_s3, video.title || 'video', e)}
+                      className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+                      title="Baixar vídeo"
+                    >
+                      <Download size={16} />
+                      <span>Baixar</span>
+                    </button>
+                    <button
+                      onClick={(e) => handleReprove(video.id, e)}
+                      className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                      title="Reprovar vídeo"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       );
     }
 
     return (
       <div className="space-y-3">
-        {videos.map((video) => (
-          <div
-            key={video.id}
-            className="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 border border-gray-100 flex flex-col sm:flex-row items-start sm:items-center p-3 gap-4"
-          >
+        {videos.map((video) => {
+          const isEditing = editingDateId === video.id;
+
+          return (
             <div
-              className="relative w-full sm:w-32 h-20 bg-gray-900 rounded-md overflow-hidden cursor-pointer flex-shrink-0 group"
-              onClick={() => setSelectedVideo(video)}
+              key={video.id}
+              className="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 border border-gray-100 flex flex-col sm:flex-row items-start sm:items-center p-3 gap-4"
             >
-              <video
-                src={video.link_s3}
-                className="w-full h-full object-cover"
-                muted
-                preload="metadata"
-              />
-              <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
-                <PlayCircle size={24} className="text-white" />
-              </div>
-            </div>
-            <div className="flex-grow min-w-0">
-              <h3 className="font-semibold text-gray-800 truncate" title={video.title}>
-                {video.title || 'Vídeo sem título'}
-              </h3>
-              <div className="flex flex-wrap items-center gap-3 mt-1">
-                <div className="flex items-center gap-2 text-sm text-purple-600">
-                  <Calendar size={14} />
-                  <span className="font-medium">{formatPublishDate(video.publish_at)}</span>
+              <div
+                className="relative w-full sm:w-32 h-20 bg-gray-900 rounded-md overflow-hidden cursor-pointer flex-shrink-0 group"
+                onClick={() => setSelectedVideo(video)}
+              >
+                <video
+                  src={video.link_s3}
+                  className="w-full h-full object-cover"
+                  muted
+                  preload="metadata"
+                />
+                <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <PlayCircle size={24} className="text-white" />
                 </div>
-                {video.channel && (
-                  <div className="flex items-center gap-1 text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
-                    <Tv size={12} />
-                    <span>{video.channel}</span>
-                  </div>
-                )}
+              </div>
+              <div className="flex-grow min-w-0">
+                <h3 className="font-semibold text-gray-800 truncate" title={video.title}>
+                  {video.title || 'Vídeo sem título'}
+                </h3>
+                <div className="flex flex-wrap items-center gap-3 mt-1">
+                  {isEditing ? (
+                    <div className="flex items-center gap-1 animate-fade-in">
+                      <input 
+                        type="datetime-local" 
+                        value={newDateValue}
+                        onChange={(e) => setNewDateValue(e.target.value)}
+                        className="text-xs p-1 border border-purple-300 rounded"
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      <button onClick={(e) => saveDate(video.id, e)} className="text-purple-600 hover:text-purple-800"><Save size={14}/></button>
+                      <button onClick={cancelEditing} className="text-gray-500 hover:text-gray-700"><X size={14}/></button>
+                    </div>
+                  ) : (
+                    <div 
+                      className="flex items-center gap-2 text-sm text-purple-600 cursor-pointer hover:text-purple-800 transition-colors"
+                      onClick={(e) => startEditingDate(video, e)}
+                      title="Clique para editar"
+                    >
+                      <Calendar size={14} />
+                      <span className="font-medium">{formatPublishDate(video.publish_at)}</span>
+                      <Edit2 size={12} className="opacity-50" />
+                    </div>
+                  )}
+                  
+                  {video.channel && (
+                    <div className="flex items-center gap-1 text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
+                      <Tv size={12} />
+                      <span>{video.channel}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 self-end sm:self-center">
+                <button
+                  onClick={(e) => handleDownload(video.link_s3, video.title || 'video', e)}
+                  className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+                  title="Baixar vídeo"
+                >
+                  <Download size={16} />
+                  <span className="hidden md:inline">Baixar</span>
+                </button>
+                <button
+                  onClick={(e) => handleReprove(video.id, e)}
+                  className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                  title="Reprovar vídeo"
+                >
+                  <Trash2 size={18} />
+                </button>
               </div>
             </div>
-            <div className="flex items-center gap-2 self-end sm:self-center">
-              <button
-                onClick={(e) => handleDownload(video.link_s3, video.title || 'video', e)}
-                className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
-                title="Baixar vídeo"
-              >
-                <Download size={16} />
-                <span className="hidden md:inline">Baixar</span>
-              </button>
-              <button
-                onClick={(e) => handleReprove(video.id, e)}
-                className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                title="Reprovar vídeo"
-              >
-                <Trash2 size={18} />
-              </button>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     );
   };

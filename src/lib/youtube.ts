@@ -10,18 +10,21 @@ export interface YouTubeStats {
   commentCount: string;
 }
 
+export interface YouTubeVideoDetails {
+  id: string;
+  publishedAt: string; // Data real de publicação
+  privacyStatus: 'public' | 'private' | 'unlisted';
+  uploadStatus: string;
+}
+
 /**
  * Busca estatísticas para uma lista de IDs usando uma API Key específica.
- * @param videoIds Array de IDs de vídeo do YouTube
- * @param apiKey Chave de API do YouTube (específica do canal)
  */
 export const fetchYouTubeStats = async (videoIds: string[], apiKey: string): Promise<Record<string, YouTubeStats>> => {
-  // Se não houver chave ou IDs, retorna vazio
   if (!apiKey || videoIds.length === 0) {
     return {};
   }
 
-  // A API do YouTube aceita até 50 IDs por requisição
   const chunks = [];
   for (let i = 0; i < videoIds.length; i += 50) {
     chunks.push(videoIds.slice(i, i + 50));
@@ -58,6 +61,55 @@ export const fetchYouTubeStats = async (videoIds: string[], apiKey: string): Pro
   }
 
   return allStats;
+};
+
+/**
+ * Busca detalhes de publicação (Data e Status) para sincronização.
+ * Nota: Com API Key pública, só retorna vídeos Públicos ou Não Listados.
+ */
+export const fetchVideoDetails = async (videoIds: string[], apiKey: string): Promise<Record<string, YouTubeVideoDetails>> => {
+  if (!apiKey || videoIds.length === 0) {
+    return {};
+  }
+
+  const chunks = [];
+  for (let i = 0; i < videoIds.length; i += 50) {
+    chunks.push(videoIds.slice(i, i + 50));
+  }
+
+  const allDetails: Record<string, YouTubeVideoDetails> = {};
+
+  try {
+    for (const chunk of chunks) {
+      const idsParam = chunk.join(',');
+      // Buscamos 'snippet' para a data e 'status' para a privacidade
+      const url = `${BASE_URL}/videos?part=snippet,status&id=${idsParam}&key=${apiKey}`;
+
+      const response = await fetch(url);
+      
+      if (!response.ok) {
+        console.error(`Erro na API do YouTube (${response.status}): ${response.statusText}`);
+        continue;
+      }
+
+      const data = await response.json();
+
+      if (data.items) {
+        data.items.forEach((item: any) => {
+          allDetails[item.id] = {
+            id: item.id,
+            publishedAt: item.snippet.publishedAt,
+            privacyStatus: item.status.privacyStatus,
+            uploadStatus: item.status.uploadStatus
+          };
+        });
+      }
+    }
+  } catch (error) {
+    console.error('Erro ao buscar detalhes do YouTube:', error);
+  }
+
+  return allDetails;
 };
 
 export const formatNumber = (numStr: string | undefined): string => {

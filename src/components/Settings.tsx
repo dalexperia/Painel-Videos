@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle, Key, CheckCircle, Wifi } from 'lucide-react';
+import { fetchVideoDetails } from '../lib/youtube';
+import { 
+  Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle, Key, 
+  CheckCircle, Wifi, RefreshCw, Database, ArrowRight 
+} from 'lucide-react';
 
 interface Setting {
   id: number;
@@ -23,6 +27,10 @@ const Settings: React.FC = () => {
   // Estados para o teste da API
   const [isTestingKey, setIsTestingKey] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  // Estados para Sincronização
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ updated: number; total: number; message: string } | null>(null);
 
   const fetchSettings = async () => {
     setLoading(true);
@@ -104,8 +112,6 @@ const Settings: React.FC = () => {
     setTestResult(null);
 
     try {
-      // Tenta buscar um vídeo público genérico (o primeiro vídeo do YouTube) para validar a chave
-      // ID: Ks-_Mh1QhMc (Me at the zoo)
       const response = await fetch(
         `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=Ks-_Mh1QhMc&key=${currentApiKey}`
       );
@@ -127,6 +133,107 @@ const Settings: React.FC = () => {
       setTestResult({ success: false, message: err.message });
     } finally {
       setIsTestingKey(false);
+    }
+  };
+
+  const handleSyncYouTubeData = async () => {
+    if (!window.confirm("Isso irá verificar todos os vídeos no YouTube e atualizar as datas de publicação e status no banco de dados local. Deseja continuar?")) {
+      return;
+    }
+
+    setIsSyncing(true);
+    setSyncResult(null);
+
+    try {
+      // 1. Buscar todos os vídeos que têm youtube_id
+      const { data: videos, error: videosError } = await supabase
+        .from('shorts_youtube')
+        .select('id, youtube_id, channel, publish_at, status')
+        .not('youtube_id', 'is', null);
+
+      if (videosError) throw videosError;
+      if (!videos || videos.length === 0) {
+        setSyncResult({ updated: 0, total: 0, message: "Nenhum vídeo com ID do YouTube encontrado." });
+        return;
+      }
+
+      // 2. Mapear Canais -> API Keys
+      const channelKeys: Record<string, string> = {};
+      settings.forEach(s => {
+        if (s.channel && s.youtube_api_key) {
+          channelKeys[s.channel.trim().toLowerCase()] = s.youtube_api_key;
+        }
+      });
+
+      // 3. Agrupar vídeos por API Key
+      const videosByApiKey: Record<string, typeof videos> = {};
+      
+      videos.forEach(v => {
+        const normalizedChannel = v.channel ? v.channel.trim().toLowerCase() : '';
+        const apiKey = channelKeys[normalizedChannel];
+        
+        if (apiKey) {
+          if (!videosByApiKey[apiKey]) videosByApiKey[apiKey] = [];
+          videosByApiKey[apiKey].push(v);
+        }
+      });
+
+      let updatedCount = 0;
+
+      // 4. Processar cada grupo
+      for (const [apiKey, groupVideos] of Object.entries(videosByApiKey)) {
+        const ids = groupVideos.map(v => v.youtube_id);
+        
+        // Busca detalhes reais no YouTube
+        const detailsMap = await fetchVideoDetails(ids, apiKey);
+
+        // Compara e atualiza
+        for (const video of groupVideos) {
+          const details = detailsMap[video.youtube_id];
+          
+          if (details) {
+            // Se o vídeo foi encontrado, ele é público ou não listado
+            const newDate = details.publishedAt;
+            const isPublic = details.privacyStatus === 'public';
+            
+            let needsUpdate = false;
+            const updates: any = {};
+
+            // Verifica se a data mudou
+            if (newDate && newDate !== video.publish_at) {
+              updates.publish_at = newDate;
+              needsUpdate = true;
+            }
+
+            // Verifica se o status deve ser atualizado para Posted
+            if (isPublic && video.status !== 'Posted') {
+              updates.status = 'Posted';
+              needsUpdate = true;
+            }
+
+            if (needsUpdate) {
+              const { error: updateError } = await supabase
+                .from('shorts_youtube')
+                .update(updates)
+                .eq('id', video.id);
+              
+              if (!updateError) updatedCount++;
+            }
+          }
+        }
+      }
+
+      setSyncResult({ 
+        updated: updatedCount, 
+        total: videos.length, 
+        message: `Sincronização concluída! ${updatedCount} vídeos foram atualizados com dados reais do YouTube.` 
+      });
+
+    } catch (err: any) {
+      console.error("Erro na sincronização:", err);
+      setSyncResult({ updated: 0, total: 0, message: "Erro ao sincronizar: " + err.message });
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -186,62 +293,106 @@ const Settings: React.FC = () => {
     }
 
     return (
-      <div className="space-y-4">
-        {settings.map((setting) => (
-          <div key={setting.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 hover:border-gray-300 transition-all">
-            <div className="flex justify-between items-start">
-              <div className="space-y-1">
-                <div className="flex items-center gap-3">
-                  <p className="font-bold text-gray-800 text-lg">{setting.channel}</p>
-                  {!setting.youtube_api_key ? (
-                    <span className="text-[10px] bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full font-medium border border-yellow-200">
-                      Sem API Key
-                    </span>
-                  ) : (
-                    <span className="text-[10px] bg-green-100 text-green-800 px-2 py-0.5 rounded-full font-medium border border-green-200 flex items-center gap-1">
-                      <CheckCircle size={10} />
-                      API Configurada
-                    </span>
+      <div className="space-y-8">
+        {/* Seção de Sincronização */}
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-xl border border-blue-100 shadow-sm">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+              <h3 className="text-lg font-bold text-blue-900 flex items-center gap-2">
+                <Database size={20} />
+                Sincronização de Dados
+              </h3>
+              <p className="text-sm text-blue-700 mt-1 max-w-xl">
+                Atualize as datas de publicação e status dos vídeos locais consultando diretamente a API do YouTube. 
+                Isso corrige discrepâncias caso você tenha alterado datas no YouTube Studio.
+              </p>
+            </div>
+            <button
+              onClick={handleSyncYouTubeData}
+              disabled={isSyncing || settings.length === 0}
+              className="flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg font-semibold hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+            >
+              {isSyncing ? (
+                <>
+                  <Loader2 size={18} className="animate-spin" />
+                  Sincronizando...
+                </>
+              ) : (
+                <>
+                  <RefreshCw size={18} />
+                  Sincronizar Agora
+                </>
+              )}
+            </button>
+          </div>
+          
+          {syncResult && (
+            <div className={`mt-4 p-3 rounded-lg text-sm flex items-center gap-2 ${syncResult.updated > 0 ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-700'}`}>
+              {syncResult.updated > 0 ? <CheckCircle size={16} /> : <AlertCircle size={16} />}
+              <span>{syncResult.message}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Lista de Canais */}
+        <div className="space-y-4">
+          <h3 className="text-lg font-bold text-gray-800">Canais Configurados</h3>
+          {settings.map((setting) => (
+            <div key={setting.id} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 hover:border-gray-300 transition-all">
+              <div className="flex justify-between items-start">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-3">
+                    <p className="font-bold text-gray-800 text-lg">{setting.channel}</p>
+                    {!setting.youtube_api_key ? (
+                      <span className="text-[10px] bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full font-medium border border-yellow-200">
+                        Sem API Key
+                      </span>
+                    ) : (
+                      <span className="text-[10px] bg-green-100 text-green-800 px-2 py-0.5 rounded-full font-medium border border-green-200 flex items-center gap-1">
+                        <CheckCircle size={10} />
+                        API Configurada
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm text-gray-500 truncate max-w-xs sm:max-w-md flex items-center gap-2">
+                    <span className="font-medium text-gray-400">Webhook:</span> {setting.webhook}
+                  </p>
+                  {setting.youtube_api_key && (
+                    <p className="text-sm text-gray-500 truncate max-w-xs sm:max-w-md flex items-center gap-2">
+                      <Key size={14} className="text-gray-400" />
+                      <span className="font-medium text-gray-400">API Key:</span> 
+                      <span className="font-mono text-xs bg-gray-50 px-1 rounded">
+                        {setting.youtube_api_key.substring(0, 8)}...
+                      </span>
+                    </p>
                   )}
                 </div>
-                <p className="text-sm text-gray-500 truncate max-w-xs sm:max-w-md flex items-center gap-2">
-                  <span className="font-medium text-gray-400">Webhook:</span> {setting.webhook}
-                </p>
-                {setting.youtube_api_key && (
-                  <p className="text-sm text-gray-500 truncate max-w-xs sm:max-w-md flex items-center gap-2">
-                    <Key size={14} className="text-gray-400" />
-                    <span className="font-medium text-gray-400">API Key:</span> 
-                    <span className="font-mono text-xs bg-gray-50 px-1 rounded">
-                      {setting.youtube_api_key.substring(0, 8)}...
-                    </span>
-                  </p>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <button 
-                  onClick={() => handleEdit(setting)} 
-                  className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
-                  title="Editar"
-                >
-                  <Edit size={18} />
-                </button>
-                <button 
-                  onClick={() => handleDelete(setting.id)} 
-                  className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
-                  title="Excluir"
-                >
-                  <Trash2 size={18} />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => handleEdit(setting)} 
+                    className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                    title="Editar"
+                  >
+                    <Edit size={18} />
+                  </button>
+                  <button 
+                    onClick={() => handleDelete(setting.id)} 
+                    className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                    title="Excluir"
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
-        {settings.length === 0 && !isFormOpen && (
-          <div className="text-center py-12 border-2 border-dashed border-gray-300 rounded-lg">
-            <p className="text-gray-500">Nenhum canal configurado.</p>
-            <p className="text-sm text-gray-400">Clique em "Adicionar Canal" para começar.</p>
-          </div>
-        )}
+          ))}
+          {settings.length === 0 && !isFormOpen && (
+            <div className="text-center py-12 border-2 border-dashed border-gray-300 rounded-lg">
+              <p className="text-gray-500">Nenhum canal configurado.</p>
+              <p className="text-sm text-gray-400">Clique em "Adicionar Canal" para começar.</p>
+            </div>
+          )}
+        </div>
       </div>
     );
   };

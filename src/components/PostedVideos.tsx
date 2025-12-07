@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { fetchYouTubeStats, formatNumber, YouTubeStats } from '../lib/youtube';
-import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, Youtube, X, Eye, ThumbsUp, Calendar } from 'lucide-react';
+import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, Youtube, X, Eye, ThumbsUp, Calendar, Edit2, Save } from 'lucide-react';
 
 interface Video {
   id: string;
@@ -10,7 +10,7 @@ interface Video {
   description?: string;
   youtube_id?: string;
   publish_at?: string;
-  channel?: string; // Importante para saber qual API Key usar
+  channel?: string;
 }
 
 type ViewMode = 'grid' | 'list';
@@ -23,6 +23,10 @@ const PostedVideos: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
 
+  // Estados para edição de data
+  const [editingDateId, setEditingDateId] = useState<string | null>(null);
+  const [newDateValue, setNewDateValue] = useState<string>('');
+
   useEffect(() => {
     fetchPostedVideos();
   }, []);
@@ -33,7 +37,7 @@ const PostedVideos: React.FC = () => {
     try {
       const now = new Date().toISOString();
       
-      // 1. Buscar Vídeos
+      // Busca vídeos postados (data passada ou nula)
       const { data: videosData, error: videosError } = await supabase
         .from('shorts_youtube')
         .select('id, link_s3, title, description, youtube_id, publish_at, channel')
@@ -50,15 +54,11 @@ const PostedVideos: React.FC = () => {
       
       setVideos(validVideos);
 
-      // 2. Buscar Configurações (API Keys)
-      const { data: settingsData, error: settingsError } = await supabase
+      // Busca stats do YouTube
+      const { data: settingsData } = await supabase
         .from('shorts_settings')
         .select('channel, youtube_api_key');
       
-      if (settingsError) console.error("Erro ao buscar configurações:", settingsError);
-
-      // Mapa de Canal (Normalizado) -> API Key
-      // Usamos lowercase para garantir o match mesmo se houver diferença de caixa
       const channelKeys: Record<string, string> = {};
       if (settingsData) {
         settingsData.forEach(s => {
@@ -68,28 +68,17 @@ const PostedVideos: React.FC = () => {
         });
       }
 
-      // 3. Agrupar vídeos por canal para fazer requisições em lote por chave
       const videosByChannel: Record<string, string[]> = {};
-      
       validVideos.forEach(v => {
-        // Normaliza o nome do canal do vídeo também
         const normalizedChannelName = v.channel ? v.channel.trim().toLowerCase() : '';
-        
         if (v.youtube_id && normalizedChannelName && channelKeys[normalizedChannelName]) {
-          // Usa a chave original do settings para agrupar (ou o nome normalizado, tanto faz, desde que consistente)
-          // Aqui vamos usar a API Key diretamente como chave do agrupamento para simplificar
           const apiKey = channelKeys[normalizedChannelName];
-          
-          if (!videosByChannel[apiKey]) {
-            videosByChannel[apiKey] = [];
-          }
+          if (!videosByChannel[apiKey]) videosByChannel[apiKey] = [];
           videosByChannel[apiKey].push(v.youtube_id);
         }
       });
 
-      // 4. Buscar estatísticas para cada grupo de vídeos (agrupados por API Key)
       const allStats: Record<string, YouTubeStats> = {};
-      
       const promises = Object.entries(videosByChannel).map(async ([apiKey, ids]) => {
         if (apiKey) {
           const channelStats = await fetchYouTubeStats(ids, apiKey);
@@ -100,8 +89,7 @@ const PostedVideos: React.FC = () => {
       await Promise.all(promises);
       setVideoStats(allStats);
 
-    } catch (err: any)
-    {
+    } catch (err: any) {
       setError('Não foi possível carregar os vídeos postados.');
       console.error(err);
     } finally {
@@ -111,7 +99,7 @@ const PostedVideos: React.FC = () => {
 
   const handleReprove = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm('Tem certeza que deseja reprovar este vídeo? Ele será movido para a lista de reprovados.')) return;
+    if (!window.confirm('Tem certeza que deseja reprovar este vídeo?')) return;
 
     try {
       const { error } = await supabase
@@ -123,8 +111,8 @@ const PostedVideos: React.FC = () => {
       setVideos(videos.filter((video) => video.id !== id));
       if (selectedVideo?.id === id) setSelectedVideo(null);
     } catch (err) {
-      console.error("Erro ao reprovar o vídeo:", err);
-      alert('Erro ao reprovar o vídeo. Verifique o console para mais detalhes.');
+      console.error("Erro ao reprovar:", err);
+      alert('Erro ao reprovar o vídeo.');
     }
   };
 
@@ -142,6 +130,57 @@ const PostedVideos: React.FC = () => {
     } catch (err) {
       alert('Não foi possível iniciar o download.');
     }
+  };
+
+  const startEditingDate = (video: Video, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingDateId(video.id);
+    // Formata a data para o input datetime-local (YYYY-MM-DDThh:mm)
+    if (video.publish_at) {
+      const date = new Date(video.publish_at);
+      // Ajuste simples para fuso horário local no input
+      const offset = date.getTimezoneOffset() * 60000;
+      const localISOTime = (new Date(date.getTime() - offset)).toISOString().slice(0, 16);
+      setNewDateValue(localISOTime);
+    } else {
+      setNewDateValue('');
+    }
+  };
+
+  const saveDate = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!newDateValue) return;
+
+    try {
+      const isoDate = new Date(newDateValue).toISOString();
+      
+      const { error } = await supabase
+        .from('shorts_youtube')
+        .update({ publish_at: isoDate })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      // Atualiza localmente
+      setVideos(videos.map(v => v.id === id ? { ...v, publish_at: isoDate } : v));
+      setEditingDateId(null);
+      
+      // Se a data for futura, talvez devêssemos remover da lista de "Postados" e mover para "Agendados"?
+      // Por enquanto, apenas atualizamos a visualização. Se o usuário der refresh, o vídeo sumirá daqui se a query filtrar.
+      if (new Date(isoDate) > new Date()) {
+        alert("Data atualizada para o futuro. Este vídeo aparecerá na aba 'Agendados' após recarregar.");
+      }
+
+    } catch (err) {
+      console.error("Erro ao atualizar data:", err);
+      alert("Erro ao salvar a nova data.");
+    }
+  };
+
+  const cancelEditing = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingDateId(null);
+    setNewDateValue('');
   };
 
   const renderContent = () => {
@@ -177,6 +216,7 @@ const PostedVideos: React.FC = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {videos.map((video) => {
             const stats = video.youtube_id ? videoStats[video.youtube_id] : null;
+            const isEditing = editingDateId === video.id;
             
             return (
               <div 
@@ -202,15 +242,51 @@ const PostedVideos: React.FC = () => {
                   </div>
                   
                   {/* Data de Publicação Badge */}
-                  {video.publish_at && (
-                    <div className="absolute top-2 left-2 bg-black/60 backdrop-blur-md text-white text-[10px] px-2 py-1 rounded-md flex items-center gap-1">
-                      <Calendar size={10} />
-                      <span>{new Date(video.publish_at).toLocaleDateString('pt-BR')}</span>
-                    </div>
-                  )}
+                  <div 
+                    className="absolute top-2 left-2 bg-black/60 backdrop-blur-md text-white text-[10px] px-2 py-1 rounded-md flex items-center gap-1 cursor-pointer hover:bg-black/80 transition-colors z-20"
+                    onClick={(e) => startEditingDate(video, e)}
+                    title="Clique para corrigir a data"
+                  >
+                    <Calendar size={10} />
+                    {video.publish_at 
+                      ? <span>{new Date(video.publish_at).toLocaleDateString('pt-BR')}</span>
+                      : <span>Sem data</span>
+                    }
+                    <Edit2 size={8} className="ml-1 opacity-70" />
+                  </div>
                 </div>
 
                 <div className="p-4 flex flex-col flex-grow">
+                  {/* Edição de Data Inline */}
+                  {isEditing && (
+                    <div className="mb-3 p-2 bg-blue-50 rounded-lg border border-blue-100 animate-fade-in">
+                      <label className="text-xs font-bold text-blue-800 block mb-1">Corrigir Data:</label>
+                      <div className="flex gap-1">
+                        <input 
+                          type="datetime-local" 
+                          value={newDateValue}
+                          onChange={(e) => setNewDateValue(e.target.value)}
+                          className="w-full text-xs p-1 border border-blue-200 rounded"
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <button 
+                          onClick={(e) => saveDate(video.id, e)}
+                          className="bg-blue-600 text-white p-1 rounded hover:bg-blue-700"
+                          title="Salvar"
+                        >
+                          <Save size={14} />
+                        </button>
+                        <button 
+                          onClick={cancelEditing}
+                          className="bg-gray-200 text-gray-600 p-1 rounded hover:bg-gray-300"
+                          title="Cancelar"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="flex justify-between items-start mb-1">
                     <h3 className="font-semibold text-gray-800 line-clamp-2 min-h-[2.5rem] text-sm" title={video.title}>
                       {video.title || 'Vídeo sem título'}
@@ -294,6 +370,7 @@ const PostedVideos: React.FC = () => {
       <div className="space-y-3">
         {videos.map((video) => {
           const stats = video.youtube_id ? videoStats[video.youtube_id] : null;
+          const isEditing = editingDateId === video.id;
 
           return (
             <div
@@ -338,12 +415,32 @@ const PostedVideos: React.FC = () => {
                     </span>
                   ) : null}
                   
-                  {video.publish_at && (
-                    <span className="text-[10px] text-gray-400 flex items-center gap-1">
-                      <Calendar size={10} />
-                      {new Date(video.publish_at).toLocaleDateString('pt-BR')}
-                    </span>
-                  )}
+                  {/* Data com Edição */}
+                  <div className="flex items-center gap-2">
+                    {isEditing ? (
+                      <div className="flex items-center gap-1 animate-fade-in">
+                        <input 
+                          type="datetime-local" 
+                          value={newDateValue}
+                          onChange={(e) => setNewDateValue(e.target.value)}
+                          className="text-xs p-1 border border-blue-300 rounded"
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <button onClick={(e) => saveDate(video.id, e)} className="text-blue-600 hover:text-blue-800"><Save size={14}/></button>
+                        <button onClick={cancelEditing} className="text-gray-500 hover:text-gray-700"><X size={14}/></button>
+                      </div>
+                    ) : (
+                      <span 
+                        className="text-[10px] text-gray-400 flex items-center gap-1 cursor-pointer hover:text-blue-600 transition-colors"
+                        onClick={(e) => startEditingDate(video, e)}
+                        title="Clique para editar a data"
+                      >
+                        <Calendar size={10} />
+                        {video.publish_at ? new Date(video.publish_at).toLocaleDateString('pt-BR') : 'Sem data'}
+                        <Edit2 size={8} />
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <p className="text-sm text-gray-500 line-clamp-1" title={video.description}>
