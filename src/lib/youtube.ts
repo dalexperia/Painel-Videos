@@ -12,10 +12,44 @@ export interface YouTubeStats {
 
 export interface YouTubeVideoDetails {
   id: string;
+  title: string;
+  duration: string; // Formatada ou ISO
   publishedAt: string; // Data real de publicação
   privacyStatus: 'public' | 'private' | 'unlisted';
   uploadStatus: string;
 }
+
+/**
+ * Converte duração ISO 8601 (PT1M30S) para formato legível (01:30)
+ */
+const parseISODuration = (isoDuration: string): string => {
+  if (!isoDuration) return '00:00';
+  
+  const match = isoDuration.match(/PT(\d+H)?(\d+M)?(\d+S)?/);
+  if (!match) return '00:00';
+
+  const hours = parseInt((match[1] || '').replace('H', '')) || 0;
+  const minutes = parseInt((match[2] || '').replace('M', '')) || 0;
+  const seconds = parseInt((match[3] || '').replace('S', '')) || 0;
+
+  let result = '';
+  
+  if (hours > 0) {
+    result += `${hours}:`;
+    result += `${minutes.toString().padStart(2, '0')}:`;
+  } else {
+    result += `${minutes}:`; // Sem zero à esquerda se for só minutos, ex: 1:30
+  }
+  
+  result += seconds.toString().padStart(2, '0');
+  
+  // Garante pelo menos formato M:SS (ex: 0:15)
+  if (!hours && !minutes) {
+    return `0:${seconds.toString().padStart(2, '0')}`;
+  }
+
+  return result;
+};
 
 /**
  * Busca estatísticas para uma lista de IDs usando uma API Key específica.
@@ -64,17 +98,19 @@ export const fetchYouTubeStats = async (videoIds: string[], apiKey: string): Pro
 };
 
 /**
- * Busca detalhes de publicação (Data e Status) para sincronização.
- * Nota: Com API Key pública, só retorna vídeos Públicos ou Não Listados.
+ * Busca detalhes completos (Título, Duração, Status) para sincronização.
  */
 export const fetchVideoDetails = async (videoIds: string[], apiKey: string): Promise<Record<string, YouTubeVideoDetails>> => {
   if (!apiKey || videoIds.length === 0) {
     return {};
   }
 
+  // Garante que videoIds é um array
+  const idsArray = Array.isArray(videoIds) ? videoIds : [videoIds];
+
   const chunks = [];
-  for (let i = 0; i < videoIds.length; i += 50) {
-    chunks.push(videoIds.slice(i, i + 50));
+  for (let i = 0; i < idsArray.length; i += 50) {
+    chunks.push(idsArray.slice(i, i + 50));
   }
 
   const allDetails: Record<string, YouTubeVideoDetails> = {};
@@ -82,8 +118,8 @@ export const fetchVideoDetails = async (videoIds: string[], apiKey: string): Pro
   try {
     for (const chunk of chunks) {
       const idsParam = chunk.join(',');
-      // Buscamos 'snippet' para a data e 'status' para a privacidade
-      const url = `${BASE_URL}/videos?part=snippet,status&id=${idsParam}&key=${apiKey}`;
+      // Adicionado 'snippet' para título e 'contentDetails' para duração
+      const url = `${BASE_URL}/videos?part=snippet,contentDetails,status&id=${idsParam}&key=${apiKey}`;
 
       const response = await fetch(url);
       
@@ -98,6 +134,8 @@ export const fetchVideoDetails = async (videoIds: string[], apiKey: string): Pro
         data.items.forEach((item: any) => {
           allDetails[item.id] = {
             id: item.id,
+            title: item.snippet.title,
+            duration: parseISODuration(item.contentDetails.duration),
             publishedAt: item.snippet.publishedAt,
             privacyStatus: item.status.privacyStatus,
             uploadStatus: item.status.uploadStatus

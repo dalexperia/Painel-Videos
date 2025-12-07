@@ -156,7 +156,8 @@ const Settings: React.FC = () => {
     try {
       // Tenta buscar um vídeo qualquer (ex: vídeo do YouTube Developers) para validar a chave
       const testVideoId = 'Ks-_Mh1QhMc'; 
-      await fetchVideoDetails(testVideoId, currentApiKey);
+      // Passa como array para a nova assinatura da função
+      await fetchVideoDetails([testVideoId], currentApiKey);
       setTestResult({ success: true, message: "Chave válida! Conexão com YouTube estabelecida." });
     } catch (err: any) {
       console.error("API Key Test Error:", err);
@@ -250,10 +251,15 @@ const Settings: React.FC = () => {
         if (!channelSettings?.youtube_api_key) continue;
 
         const channelVideos = videosByChannel[channelName];
+        const videoIds = channelVideos.map(v => v.video_id); // Extrai apenas os IDs para a API
         
-        for (const video of channelVideos) {
-          try {
-            const details = await fetchVideoDetails(video.video_id, channelSettings.youtube_api_key);
+        try {
+          // Busca em lote (muito mais eficiente e correto)
+          const detailsMap = await fetchVideoDetails(videoIds, channelSettings.youtube_api_key);
+          
+          // Atualiza um por um no banco
+          for (const video of channelVideos) {
+            const details = detailsMap[video.video_id];
             
             if (details) {
               await supabase
@@ -265,12 +271,13 @@ const Settings: React.FC = () => {
                 .eq('id', video.id);
               updatedCount++;
             }
-          } catch (err) {
-            console.error(`Falha ao atualizar vídeo ${video.video_id}:`, err);
           }
-          // Pequeno delay para evitar rate limit
-          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (err) {
+          console.error(`Falha ao processar lote do canal ${channelName}:`, err);
         }
+        
+        // Pequeno delay entre canais para evitar rate limit
+        await new Promise(resolve => setTimeout(resolve, 200));
       }
 
       setSyncResult({ 
@@ -281,7 +288,7 @@ const Settings: React.FC = () => {
 
     } catch (err: any) {
       console.error("Sync error:", err);
-      setError("Erro durante a sincronização.");
+      setError("Erro durante a sincronização. Verifique o console para detalhes.");
     } finally {
       setIsSyncing(false);
     }
