@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, X, Calendar, Tv, Edit2, Save } from 'lucide-react';
+import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, X, Calendar, Tv, Edit2, Save, Search, Filter } from 'lucide-react';
 
 interface Video {
   id: string;
@@ -23,6 +23,12 @@ const ScheduledVideos: React.FC = () => {
   // Estados para edição de data
   const [editingDateId, setEditingDateId] = useState<string | null>(null);
   const [newDateValue, setNewDateValue] = useState<string>('');
+
+  // Estados de Filtro
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedChannel, setSelectedChannel] = useState('');
+  const [dateStart, setDateStart] = useState('');
+  const [dateEnd, setDateEnd] = useState('');
 
   useEffect(() => {
     fetchScheduledVideos();
@@ -54,6 +60,44 @@ const ScheduledVideos: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Lógica de Filtragem
+  const filteredVideos = useMemo(() => {
+    return videos.filter(video => {
+      // Filtro de Texto (Título)
+      const matchesSearch = video.title?.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      // Filtro de Canal
+      const matchesChannel = selectedChannel ? video.channel === selectedChannel : true;
+
+      // Filtro de Data (Publish At)
+      let matchesDate = true;
+      if (dateStart || dateEnd) {
+        if (!video.publish_at) return false;
+        const videoDate = new Date(video.publish_at).setHours(0,0,0,0);
+        const start = dateStart ? new Date(dateStart).setHours(0,0,0,0) : null;
+        const end = dateEnd ? new Date(dateEnd).setHours(0,0,0,0) : null;
+
+        if (start && videoDate < start) matchesDate = false;
+        if (end && videoDate > end) matchesDate = false;
+      }
+
+      return matchesSearch && matchesChannel && matchesDate;
+    });
+  }, [videos, searchTerm, selectedChannel, dateStart, dateEnd]);
+
+  // Lista única de canais para o dropdown
+  const uniqueChannels = useMemo(() => {
+    const channels = videos.map(v => v.channel).filter(Boolean);
+    return Array.from(new Set(channels)).sort();
+  }, [videos]);
+
+  const clearFilters = () => {
+    setSearchTerm('');
+    setSelectedChannel('');
+    setDateStart('');
+    setDateEnd('');
   };
 
   const handleReprove = async (id: string, e: React.MouseEvent) => {
@@ -173,12 +217,19 @@ const ScheduledVideos: React.FC = () => {
       );
     }
 
-    if (videos.length === 0) {
+    if (filteredVideos.length === 0) {
       return (
         <div className="text-center py-20 bg-white rounded-lg shadow-sm border border-gray-100">
           <Calendar size={48} className="mx-auto text-gray-300 mb-4" />
-          <h3 className="text-gray-800 text-xl font-semibold">Nenhum vídeo agendado</h3>
-          <p className="text-gray-500 text-sm mt-2">Não há vídeos com data de publicação futura no momento.</p>
+          <h3 className="text-gray-800 text-xl font-semibold">Nenhum vídeo encontrado</h3>
+          <p className="text-gray-500 text-sm mt-2">
+            {videos.length > 0 ? 'Tente ajustar os filtros de busca.' : 'Não há vídeos com data de publicação futura no momento.'}
+          </p>
+          {videos.length > 0 && (
+            <button onClick={clearFilters} className="mt-4 text-purple-600 hover:text-purple-700 font-medium text-sm">
+              Limpar filtros
+            </button>
+          )}
         </div>
       );
     }
@@ -186,7 +237,7 @@ const ScheduledVideos: React.FC = () => {
     if (viewMode === 'grid') {
       return (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {videos.map((video) => {
+          {filteredVideos.map((video) => {
             const isEditing = editingDateId === video.id;
             
             return (
@@ -294,7 +345,7 @@ const ScheduledVideos: React.FC = () => {
 
     return (
       <div className="space-y-3">
-        {videos.map((video) => {
+        {filteredVideos.map((video) => {
           const isEditing = editingDateId === video.id;
 
           return (
@@ -406,10 +457,81 @@ const ScheduledVideos: React.FC = () => {
             <RefreshCw size={22} />
           </button>
           <div className="bg-purple-100 text-purple-800 text-center rounded-2xl px-5 py-2 shadow-sm">
-            <div className="text-2xl font-bold leading-none">{videos.length}</div>
-            <div className="text-xs leading-none tracking-tight mt-1">{videos.length === 1 ? 'Vídeo' : 'Vídeos'}</div>
+            <div className="text-2xl font-bold leading-none">{filteredVideos.length}</div>
+            <div className="text-xs leading-none tracking-tight mt-1">{filteredVideos.length === 1 ? 'Vídeo' : 'Vídeos'}</div>
           </div>
         </div>
+      </div>
+
+      {/* Barra de Filtros */}
+      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6 flex flex-col md:flex-row gap-4 items-center">
+        <div className="flex items-center gap-2 text-gray-500 w-full md:w-auto">
+          <Filter size={18} />
+          <span className="text-sm font-medium">Filtros:</span>
+        </div>
+        
+        <div className="flex-1 w-full grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+          {/* Busca */}
+          <div className="relative">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Buscar por título..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            />
+          </div>
+
+          {/* Canal */}
+          <div className="relative">
+            <Tv size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <select
+              value={selectedChannel}
+              onChange={(e) => setSelectedChannel(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent appearance-none bg-white"
+            >
+              <option value="">Todos os Canais</option>
+              {uniqueChannels.map(channel => (
+                <option key={channel} value={channel}>{channel}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Data Início */}
+          <div className="relative">
+            <Calendar size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="date"
+              value={dateStart}
+              onChange={(e) => setDateStart(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-600"
+              placeholder="De"
+            />
+          </div>
+
+          {/* Data Fim */}
+          <div className="relative">
+            <Calendar size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="date"
+              value={dateEnd}
+              onChange={(e) => setDateEnd(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-600"
+              placeholder="Até"
+            />
+          </div>
+        </div>
+
+        {(searchTerm || selectedChannel || dateStart || dateEnd) && (
+          <button
+            onClick={clearFilters}
+            className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+            title="Limpar Filtros"
+          >
+            <X size={20} />
+          </button>
+        )}
       </div>
 
       {renderContent()}

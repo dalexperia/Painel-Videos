@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import { fetchYouTubeStats, formatNumber, YouTubeStats } from '../lib/youtube';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  PieChart, Pie, Cell, Legend
+  PieChart, Pie, Cell, Legend, BarChart, Bar
 } from 'recharts';
 import { 
   Youtube, Calendar, Sparkles, Trash2, AlertCircle, Loader2, 
-  TrendingUp, Activity, Layers, Zap 
+  TrendingUp, Activity, Layers, Zap, Eye, ThumbsUp, MessageCircle, Trophy
 } from 'lucide-react';
 
 // --- Utilitários e Configurações ---
@@ -31,12 +32,13 @@ const getChannelColor = (channelName: string, index: number) => {
 
 const StatCard: React.FC<{
   title: string;
-  value: number;
+  value: string | number;
   icon: React.ReactNode;
   trend?: string;
   colorClass: string;
   bgClass: string;
-}> = ({ title, value, icon, trend, colorClass, bgClass }) => (
+  subValue?: string;
+}> = ({ title, value, icon, trend, colorClass, bgClass, subValue }) => (
   <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between h-full transition-all hover:shadow-md hover:-translate-y-1">
     <div className="flex justify-between items-start mb-4">
       <div className={`p-3 rounded-xl ${bgClass} ${colorClass}`}>
@@ -52,6 +54,7 @@ const StatCard: React.FC<{
     <div>
       <h3 className="text-gray-500 text-sm font-medium mb-1">{title}</h3>
       <p className="text-3xl font-bold text-gray-900">{value}</p>
+      {subValue && <p className="text-xs text-gray-400 mt-1">{subValue}</p>}
     </div>
   </div>
 );
@@ -59,16 +62,18 @@ const StatCard: React.FC<{
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
     return (
-      <div className="bg-white p-4 border border-gray-100 shadow-xl rounded-xl">
+      <div className="bg-white p-4 border border-gray-100 shadow-xl rounded-xl z-50">
         <p className="font-bold text-gray-800 mb-2">{label}</p>
         {payload.map((entry: any, index: number) => (
           <div key={index} className="flex items-center gap-2 text-sm mb-1">
             <div 
               className="w-3 h-3 rounded-full" 
-              style={{ backgroundColor: entry.color }}
+              style={{ backgroundColor: entry.color || entry.fill }}
             />
             <span className="text-gray-600 font-medium">{entry.name}:</span>
-            <span className="text-gray-900 font-bold">{entry.value}</span>
+            <span className="text-gray-900 font-bold">
+              {typeof entry.value === 'number' ? entry.value.toLocaleString('pt-BR') : entry.value}
+            </span>
           </div>
         ))}
       </div>
@@ -81,20 +86,26 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 
 const Dashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
+  const [loadingStats, setLoadingStats] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rawData, setRawData] = useState<any[]>([]);
+  const [youtubeStats, setYoutubeStats] = useState<Record<string, YouTubeStats>>({});
 
+  // Carregamento Inicial (Banco de Dados)
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       try {
-        // Adicionado link_s3 para validação de integridade
         const { data, error } = await supabase
           .from('shorts_youtube')
-          .select('id, status, channel, created_at, publish_at, failed, link_s3');
+          .select('id, status, channel, created_at, publish_at, failed, link_s3, youtube_id, title');
 
         if (error) throw error;
         setRawData(data || []);
+        
+        // Inicia busca de stats do YouTube em segundo plano após carregar dados locais
+        fetchStatsFromYouTube(data || []);
+
       } catch (err: any) {
         console.error("Error fetching dashboard data:", err);
         setError("Não foi possível carregar os dados do dashboard.");
@@ -106,7 +117,56 @@ const Dashboard: React.FC = () => {
     fetchData();
   }, []);
 
-  // --- Processamento de Dados (Lógica Ajustada) ---
+  // Busca de Stats do YouTube (Separada para não bloquear a UI inicial)
+  const fetchStatsFromYouTube = async (videos: any[]) => {
+    setLoadingStats(true);
+    try {
+      // 1. Pegar configurações (API Keys)
+      const { data: settingsData } = await supabase
+        .from('shorts_settings')
+        .select('channel, youtube_api_key');
+      
+      const channelKeys: Record<string, string> = {};
+      if (settingsData) {
+        settingsData.forEach(s => {
+          if (s.channel && s.youtube_api_key) {
+            channelKeys[s.channel.trim().toLowerCase()] = s.youtube_api_key;
+          }
+        });
+      }
+
+      // 2. Agrupar IDs por API Key
+      const videosByChannel: Record<string, string[]> = {};
+      videos.forEach(v => {
+        if (v.youtube_id && v.channel) {
+          const normalizedChannel = v.channel.trim().toLowerCase();
+          const apiKey = channelKeys[normalizedChannel];
+          
+          if (apiKey) {
+            if (!videosByChannel[apiKey]) videosByChannel[apiKey] = [];
+            videosByChannel[apiKey].push(v.youtube_id);
+          }
+        }
+      });
+
+      // 3. Buscar dados na API
+      const allStats: Record<string, YouTubeStats> = {};
+      const promises = Object.entries(videosByChannel).map(async ([apiKey, ids]) => {
+        const stats = await fetchYouTubeStats(ids, apiKey);
+        Object.assign(allStats, stats);
+      });
+
+      await Promise.all(promises);
+      setYoutubeStats(allStats);
+
+    } catch (err) {
+      console.error("Erro ao buscar stats do YouTube:", err);
+    } finally {
+      setLoadingStats(false);
+    }
+  };
+
+  // --- Processamento de Dados ---
 
   const channelStats = useMemo(() => {
     const channels: Record<string, { 
@@ -115,68 +175,56 @@ const Dashboard: React.FC = () => {
       posted: number, 
       scheduled: number, 
       recent: number, 
-      reproved: number 
+      reproved: number,
+      totalViews: number,
+      totalLikes: number
     }> = {};
 
     const now = new Date();
 
     rawData.forEach(item => {
-      // 0. Validação de Integridade: Ignora itens sem link de vídeo (fantasmas)
-      if (!item.link_s3 || item.link_s3.trim() === '') {
-        return;
-      }
+      if (!item.link_s3 || item.link_s3.trim() === '') return;
 
       const channelName = item.channel || 'Sem Canal';
       
       if (!channels[channelName]) {
         channels[channelName] = { 
           name: channelName, 
-          total: 0, 
-          posted: 0, 
-          scheduled: 0, 
-          recent: 0, 
-          reproved: 0 
+          total: 0, posted: 0, scheduled: 0, recent: 0, reproved: 0,
+          totalViews: 0, totalLikes: 0
         };
+      }
+
+      // Stats do YouTube
+      if (item.youtube_id && youtubeStats[item.youtube_id]) {
+        const stats = youtubeStats[item.youtube_id];
+        channels[channelName].totalViews += parseInt(stats.viewCount || '0', 10);
+        channels[channelName].totalLikes += parseInt(stats.likeCount || '0', 10);
       }
 
       let categorized = false;
 
-      // LÓGICA ESTRITA:
-      
-      // 1. Reprovados: Flag de falha ativa (Prioridade Máxima)
       if (item.failed) {
         channels[channelName].reproved++;
         categorized = true;
-      } 
-      // 2. Agendados: Status 'Posted' E Data Futura
-      else if (item.status === 'Posted' && item.publish_at && item.publish_at.trim() !== '' && new Date(item.publish_at) > now) {
+      } else if (item.status === 'Posted' && item.publish_at && item.publish_at.trim() !== '' && new Date(item.publish_at) > now) {
         channels[channelName].scheduled++;
         categorized = true;
-      }
-      // 3. Postados: Status 'Posted' (Se não caiu no if acima, é porque a data é passada/presente ou nula)
-      else if (item.status === 'Posted') {
+      } else if (item.status === 'Posted') {
         channels[channelName].posted++;
         categorized = true;
-      } 
-      // 4. Recentes: Status 'Created' E SEM DATA DE PUBLICAÇÃO
-      else if (item.status === 'Created') {
-        // Correção: Só conta como recente se NÃO tiver data de publicação definida.
-        // Isso alinha com a query da tela de Recentes (.is('publish_at', null))
+      } else if (item.status === 'Created') {
         if (!item.publish_at || item.publish_at.trim() === '') {
           channels[channelName].recent++;
           categorized = true;
         }
       }
 
-      // Incrementa o total APENAS se foi categorizado em um dos grupos válidos
-      if (categorized) {
-        channels[channelName].total++;
-      }
+      if (categorized) channels[channelName].total++;
     });
 
-    // Ordena por volume total
     return Object.values(channels).sort((a, b) => b.total - a.total);
-  }, [rawData]);
+  }, [rawData, youtubeStats]);
 
   // Totais Globais
   const globalStats = useMemo(() => {
@@ -184,11 +232,28 @@ const Dashboard: React.FC = () => {
       posted: acc.posted + curr.posted,
       scheduled: acc.scheduled + curr.scheduled,
       recent: acc.recent + curr.recent,
-      reproved: acc.reproved + curr.reproved
-    }), { posted: 0, scheduled: 0, recent: 0, reproved: 0 });
+      reproved: acc.reproved + curr.reproved,
+      views: acc.views + curr.totalViews,
+      likes: acc.likes + curr.totalLikes
+    }), { posted: 0, scheduled: 0, recent: 0, reproved: 0, views: 0, likes: 0 });
   }, [channelStats]);
 
-  // Dados para o Gráfico de Timeline
+  // Top Vídeos (Ranking)
+  const topVideos = useMemo(() => {
+    const videosWithStats = rawData
+      .filter(v => v.youtube_id && youtubeStats[v.youtube_id])
+      .map(v => ({
+        ...v,
+        views: parseInt(youtubeStats[v.youtube_id].viewCount || '0', 10),
+        likes: parseInt(youtubeStats[v.youtube_id].likeCount || '0', 10)
+      }))
+      .sort((a, b) => b.views - a.views)
+      .slice(0, 5);
+    
+    return videosWithStats;
+  }, [rawData, youtubeStats]);
+
+  // Dados para o Gráfico de Timeline (Produção)
   const timelineData = useMemo(() => {
     const days = 7;
     const data: any[] = [];
@@ -200,26 +265,31 @@ const Dashboard: React.FC = () => {
       const dateStr = d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit' });
       
       const dayStats: any = { name: dateStr };
-      
       channelStats.forEach(c => dayStats[c.name] = 0);
 
       rawData.forEach(item => {
-        // Aplica o mesmo filtro de integridade aqui
-        if (!item.created_at || !item.link_s3 || item.link_s3.trim() === '') return;
-        
+        if (!item.created_at || !item.link_s3) return;
         const itemDate = new Date(item.created_at);
         if (itemDate.getDate() === d.getDate() && itemDate.getMonth() === d.getMonth()) {
           const cName = item.channel || 'Sem Canal';
-          if (dayStats[cName] !== undefined) {
-            dayStats[cName]++;
-          }
+          if (dayStats[cName] !== undefined) dayStats[cName]++;
         }
       });
-
       data.push(dayStats);
     }
     return data;
   }, [rawData, channelStats]);
+
+  // Dados para Gráfico de Views por Canal
+  const viewsByChannelData = useMemo(() => {
+    return channelStats
+      .filter(c => c.totalViews > 0)
+      .map(c => ({
+        name: c.name,
+        views: c.totalViews
+      }))
+      .sort((a, b) => b.views - a.views);
+  }, [channelStats]);
 
   if (loading) {
     return (
@@ -247,14 +317,22 @@ const Dashboard: React.FC = () => {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Visão Geral</h1>
-          <p className="text-gray-500 mt-1">Acompanhe o desempenho dos seus canais em tempo real.</p>
+          <p className="text-gray-500 mt-1">Acompanhe a produção e a performance dos seus canais.</p>
         </div>
-        <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg p-1 shadow-sm">
-          <span className="px-3 py-1 text-xs font-semibold text-brand-700 bg-brand-50 rounded-md">Últimos 7 dias</span>
+        <div className="flex items-center gap-2">
+          {loadingStats && (
+            <span className="flex items-center text-xs text-blue-600 bg-blue-50 px-3 py-1 rounded-full animate-pulse">
+              <Loader2 size={12} className="mr-1 animate-spin" />
+              Atualizando métricas do YouTube...
+            </span>
+          )}
+          <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg p-1 shadow-sm">
+            <span className="px-3 py-1 text-xs font-semibold text-brand-700 bg-brand-50 rounded-md">Últimos 7 dias</span>
+          </div>
         </div>
       </div>
 
-      {/* KPI Cards */}
+      {/* KPI Cards - Produção */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard 
           title="Postados" 
@@ -286,10 +364,59 @@ const Dashboard: React.FC = () => {
         />
       </div>
 
+      {/* KPI Cards - Performance (Novos) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-gradient-to-br from-indigo-600 to-blue-700 rounded-2xl p-6 text-white shadow-lg relative overflow-hidden">
+          <div className="absolute top-0 right-0 p-4 opacity-10">
+            <Eye size={100} />
+          </div>
+          <div className="relative z-10">
+            <div className="flex items-center gap-2 mb-2 opacity-90">
+              <Eye size={20} />
+              <span className="font-medium">Total de Visualizações</span>
+            </div>
+            <div className="text-4xl font-bold mb-1">
+              {loadingStats ? '...' : formatNumber(globalStats.views.toString())}
+            </div>
+            <p className="text-sm opacity-75">Acumulado em todos os canais</p>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-center">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-pink-100 text-pink-600 rounded-lg">
+              <ThumbsUp size={20} />
+            </div>
+            <span className="text-gray-500 font-medium">Total de Curtidas</span>
+          </div>
+          <div className="text-3xl font-bold text-gray-900">
+            {loadingStats ? '...' : formatNumber(globalStats.likes.toString())}
+          </div>
+          <p className="text-xs text-gray-400 mt-1">Engajamento positivo</p>
+        </div>
+
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-center">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-yellow-100 text-yellow-600 rounded-lg">
+              <Trophy size={20} />
+            </div>
+            <span className="text-gray-500 font-medium">Melhor Canal (Views)</span>
+          </div>
+          <div className="text-2xl font-bold text-gray-900 truncate">
+            {viewsByChannelData.length > 0 ? viewsByChannelData[0].name : '-'}
+          </div>
+          <p className="text-xs text-gray-400 mt-1">
+            {viewsByChannelData.length > 0 
+              ? `${formatNumber(viewsByChannelData[0].views.toString())} visualizações` 
+              : 'Sem dados'}
+          </p>
+        </div>
+      </div>
+
       {/* Main Charts Section */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* Timeline Chart */}
+        {/* Timeline Chart (Produção) */}
         <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
           <div className="flex items-center justify-between mb-6">
             <div>
@@ -301,7 +428,7 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
           
-          <div className="h-[350px] w-full">
+          <div className="h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={timelineData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>
@@ -344,26 +471,122 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Distribution Chart */}
+        {/* Top Videos List (Ranking) */}
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col">
+          <div className="mb-4">
+            <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+              <Trophy size={20} className="text-yellow-500" />
+              Top 5 Vídeos
+            </h2>
+            <p className="text-sm text-gray-500">Melhor performance</p>
+          </div>
+
+          <div className="flex-grow overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+            {topVideos.length > 0 ? (
+              topVideos.map((video, index) => (
+                <div key={video.id} className="flex items-start gap-3 p-3 rounded-xl bg-gray-50 hover:bg-gray-100 transition-colors border border-gray-100">
+                  <div className="flex-shrink-0 w-8 h-8 flex items-center justify-center bg-white rounded-full font-bold text-gray-400 shadow-sm text-sm">
+                    #{index + 1}
+                  </div>
+                  <div className="min-w-0 flex-grow">
+                    <p className="text-sm font-semibold text-gray-900 truncate" title={video.title}>
+                      {video.title || 'Sem título'}
+                    </p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-[10px] px-1.5 py-0.5 bg-white rounded border border-gray-200 text-gray-500 truncate max-w-[80px]">
+                        {video.channel}
+                      </span>
+                      <div className="flex items-center gap-1 text-xs font-medium text-blue-600">
+                        <Eye size={10} />
+                        {formatNumber(video.views.toString())}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center text-gray-400 text-sm">
+                <Activity size={32} className="mb-2 opacity-20" />
+                <p>Sem dados de visualização ainda.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Secondary Charts Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        
+        {/* Views per Channel (Bar Chart) */}
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+          <div className="mb-6">
+            <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+              <Zap size={20} className="text-brand-500" />
+              Audiência por Canal
+            </h2>
+            <p className="text-sm text-gray-500">Comparativo de visualizações totais</p>
+          </div>
+          
+          <div className="h-[250px] w-full">
+            {viewsByChannelData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={viewsByChannelData} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f3f4f6" />
+                  <XAxis type="number" hide />
+                  <YAxis 
+                    dataKey="name" 
+                    type="category" 
+                    width={100} 
+                    tick={{ fontSize: 11, fill: '#4b5563' }} 
+                  />
+                  <Tooltip 
+                    cursor={{ fill: '#f9fafb' }}
+                    content={({ active, payload }) => {
+                      if (active && payload && payload.length) {
+                        return (
+                          <div className="bg-white p-2 border border-gray-100 shadow-lg rounded-lg text-xs">
+                            <span className="font-bold">{payload[0].payload.name}:</span> {formatNumber(payload[0].value as string)} views
+                          </div>
+                        );
+                      }
+                      return null;
+                    }}
+                  />
+                  <Bar dataKey="views" radius={[0, 4, 4, 0]} barSize={20}>
+                    {viewsByChannelData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={getChannelColor(entry.name, index)} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full flex items-center justify-center text-gray-400 text-sm">
+                Sem dados de audiência.
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Distribution Chart (Pie) */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col">
           <div className="mb-6">
             <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
               <Layers size={20} className="text-brand-500" />
-              Distribuição
+              Volume de Produção
             </h2>
-            <p className="text-sm text-gray-500">Share of Voice por canal</p>
+            <p className="text-sm text-gray-500">Share of Voice (Quantidade de vídeos)</p>
           </div>
 
           <div className="flex-grow flex items-center justify-center relative">
-            <div className="h-[250px] w-full">
+            <div className="h-[200px] w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
                     data={channelStats}
                     cx="50%"
                     cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
+                    innerRadius={50}
+                    outerRadius={70}
                     paddingAngle={5}
                     dataKey="total"
                   >
@@ -377,110 +600,12 @@ const Dashboard: React.FC = () => {
             </div>
             {/* Central Text */}
             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <span className="text-3xl font-bold text-gray-900">
+              <span className="text-2xl font-bold text-gray-900">
                 {channelStats.reduce((acc, curr) => acc + curr.total, 0)}
               </span>
-              <span className="text-xs text-gray-500 uppercase tracking-wider">Total</span>
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider">Vídeos</span>
             </div>
           </div>
-
-          <div className="mt-4 space-y-3">
-            {channelStats.slice(0, 4).map((channel, index) => (
-              <div key={channel.name} className="flex items-center justify-between text-sm">
-                <div className="flex items-center gap-2">
-                  <div 
-                    className="w-3 h-3 rounded-full" 
-                    style={{ backgroundColor: getChannelColor(channel.name, index) }} 
-                  />
-                  <span className="text-gray-600 truncate max-w-[120px]">{channel.name}</span>
-                </div>
-                <span className="font-semibold text-gray-900">
-                  {channel.total > 0 ? Math.round((channel.total / channelStats.reduce((acc, curr) => acc + curr.total, 0)) * 100) : 0}%
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Channel Breakdown Cards */}
-      <div>
-        <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-          <Zap size={24} className="text-yellow-500" />
-          Performance por Canal
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-          {channelStats.map((channel, index) => (
-            <div 
-              key={channel.name} 
-              className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm hover:shadow-md transition-shadow relative overflow-hidden"
-            >
-              {/* Color Stripe */}
-              <div 
-                className="absolute top-0 left-0 w-1 h-full" 
-                style={{ backgroundColor: getChannelColor(channel.name, index) }}
-              />
-              
-              <div className="flex justify-between items-start mb-4 pl-2">
-                <h3 className="font-bold text-gray-800 text-lg truncate pr-2">{channel.name}</h3>
-                <span className="bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-full font-medium">
-                  {channel.total} vídeos
-                </span>
-              </div>
-
-              <div className="space-y-4 pl-2">
-                {/* Mini Bar Chart for Status */}
-                <div className="space-y-2">
-                  <div className="flex justify-between text-xs text-gray-500">
-                    <span>Progresso</span>
-                    <span>{Math.round(((channel.posted + channel.scheduled) / (channel.total || 1)) * 100)}% processado</span>
-                  </div>
-                  <div className="w-full bg-gray-100 rounded-full h-2 flex overflow-hidden">
-                    <div 
-                      className="bg-green-500 h-full" 
-                      style={{ width: `${(channel.posted / channel.total) * 100}%` }} 
-                      title="Postados"
-                    />
-                    <div 
-                      className="bg-purple-500 h-full" 
-                      style={{ width: `${(channel.scheduled / channel.total) * 100}%` }} 
-                      title="Agendados"
-                    />
-                    <div 
-                      className="bg-blue-400 h-full" 
-                      style={{ width: `${(channel.recent / channel.total) * 100}%` }} 
-                      title="Recentes"
-                    />
-                     <div 
-                      className="bg-red-400 h-full" 
-                      style={{ width: `${(channel.reproved / channel.total) * 100}%` }} 
-                      title="Reprovados"
-                    />
-                  </div>
-                </div>
-
-                {/* Grid de Estatísticas do Canal */}
-                <div className="grid grid-cols-2 gap-2 pt-2">
-                  <div className="text-center p-2 bg-green-50 rounded-lg">
-                    <div className="text-lg font-bold text-green-700">{channel.posted}</div>
-                    <div className="text-[10px] uppercase tracking-wide text-green-600 font-semibold">Postados</div>
-                  </div>
-                  <div className="text-center p-2 bg-purple-50 rounded-lg">
-                    <div className="text-lg font-bold text-purple-700">{channel.scheduled}</div>
-                    <div className="text-[10px] uppercase tracking-wide text-purple-600 font-semibold">Agendados</div>
-                  </div>
-                  <div className="text-center p-2 bg-blue-50 rounded-lg">
-                    <div className="text-lg font-bold text-blue-700">{channel.recent}</div>
-                    <div className="text-[10px] uppercase tracking-wide text-blue-600 font-semibold">Recentes</div>
-                  </div>
-                  <div className="text-center p-2 bg-red-50 rounded-lg">
-                    <div className="text-lg font-bold text-red-700">{channel.reproved}</div>
-                    <div className="text-[10px] uppercase tracking-wide text-red-600 font-semibold">Reprovados</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
         </div>
       </div>
     </div>
