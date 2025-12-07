@@ -119,19 +119,38 @@ const ScheduledVideos: React.FC = () => {
     }
   };
 
-  const handleDownload = (url: string, title: string, e: React.MouseEvent) => {
+  const handleDownload = async (url: string, title: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    
+    if (!url) {
+      alert('URL inválida para download');
+      return;
+    }
+
     try {
+      document.body.style.cursor = 'wait';
+      
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Falha no download');
+      
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      
       const link = document.createElement('a');
-      link.href = url;
+      link.href = blobUrl;
       const safeTitle = (title || 'video').replace(/[^a-z0-9]/gi, '_').toLowerCase();
-      const fileExtension = url.split('.').pop()?.split('?')[0] || 'mp4';
-      link.setAttribute('download', `${safeTitle}.${fileExtension}`);
+      link.setAttribute('download', `${safeTitle}.mp4`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-    } catch (err) {
-      alert('Não foi possível iniciar o download.');
+      
+      setTimeout(() => window.URL.revokeObjectURL(blobUrl), 100);
+    } catch (error) {
+      console.error('Erro no download:', error);
+      // Fallback: tenta abrir em nova aba se o download direto falhar
+      window.open(url, '_blank');
+    } finally {
+      document.body.style.cursor = 'default';
     }
   };
 
