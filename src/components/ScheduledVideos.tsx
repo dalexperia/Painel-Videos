@@ -158,9 +158,20 @@ const ScheduledVideos: React.FC = () => {
     e.stopPropagation();
     setEditingDateId(video.id);
     if (video.publish_at) {
+      // Converte para o formato datetime-local, ajustando para o fuso local se necessário
+      // Mas como queremos editar em Recife time, precisamos garantir que o input receba o valor correto
       const date = new Date(video.publish_at);
-      const offset = date.getTimezoneOffset() * 60000;
-      const localISOTime = (new Date(date.getTime() - offset)).toISOString().slice(0, 16);
+      
+      // Formata para YYYY-MM-DDTHH:mm usando Intl para garantir fuso Recife
+      const parts = new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Recife',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hour12: false
+      }).formatToParts(date);
+      
+      const getPart = (type: string) => parts.find(p => p.type === type)?.value;
+      const localISOTime = `${getPart('year')}-${getPart('month')}-${getPart('day')}T${getPart('hour')}:${getPart('minute')}`;
+      
       setNewDateValue(localISOTime);
     } else {
       setNewDateValue('');
@@ -172,20 +183,24 @@ const ScheduledVideos: React.FC = () => {
     if (!newDateValue) return;
 
     try {
-      const isoDate = new Date(newDateValue).toISOString();
+      // newDateValue está no formato "YYYY-MM-DDTHH:mm" (local input)
+      // Precisamos adicionar o offset de Recife (-03:00) para salvar corretamente
+      const isoDateWithOffset = `${newDateValue}:00-03:00`;
       
       const { error } = await supabase
         .from('shorts_youtube')
-        .update({ publish_at: isoDate })
+        .update({ publish_at: isoDateWithOffset })
         .eq('id', id);
 
       if (error) throw error;
 
-      setVideos(videos.map(v => v.id === id ? { ...v, publish_at: isoDate } : v));
+      // Atualiza o estado local. O Supabase retorna/armazena como UTC, então convertemos para manter consistência
+      // Mas para exibição imediata, podemos usar o valor que acabamos de criar
+      setVideos(videos.map(v => v.id === id ? { ...v, publish_at: isoDateWithOffset } : v));
       setEditingDateId(null);
       
       // Se a data for passada, o vídeo deveria ir para "Postados"
-      if (new Date(isoDate) <= new Date()) {
+      if (new Date(isoDateWithOffset) <= new Date()) {
         alert("Data atualizada para o passado. Este vídeo aparecerá na aba 'Postados' após recarregar.");
       }
 
@@ -205,14 +220,17 @@ const ScheduledVideos: React.FC = () => {
     if (!dateString) return 'Data não definida';
     try {
       const date = new Date(dateString);
-      return new Intl.DateTimeFormat('pt-BR', {
+      // Força o fuso horário America/Recife e remove a vírgula
+      const formatted = new Intl.DateTimeFormat('pt-BR', {
         day: '2-digit',
         month: '2-digit',
         year: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
-        timeZone: 'UTC',
+        timeZone: 'America/Recife', // Garante que mostre o horário de Recife
       }).format(date);
+      
+      return formatted.replace(',', ''); // Remove a vírgula
     } catch (e) {
       return 'Data inválida';
     }

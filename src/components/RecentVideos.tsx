@@ -246,6 +246,8 @@ const RecentVideos: React.FC = () => {
 
   const getRecifeTime = (dateInput?: string | Date): string => {
     const date = dateInput ? new Date(dateInput) : new Date();
+    
+    // Use Intl to get the parts in America/Recife time
     const options: Intl.DateTimeFormatOptions = {
       timeZone: 'America/Recife',
       year: 'numeric', month: '2-digit', day: '2-digit',
@@ -255,6 +257,8 @@ const RecentVideos: React.FC = () => {
     const formatter = new Intl.DateTimeFormat('pt-BR', options);
     const parts = formatter.formatToParts(date);
     const getPart = (type: string) => parts.find(p => p.type === type)?.value || '00';
+    
+    // Construct ISO-like string with offset
     return `${getPart('year')}-${getPart('month')}-${getPart('day')}T${getPart('hour')}:${getPart('minute')}:${getPart('second')}-03:00`;
   };
 
@@ -269,9 +273,12 @@ const RecentVideos: React.FC = () => {
 
       if (isScheduled) {
         privacy_status = 'private';
+        // Se for agendado, usa a data passada (que já vem em UTC do DatePicker)
+        // e converte para o formato com offset de Recife
         publish_at = getRecifeTime(options.scheduleDate);
       } else {
         privacy_status = 'public';
+        // Se for agora, pega o horário atual em Recife
         publish_at = getRecifeTime();
       }
 
