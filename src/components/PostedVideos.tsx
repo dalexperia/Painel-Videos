@@ -51,19 +51,19 @@ const PostedVideos: React.FC = () => {
       setVideos(validVideos);
 
       // 2. Buscar Configurações (API Keys)
-      // Precisamos saber qual API Key usar para cada canal
       const { data: settingsData, error: settingsError } = await supabase
         .from('shorts_settings')
         .select('channel, youtube_api_key');
       
       if (settingsError) console.error("Erro ao buscar configurações:", settingsError);
 
-      // Mapa de Canal -> API Key
+      // Mapa de Canal (Normalizado) -> API Key
+      // Usamos lowercase para garantir o match mesmo se houver diferença de caixa
       const channelKeys: Record<string, string> = {};
       if (settingsData) {
         settingsData.forEach(s => {
           if (s.channel && s.youtube_api_key) {
-            channelKeys[s.channel] = s.youtube_api_key;
+            channelKeys[s.channel.trim().toLowerCase()] = s.youtube_api_key;
           }
         });
       }
@@ -72,19 +72,25 @@ const PostedVideos: React.FC = () => {
       const videosByChannel: Record<string, string[]> = {};
       
       validVideos.forEach(v => {
-        if (v.youtube_id && v.channel && channelKeys[v.channel]) {
-          if (!videosByChannel[v.channel]) {
-            videosByChannel[v.channel] = [];
+        // Normaliza o nome do canal do vídeo também
+        const normalizedChannelName = v.channel ? v.channel.trim().toLowerCase() : '';
+        
+        if (v.youtube_id && normalizedChannelName && channelKeys[normalizedChannelName]) {
+          // Usa a chave original do settings para agrupar (ou o nome normalizado, tanto faz, desde que consistente)
+          // Aqui vamos usar a API Key diretamente como chave do agrupamento para simplificar
+          const apiKey = channelKeys[normalizedChannelName];
+          
+          if (!videosByChannel[apiKey]) {
+            videosByChannel[apiKey] = [];
           }
-          videosByChannel[v.channel].push(v.youtube_id);
+          videosByChannel[apiKey].push(v.youtube_id);
         }
       });
 
-      // 4. Buscar estatísticas para cada canal que tem chave
+      // 4. Buscar estatísticas para cada grupo de vídeos (agrupados por API Key)
       const allStats: Record<string, YouTubeStats> = {};
       
-      const promises = Object.entries(videosByChannel).map(async ([channel, ids]) => {
-        const apiKey = channelKeys[channel];
+      const promises = Object.entries(videosByChannel).map(async ([apiKey, ids]) => {
         if (apiKey) {
           const channelStats = await fetchYouTubeStats(ids, apiKey);
           Object.assign(allStats, channelStats);
