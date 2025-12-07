@@ -1,17 +1,32 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { Clapperboard, Sparkles, ArrowRight, Loader2 } from 'lucide-react';
+import { Clapperboard, Sparkles, ArrowRight, Loader2, Mail, Lock, AlertCircle } from 'lucide-react';
 
 const Login = () => {
   const [loading, setLoading] = useState(false);
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const getRedirectUrl = () => {
+    // Tenta usar a URL atual (Vercel ou Localhost)
+    // Certifique-se de adicionar esta URL nas "Redirect URLs" no painel do Supabase!
+    return window.location.origin;
+  };
 
   const handleGoogleLogin = async () => {
     try {
       setLoading(true);
+      setErrorMsg(null);
+      
+      const redirectUrl = getRedirectUrl();
+      console.log('Iniciando login Google. Redirecionar para:', redirectUrl);
+
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: window.location.origin,
+          redirectTo: redirectUrl,
           queryParams: {
             access_type: 'offline',
             prompt: 'consent',
@@ -21,7 +36,40 @@ const Login = () => {
 
       if (error) throw error;
     } catch (error: any) {
-      alert('Erro ao tentar fazer login: ' + error.message);
+      setErrorMsg(error.message || 'Erro ao tentar fazer login com Google.');
+      setLoading(false);
+    }
+  };
+
+  const handleEmailAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setErrorMsg(null);
+
+    try {
+      if (isSignUp) {
+        // Cadastro
+        const { error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            emailRedirectTo: getRedirectUrl(),
+          }
+        });
+        if (error) throw error;
+        alert('Cadastro realizado! Verifique seu e-mail para confirmar a conta (se a confirmação estiver ativada) ou faça login.');
+        setIsSignUp(false); // Volta para login após cadastro
+      } else {
+        // Login
+        const { error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+        if (error) throw error;
+      }
+    } catch (error: any) {
+      setErrorMsg(error.message || 'Erro na autenticação por e-mail.');
+    } finally {
       setLoading(false);
     }
   };
@@ -35,28 +83,40 @@ const Login = () => {
       </div>
 
       <div className="relative z-10 w-full max-w-md px-6">
-        <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl shadow-2xl p-8 md:p-10 text-center">
+        <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl shadow-2xl p-8 md:p-10">
           
           {/* Logo Section */}
-          <div className="flex justify-center mb-8">
-            <div className="bg-gradient-to-br from-brand-500 to-brand-600 p-4 rounded-2xl shadow-lg shadow-brand-500/30 transform hover:scale-105 transition-transform duration-300">
-              <Clapperboard className="w-10 h-10 text-white" />
+          <div className="flex justify-center mb-6">
+            <div className="bg-gradient-to-br from-brand-500 to-brand-600 p-3 rounded-2xl shadow-lg shadow-brand-500/30">
+              <Clapperboard className="w-8 h-8 text-white" />
             </div>
           </div>
 
-          {/* Text Section */}
-          <h1 className="text-3xl font-bold text-white mb-3 tracking-tight">
-            Bem-vindo de volta
-          </h1>
-          <p className="text-gray-400 mb-8 text-sm leading-relaxed">
-            Gerencie, agende e publique seus vídeos curtos com eficiência e inteligência.
-          </p>
+          {/* Header Text */}
+          <div className="text-center mb-8">
+            <h1 className="text-2xl font-bold text-white mb-2 tracking-tight">
+              {isSignUp ? 'Criar nova conta' : 'Bem-vindo de volta'}
+            </h1>
+            <p className="text-gray-400 text-sm">
+              {isSignUp 
+                ? 'Preencha os dados abaixo para começar' 
+                : 'Gerencie seus vídeos com inteligência'}
+            </p>
+          </div>
 
-          {/* Login Button */}
+          {/* Error Message */}
+          {errorMsg && (
+            <div className="mb-6 p-3 bg-red-500/10 border border-red-500/20 rounded-lg flex items-start gap-3 text-red-200 text-sm">
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
+
+          {/* Google Login Button */}
           <button
             onClick={handleGoogleLogin}
             disabled={loading}
-            className="group w-full flex items-center justify-center gap-3 bg-white hover:bg-gray-50 text-gray-900 font-semibold py-4 px-6 rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-70 disabled:cursor-not-allowed"
+            className="w-full flex items-center justify-center gap-3 bg-white hover:bg-gray-50 text-gray-900 font-semibold py-3 px-6 rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-70 disabled:cursor-not-allowed mb-6"
           >
             {loading ? (
               <Loader2 className="w-5 h-5 animate-spin text-gray-600" />
@@ -80,11 +140,91 @@ const Login = () => {
                     fill="#EA4335"
                   />
                 </svg>
-                <span>Entrar com Google</span>
+                <span>Continuar com Google</span>
               </>
             )}
-            <ArrowRight className="w-4 h-4 opacity-0 -ml-4 group-hover:opacity-100 group-hover:ml-0 transition-all duration-300 text-gray-400" />
           </button>
+
+          <div className="relative mb-6">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-white/10"></div>
+            </div>
+            <div className="relative flex justify-center text-sm">
+              <span className="px-2 bg-[#0f172a] text-gray-400 bg-opacity-50 backdrop-blur-sm">
+                ou use seu e-mail
+              </span>
+            </div>
+          </div>
+
+          {/* Email Form */}
+          <form onSubmit={handleEmailAuth} className="space-y-4">
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-gray-300 ml-1">E-mail</label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Mail className="h-5 w-5 text-gray-400" />
+                </div>
+                <input
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="block w-full pl-10 pr-3 py-3 border border-white/10 rounded-xl leading-5 bg-white/5 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all sm:text-sm"
+                  placeholder="seu@email.com"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-gray-300 ml-1">Senha</label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Lock className="h-5 w-5 text-gray-400" />
+                </div>
+                <input
+                  type="password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="block w-full pl-10 pr-3 py-3 border border-white/10 rounded-xl leading-5 bg-white/5 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all sm:text-sm"
+                  placeholder="••••••••"
+                  minLength={6}
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="group w-full flex items-center justify-center gap-2 bg-brand-600 hover:bg-brand-500 text-white font-semibold py-3 px-6 rounded-xl transition-all duration-200 shadow-lg shadow-brand-600/20 disabled:opacity-70 disabled:cursor-not-allowed mt-6"
+            >
+              {loading ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <>
+                  <span>{isSignUp ? 'Criar Conta' : 'Entrar'}</span>
+                  <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                </>
+              )}
+            </button>
+          </form>
+
+          {/* Toggle Sign Up / Sign In */}
+          <div className="mt-6 text-center">
+            <button
+              onClick={() => {
+                setIsSignUp(!isSignUp);
+                setErrorMsg(null);
+              }}
+              className="text-sm text-gray-400 hover:text-white transition-colors"
+            >
+              {isSignUp ? (
+                <>Já tem uma conta? <span className="text-brand-400 font-medium">Faça login</span></>
+              ) : (
+                <>Não tem conta? <span className="text-brand-400 font-medium">Cadastre-se gratuitamente</span></>
+              )}
+            </button>
+          </div>
 
           {/* Footer */}
           <div className="mt-8 flex items-center justify-center gap-2 text-xs text-gray-500">
@@ -92,10 +232,6 @@ const Login = () => {
             <span>Ambiente Seguro & Criptografado</span>
           </div>
         </div>
-        
-        <p className="text-center text-gray-600 text-xs mt-6">
-          &copy; {new Date().getFullYear()} Video Manager. Todos os direitos reservados.
-        </p>
       </div>
     </div>
   );
