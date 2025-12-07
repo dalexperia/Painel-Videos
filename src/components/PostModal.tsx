@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Send, Calendar as CalendarIcon, X, Clock, CheckCircle2, AlertTriangle, Zap, Wifi, WifiOff, RefreshCw, Globe, Server } from 'lucide-react';
+import { Send, Calendar as CalendarIcon, X, Clock, CheckCircle2, AlertTriangle, Zap, Wifi, WifiOff, RefreshCw, Globe, Server, Info } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import DatePicker, { registerLocale } from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
@@ -181,9 +181,30 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
       
       // 2. Download do Vídeo (Blob)
       setDirectUploadStatus('Baixando vídeo do servidor...');
-      const videoResponse = await fetch(video.link_s3);
-      if (!videoResponse.ok) throw new Error('Falha ao baixar o vídeo original.');
-      const videoBlob = await videoResponse.blob();
+      
+      let videoBlob: Blob;
+      try {
+        // Verifica se é HTTPS misturado com HTTP
+        if (window.location.protocol === 'https:' && video.link_s3.startsWith('http:')) {
+          throw new Error('Conteúdo Misto: Não é possível baixar vídeo HTTP em site HTTPS.');
+        }
+
+        const videoResponse = await fetch(video.link_s3);
+        
+        if (!videoResponse.ok) {
+          throw new Error(`Erro HTTP ${videoResponse.status} ao baixar vídeo.`);
+        }
+        
+        videoBlob = await videoResponse.blob();
+      } catch (downloadError: any) {
+        console.error("Erro de download:", downloadError);
+        if (downloadError.message === 'Failed to fetch' || downloadError.message.includes('NetworkError')) {
+          throw new Error(
+            'Bloqueio de CORS detectado. O servidor onde o vídeo está hospedado (S3/Supabase) não permitiu o download por este domínio. Configure o CORS no seu bucket para permitir GET.'
+          );
+        }
+        throw downloadError;
+      }
 
       // 3. Preparar Tags
       let tags: string[] = [];
@@ -217,7 +238,7 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
       const { error } = await supabase
         .from('shorts_youtube')
         .update({
-          status: 'Posted', // Ou 'Scheduled' dependendo da lógica, mas 'Posted' remove da lista de Recentes
+          status: 'Posted', 
           youtube_id: result.id,
           publish_at: publishAtISO || new Date().toISOString(),
           failed: false
@@ -228,7 +249,6 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
 
       alert('Upload realizado com sucesso!');
       onClose();
-      // Recarregar página ou atualizar lista pai seria ideal aqui
       window.location.reload(); 
 
     } catch (error: any) {
@@ -398,27 +418,36 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
               </div>
             </div>
           ) : (
-            <div className={`mb-6 p-3 rounded-lg border text-sm flex items-center gap-3 transition-colors duration-300 ${
+            <div className={`mb-6 p-3 rounded-lg border text-sm flex flex-col gap-2 transition-colors duration-300 ${
               !googleClientId 
                 ? 'bg-amber-50 border-amber-200 text-amber-700' 
                 : 'bg-blue-50 border-blue-200 text-blue-700'
             }`}>
-              {!googleClientId ? (
-                <AlertTriangle size={18} className="flex-shrink-0 text-amber-600" />
-              ) : (
-                <Globe size={18} className="flex-shrink-0 text-blue-600" />
-              )}
-              
-              <div className="flex-1">
-                <span className="font-medium">
-                  {!googleClientId 
-                    ? 'Client ID do Google não configurado (.env)' 
-                    : 'Upload direto via navegador habilitado'}
-                </span>
-                {!googleClientId && (
-                  <p className="text-xs mt-1 opacity-80">Configure VITE_GOOGLE_CLIENT_ID no arquivo .env</p>
+              <div className="flex items-center gap-3">
+                {!googleClientId ? (
+                  <AlertTriangle size={18} className="flex-shrink-0 text-amber-600" />
+                ) : (
+                  <Globe size={18} className="flex-shrink-0 text-blue-600" />
                 )}
+                
+                <div className="flex-1">
+                  <span className="font-medium">
+                    {!googleClientId 
+                      ? 'Client ID do Google não configurado (.env)' 
+                      : 'Upload direto via navegador habilitado'}
+                  </span>
+                </div>
               </div>
+              
+              {/* Aviso sobre CORS */}
+              {googleClientId && (
+                <div className="flex items-start gap-2 mt-1 text-xs opacity-90 bg-white/50 p-2 rounded">
+                  <Info size={14} className="mt-0.5 flex-shrink-0" />
+                  <p>
+                    Nota: O upload direto exige que o servidor do vídeo (S3) permita <strong>CORS</strong> para este domínio. Se falhar, verifique as configurações do seu bucket.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
