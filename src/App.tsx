@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { supabase } from './lib/supabaseClient';
-import { Session } from '@supabase/supabase-js';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Login from './components/Login';
 import ReprovedVideos from './components/ReprovedVideos';
 import PostedVideos from './components/PostedVideos';
@@ -19,7 +19,8 @@ import {
   Menu,
   X,
   LogOut,
-  User
+  User,
+  Shield
 } from 'lucide-react';
 
 type View = 'dashboard' | 'recent' | 'reproved' | 'posted' | 'scheduled' | 'settings';
@@ -67,28 +68,11 @@ const NavButton = ({
   );
 };
 
-function App() {
-  const [session, setSession] = useState<Session | null>(null);
-  const [loadingSession, setLoadingSession] = useState(true);
+// Componente interno para usar o hook useAuth
+const AppContent = () => {
+  const { session, loading, profile, isAdmin } = useAuth();
   const [view, setView] = useState<View>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-
-  useEffect(() => {
-    // Verifica sessão atual
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setLoadingSession(false);
-    });
-
-    // Escuta mudanças na autenticação
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
 
   const handleNavClick = (targetView: View) => {
     setView(targetView);
@@ -99,7 +83,7 @@ function App() {
     await supabase.auth.signOut();
   };
 
-  if (loadingSession) {
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-600"></div>
@@ -127,7 +111,18 @@ function App() {
                 <h1 className="text-lg md:text-xl font-bold text-gray-900 tracking-tight leading-none">
                   Gerenciador
                 </h1>
-                <p className="text-[10px] md:text-xs text-gray-500 font-medium mt-0.5">Painel de Controle</p>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <p className="text-[10px] md:text-xs text-gray-500 font-medium">Painel de Controle</p>
+                  {profile?.role && (
+                    <span className={`text-[9px] px-1.5 py-0 rounded-full uppercase font-bold tracking-wider ${
+                      profile.role === 'admin' ? 'bg-purple-100 text-purple-700' :
+                      profile.role === 'editor' ? 'bg-blue-100 text-blue-700' :
+                      'bg-gray-100 text-gray-600'
+                    }`}>
+                      {profile.role}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -202,7 +197,10 @@ function App() {
                   <p className="text-sm font-medium text-gray-900 truncate">
                     {session.user.user_metadata.full_name || session.user.email}
                   </p>
-                  <p className="text-xs text-gray-500 truncate">{session.user.email}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs text-gray-500 truncate">{session.user.email}</p>
+                    {isAdmin && <Shield size={12} className="text-purple-600" />}
+                  </div>
                 </div>
               </div>
 
@@ -245,6 +243,14 @@ function App() {
         {view === 'settings' && <Settings />}
       </main>
     </div>
+  );
+};
+
+function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }
 
