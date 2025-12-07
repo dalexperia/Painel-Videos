@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle, Key } from 'lucide-react';
+import { Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle, Key, CheckCircle, Wifi } from 'lucide-react';
 
 interface Setting {
   id: number;
@@ -19,6 +19,10 @@ const Settings: React.FC = () => {
   const [currentChannel, setCurrentChannel] = useState('');
   const [currentWebhook, setCurrentWebhook] = useState('');
   const [currentApiKey, setCurrentApiKey] = useState('');
+
+  // Estados para o teste da API
+  const [isTestingKey, setIsTestingKey] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   const fetchSettings = async () => {
     setLoading(true);
@@ -49,6 +53,7 @@ const Settings: React.FC = () => {
     setCurrentChannel('');
     setCurrentWebhook('');
     setCurrentApiKey('');
+    setTestResult(null);
   };
 
   const handleAddNew = () => {
@@ -57,6 +62,7 @@ const Settings: React.FC = () => {
     setCurrentChannel('');
     setCurrentWebhook('');
     setCurrentApiKey('');
+    setTestResult(null);
     window.scrollTo(0, 0);
   };
 
@@ -65,6 +71,7 @@ const Settings: React.FC = () => {
     setCurrentChannel(setting.channel);
     setCurrentWebhook(setting.webhook);
     setCurrentApiKey(setting.youtube_api_key || '');
+    setTestResult(null);
     setIsFormOpen(true);
     window.scrollTo(0, 0);
   };
@@ -87,6 +94,42 @@ const Settings: React.FC = () => {
     }
   };
 
+  const handleTestApiKey = async () => {
+    if (!currentApiKey) {
+      setTestResult({ success: false, message: "Insira uma chave para testar." });
+      return;
+    }
+
+    setIsTestingKey(true);
+    setTestResult(null);
+
+    try {
+      // Tenta buscar um vídeo público genérico (o primeiro vídeo do YouTube) para validar a chave
+      // ID: Ks-_Mh1QhMc (Me at the zoo)
+      const response = await fetch(
+        `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=Ks-_Mh1QhMc&key=${currentApiKey}`
+      );
+      
+      const data = await response.json();
+
+      if (!response.ok) {
+        let errorMsg = "Chave inválida ou erro na API.";
+        if (data.error && data.error.message) {
+          if (data.error.message.includes('API key not valid')) errorMsg = "Chave de API inválida.";
+          else if (data.error.message.includes('Project has not enabled the API')) errorMsg = "API do YouTube não habilitada no Google Cloud.";
+          else errorMsg = `Erro: ${data.error.message}`;
+        }
+        throw new Error(errorMsg);
+      }
+
+      setTestResult({ success: true, message: "Conexão bem-sucedida! A chave está ativa." });
+    } catch (err: any) {
+      setTestResult({ success: false, message: err.message });
+    } finally {
+      setIsTestingKey(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -100,12 +143,10 @@ const Settings: React.FC = () => {
       const payload = {
         channel: currentChannel,
         webhook: currentWebhook,
-        youtube_api_key: currentApiKey || null // Salva null se estiver vazio
+        youtube_api_key: currentApiKey || null
       };
 
       if (isEditing) {
-        // No update, não enviamos o channel se ele não deve ser alterado (embora a UI bloqueie)
-        // Mas aqui vamos atualizar tudo exceto o ID
         const { error: updateError } = await supabase
           .from('shorts_settings')
           .update({ 
@@ -152,9 +193,14 @@ const Settings: React.FC = () => {
               <div className="space-y-1">
                 <div className="flex items-center gap-3">
                   <p className="font-bold text-gray-800 text-lg">{setting.channel}</p>
-                  {!setting.youtube_api_key && (
+                  {!setting.youtube_api_key ? (
                     <span className="text-[10px] bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full font-medium border border-yellow-200">
                       Sem API Key
+                    </span>
+                  ) : (
+                    <span className="text-[10px] bg-green-100 text-green-800 px-2 py-0.5 rounded-full font-medium border border-green-200 flex items-center gap-1">
+                      <CheckCircle size={10} />
+                      API Configurada
                     </span>
                   )}
                 </div>
@@ -251,19 +297,47 @@ const Settings: React.FC = () => {
                   YouTube API Key
                   <span className="ml-2 text-xs font-normal text-gray-500">(Opcional, para exibir visualizações/likes)</span>
                 </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Key size={16} className="text-gray-400" />
+                <div className="flex gap-2">
+                  <div className="relative flex-grow">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Key size={16} className="text-gray-400" />
+                    </div>
+                    <input
+                      type="text"
+                      id="apiKey"
+                      value={currentApiKey}
+                      onChange={(e) => {
+                        setCurrentApiKey(e.target.value);
+                        setTestResult(null); // Limpa resultado ao editar
+                      }}
+                      className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-brand-500 focus:border-brand-500 font-mono text-sm"
+                      placeholder="AIzaSy..."
+                    />
                   </div>
-                  <input
-                    type="text"
-                    id="apiKey"
-                    value={currentApiKey}
-                    onChange={(e) => setCurrentApiKey(e.target.value)}
-                    className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-brand-500 focus:border-brand-500 font-mono text-sm"
-                    placeholder="AIzaSy..."
-                  />
+                  <button
+                    type="button"
+                    onClick={handleTestApiKey}
+                    disabled={!currentApiKey || isTestingKey}
+                    className="flex items-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium border border-gray-200"
+                    title="Testar conexão com o YouTube"
+                  >
+                    {isTestingKey ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <Wifi size={16} />
+                    )}
+                    Testar
+                  </button>
                 </div>
+                
+                {/* Resultado do Teste */}
+                {testResult && (
+                  <div className={`mt-2 text-sm flex items-center gap-2 ${testResult.success ? 'text-green-600' : 'text-red-600'}`}>
+                    {testResult.success ? <CheckCircle size={14} /> : <AlertCircle size={14} />}
+                    <span>{testResult.message}</span>
+                  </div>
+                )}
+
                 <p className="text-xs text-gray-500 mt-1">
                   Necessária apenas para ler estatísticas públicas. Não compartilhe sua chave privada.
                 </p>
