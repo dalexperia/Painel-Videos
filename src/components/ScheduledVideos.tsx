@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, X, Calendar, Tv, Edit2, Save, Search, Filter } from 'lucide-react';
+import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, X, Calendar, Tv, Edit2, Save, Search, Filter, CheckCircle2, Clock } from 'lucide-react';
 
 interface Video {
   id: string;
@@ -9,6 +9,7 @@ interface Video {
   description?: string;
   publish_at?: string;
   channel?: string;
+  youtube_id?: string; // Adicionado para verificação visual
 }
 
 type ViewMode = 'grid' | 'list';
@@ -38,9 +39,10 @@ const ScheduledVideos: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
+      // Adicionado youtube_id ao select
       const { data, error } = await supabase
         .from('shorts_youtube')
-        .select('id, link_s3, title, description, publish_at, channel')
+        .select('id, link_s3, title, description, publish_at, channel, youtube_id')
         .eq('failed', false)
         .eq('status', 'Posted')
         .not('publish_at', 'is', null)
@@ -158,11 +160,7 @@ const ScheduledVideos: React.FC = () => {
     e.stopPropagation();
     setEditingDateId(video.id);
     if (video.publish_at) {
-      // Converte para o formato datetime-local, ajustando para o fuso local se necessário
-      // Mas como queremos editar em Recife time, precisamos garantir que o input receba o valor correto
       const date = new Date(video.publish_at);
-      
-      // Formata para YYYY-MM-DDTHH:mm usando Intl para garantir fuso Recife
       const parts = new Intl.DateTimeFormat('pt-BR', {
         timeZone: 'America/Recife',
         year: 'numeric', month: '2-digit', day: '2-digit',
@@ -183,8 +181,6 @@ const ScheduledVideos: React.FC = () => {
     if (!newDateValue) return;
 
     try {
-      // newDateValue está no formato "YYYY-MM-DDTHH:mm" (local input)
-      // Precisamos adicionar o offset de Recife (-03:00) para salvar corretamente
       const isoDateWithOffset = `${newDateValue}:00-03:00`;
       
       const { error } = await supabase
@@ -194,12 +190,9 @@ const ScheduledVideos: React.FC = () => {
 
       if (error) throw error;
 
-      // Atualiza o estado local. O Supabase retorna/armazena como UTC, então convertemos para manter consistência
-      // Mas para exibição imediata, podemos usar o valor que acabamos de criar
       setVideos(videos.map(v => v.id === id ? { ...v, publish_at: isoDateWithOffset } : v));
       setEditingDateId(null);
       
-      // Se a data for passada, o vídeo deveria ir para "Postados"
       if (new Date(isoDateWithOffset) <= new Date()) {
         alert("Data atualizada para o passado. Este vídeo aparecerá na aba 'Postados' após recarregar.");
       }
@@ -220,17 +213,16 @@ const ScheduledVideos: React.FC = () => {
     if (!dateString) return 'Data não definida';
     try {
       const date = new Date(dateString);
-      // Força o fuso horário America/Recife e remove a vírgula
       const formatted = new Intl.DateTimeFormat('pt-BR', {
         day: '2-digit',
         month: '2-digit',
         year: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
-        timeZone: 'America/Recife', // Garante que mostre o horário de Recife
+        timeZone: 'America/Recife',
       }).format(date);
       
-      return formatted.replace(',', ''); // Remove a vírgula
+      return formatted.replace(',', '');
     } catch (e) {
       return 'Data inválida';
     }
@@ -276,6 +268,7 @@ const ScheduledVideos: React.FC = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {filteredVideos.map((video) => {
             const isEditing = editingDateId === video.id;
+            const hasYoutubeId = !!video.youtube_id;
             
             return (
               <div 
@@ -306,6 +299,11 @@ const ScheduledVideos: React.FC = () => {
                       <span className="truncate max-w-[100px]">{video.channel}</span>
                     </div>
                   )}
+                  {/* Status Badge */}
+                  <div className={`absolute top-2 left-2 backdrop-blur-md text-white text-[10px] px-2 py-1 rounded-md flex items-center gap-1 ${hasYoutubeId ? 'bg-green-600/80' : 'bg-yellow-600/80'}`}>
+                    {hasYoutubeId ? <CheckCircle2 size={10} /> : <Clock size={10} />}
+                    <span>{hasYoutubeId ? 'Sincronizado' : 'Aguardando ID'}</span>
+                  </div>
                 </div>
 
                 <div className="p-4 flex flex-col flex-grow">
@@ -384,6 +382,7 @@ const ScheduledVideos: React.FC = () => {
       <div className="space-y-3">
         {filteredVideos.map((video) => {
           const isEditing = editingDateId === video.id;
+          const hasYoutubeId = !!video.youtube_id;
 
           return (
             <div
@@ -402,6 +401,9 @@ const ScheduledVideos: React.FC = () => {
                 />
                 <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
                   <PlayCircle size={24} className="text-white" />
+                </div>
+                <div className={`absolute top-1 left-1 text-white text-[8px] px-1.5 py-0.5 rounded flex items-center gap-1 ${hasYoutubeId ? 'bg-green-600/80' : 'bg-yellow-600/80'}`}>
+                  {hasYoutubeId ? <CheckCircle2 size={8} /> : <Clock size={8} />}
                 </div>
               </div>
               <div className="flex-grow min-w-0">

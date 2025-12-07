@@ -225,9 +225,10 @@ const Settings: React.FC = () => {
 
     try {
       // 1. Buscar vídeos sem duração ou título
+      // CORREÇÃO: Usando 'youtube_id' em vez de 'video_id'
       const { data: videos, error: fetchError } = await supabase
         .from('shorts_youtube')
-        .select('id, video_id, channel')
+        .select('id, youtube_id, channel')
         .or('duration.is.null,title.is.null,title.eq.""');
 
       if (fetchError) throw fetchError;
@@ -251,7 +252,8 @@ const Settings: React.FC = () => {
         if (!channelSettings?.youtube_api_key) continue;
 
         const channelVideos = videosByChannel[channelName];
-        const videoIds = channelVideos.map(v => v.video_id); // Extrai apenas os IDs para a API
+        // CORREÇÃO: Mapeando 'youtube_id'
+        const videoIds = channelVideos.map(v => v.youtube_id); 
         
         try {
           // Busca em lote (muito mais eficiente e correto)
@@ -259,7 +261,8 @@ const Settings: React.FC = () => {
           
           // Atualiza um por um no banco
           for (const video of channelVideos) {
-            const details = detailsMap[video.video_id];
+            // CORREÇÃO: Acessando via 'youtube_id'
+            const details = detailsMap[video.youtube_id];
             
             if (details) {
               await supabase
