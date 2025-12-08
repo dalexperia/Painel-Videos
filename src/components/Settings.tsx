@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { fetchVideoDetails } from '../lib/youtube';
-import { generateContent } from '../lib/gemini';
+import { generateContentAI, AIProvider } from '../lib/ai'; // Nova importação
 import { useAuth, UserRole } from '../contexts/AuthContext';
 import { 
   Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle, Key, 
-  CheckCircle, Wifi, RefreshCw, Database, Users, Shield, Lock, User, Sparkles
+  CheckCircle, Wifi, RefreshCw, Database, Users, Shield, Lock, User, Sparkles,
+  Cpu, Server, Zap
 } from 'lucide-react';
 
 interface Setting {
@@ -13,7 +14,12 @@ interface Setting {
   channel: string;
   webhook: string;
   youtube_api_key?: string;
+  // Novos campos
+  ai_provider: AIProvider;
   gemini_key?: string;
+  groq_key?: string;
+  ollama_url?: string;
+  ai_model?: string;
 }
 
 interface UserProfile {
@@ -35,15 +41,23 @@ const Settings: React.FC = () => {
   
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isEditing, setIsEditing] = useState<number | null>(null);
+  
+  // Form States
   const [currentChannel, setCurrentChannel] = useState('');
   const [currentWebhook, setCurrentWebhook] = useState('');
   const [currentApiKey, setCurrentApiKey] = useState('');
+  
+  // AI States
+  const [aiProvider, setAiProvider] = useState<AIProvider>('gemini');
   const [currentGeminiKey, setCurrentGeminiKey] = useState('');
+  const [currentGroqKey, setCurrentGroqKey] = useState('');
+  const [currentOllamaUrl, setCurrentOllamaUrl] = useState('http://localhost:11434');
+  const [currentAiModel, setCurrentAiModel] = useState('');
 
   const [isTestingKey, setIsTestingKey] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
-  const [isTestingGeminiKey, setIsTestingGeminiKey] = useState(false);
-  const [geminiTestResult, setGeminiTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [isTestingAI, setIsTestingAI] = useState(false);
+  const [aiTestResult, setAiTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<{ updated: number; total: number; message: string } | null>(null);
@@ -110,21 +124,21 @@ const Settings: React.FC = () => {
     setCurrentChannel('');
     setCurrentWebhook('');
     setCurrentApiKey('');
+    
+    setAiProvider('gemini');
     setCurrentGeminiKey('');
+    setCurrentGroqKey('');
+    setCurrentOllamaUrl('http://localhost:11434');
+    setCurrentAiModel('');
+
     setTestResult(null);
-    setGeminiTestResult(null);
+    setAiTestResult(null);
     setError(null);
   };
 
   const handleAddNew = () => {
+    resetForm();
     setIsFormOpen(true);
-    setIsEditing(null);
-    setCurrentChannel('');
-    setCurrentWebhook('');
-    setCurrentApiKey('');
-    setCurrentGeminiKey('');
-    setTestResult(null);
-    setGeminiTestResult(null);
   };
 
   const handleEdit = (setting: Setting) => {
@@ -132,10 +146,16 @@ const Settings: React.FC = () => {
     setCurrentChannel(setting.channel);
     setCurrentWebhook(setting.webhook);
     setCurrentApiKey(setting.youtube_api_key || '');
+    
+    setAiProvider(setting.ai_provider || 'gemini');
     setCurrentGeminiKey(setting.gemini_key || '');
+    setCurrentGroqKey(setting.groq_key || '');
+    setCurrentOllamaUrl(setting.ollama_url || 'http://localhost:11434');
+    setCurrentAiModel(setting.ai_model || '');
+
     setIsFormOpen(true);
     setTestResult(null);
-    setGeminiTestResult(null);
+    setAiTestResult(null);
   };
 
   const handleDelete = async (id: number) => {
@@ -180,27 +200,34 @@ const Settings: React.FC = () => {
     }
   };
 
-  const handleTestGeminiKey = async () => {
-    if (!currentGeminiKey) {
-      setGeminiTestResult({ success: false, message: "Insira uma chave para testar." });
-      return;
-    }
-
-    setIsTestingGeminiKey(true);
-    setGeminiTestResult(null);
+  const handleTestAI = async () => {
+    setIsTestingAI(true);
+    setAiTestResult(null);
 
     try {
-      // Usamos um prompt simples e seguro para o teste
-      await generateContent(currentGeminiKey, "Olá, mundo!", 'title');
-      setGeminiTestResult({ success: true, message: "Chave válida! Conexão com Gemini estabelecida." });
+      const config = {
+        provider: aiProvider,
+        apiKey: aiProvider === 'gemini' ? currentGeminiKey : currentGroqKey,
+        url: currentOllamaUrl,
+        model: currentAiModel
+      };
+
+      if (aiProvider !== 'ollama' && !config.apiKey) {
+        throw new Error("Chave de API necessária.");
+      }
+
+      await generateContentAI(config, "Olá, teste de conexão.", 'title');
+      setAiTestResult({ success: true, message: `Conexão com ${aiProvider.toUpperCase()} bem sucedida!` });
     } catch (err: any) {
-      console.error("Gemini Key Test Error:", err);
-      setGeminiTestResult({
+      console.error("AI Test Error:", err);
+      let msg = "Erro de conexão.";
+      if (aiProvider === 'ollama') msg += " Verifique se o Ollama está rodando e com CORS habilitado.";
+      setAiTestResult({
         success: false,
-        message: "Chave inválida ou erro de conexão. Verifique o console (F12) para detalhes."
+        message: `${msg} (${err.message})`
       });
     } finally {
-      setIsTestingGeminiKey(false);
+      setIsTestingAI(false);
     }
   };
 
@@ -219,7 +246,11 @@ const Settings: React.FC = () => {
         channel: currentChannel, 
         webhook: currentWebhook,
         youtube_api_key: currentApiKey || null,
-        gemini_key: currentGeminiKey || null
+        ai_provider: aiProvider,
+        gemini_key: currentGeminiKey || null,
+        groq_key: currentGroqKey || null,
+        ollama_url: currentOllamaUrl || null,
+        ai_model: currentAiModel || null
       };
 
       let error;
@@ -240,7 +271,7 @@ const Settings: React.FC = () => {
 
       resetForm();
       fetchSettings();
-      setSuccessMessage("Canal salvo com sucesso!");
+      setSuccessMessage("Configuração salva com sucesso!");
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (err: any) {
       console.error("Error saving setting:", err);
@@ -376,7 +407,7 @@ const Settings: React.FC = () => {
               <Database size={20} className="text-brand-500" />
               Gerenciar Canais
             </h3>
-            <p className="text-sm text-gray-500">Configure webhooks e chaves de API.</p>
+            <p className="text-sm text-gray-500">Configure webhooks, YouTube API e Provedor de IA.</p>
           </div>
           
           <div className="flex gap-2 w-full sm:w-auto">
@@ -422,113 +453,214 @@ const Settings: React.FC = () => {
               </h2>
               
               <div className="grid grid-cols-1 gap-6">
-                <div>
-                  <label htmlFor="channel" className="block text-sm font-medium text-gray-700 mb-1">Nome do Canal</label>
-                  <input
-                    type="text"
-                    id="channel"
-                    value={currentChannel}
-                    onChange={(e) => setCurrentChannel(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition-all disabled:bg-gray-100"
-                    placeholder="Ex: Canal Principal"
-                    disabled={!!isEditing}
-                  />
-                  {isEditing && <p className="text-xs text-gray-500 mt-1">O nome do canal é usado como identificador e não pode ser alterado.</p>}
-                </div>
-
-                <div>
-                  <label htmlFor="webhook" className="block text-sm font-medium text-gray-700 mb-1">Webhook Discord</label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <Wifi size={16} className="text-gray-400" />
-                    </div>
-                    <input
-                      type="text"
-                      id="webhook"
-                      value={currentWebhook}
-                      onChange={(e) => setCurrentWebhook(e.target.value)}
-                      className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition-all"
-                      placeholder="https://discord.com/api/webhooks/..."
-                    />
-                  </div>
-                </div>
-
+                {/* Dados Básicos */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
-                    <label htmlFor="apiKey" className="block text-sm font-medium text-gray-700 mb-1">
-                      YouTube Data API Key <span className="text-gray-400 font-normal">(Opcional)</span>
-                    </label>
-                    <div className="flex gap-2">
-                      <div className="relative flex-grow">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                          <Key size={16} className="text-gray-400" />
-                        </div>
-                        <input
-                          type="password"
-                          id="apiKey"
-                          value={currentApiKey}
-                          onChange={(e) => {
-                            setCurrentApiKey(e.target.value);
-                            setTestResult(null);
-                          }}
-                          className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition-all font-mono text-sm"
-                          placeholder="AIzaSy..."
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleTestApiKey}
-                        disabled={!currentApiKey || isTestingKey}
-                        className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 text-sm font-medium"
-                      >
-                        {isTestingKey ? <Loader2 size={16} className="animate-spin" /> : 'Testar'}
-                      </button>
-                    </div>
-                    {testResult && (
-                      <p className={`text-xs mt-2 flex items-center gap-1 ${testResult.success ? 'text-green-600' : 'text-red-600'}`}>
-                        {testResult.success ? <CheckCircle size={12} /> : <AlertCircle size={12} />}
-                        {testResult.message}
-                      </p>
-                    )}
+                    <label htmlFor="channel" className="block text-sm font-medium text-gray-700 mb-1">Nome do Canal</label>
+                    <input
+                      type="text"
+                      id="channel"
+                      value={currentChannel}
+                      onChange={(e) => setCurrentChannel(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition-all disabled:bg-gray-100"
+                      placeholder="Ex: Canal Principal"
+                      disabled={!!isEditing}
+                    />
+                    {isEditing && <p className="text-xs text-gray-500 mt-1">O nome do canal é usado como identificador.</p>}
                   </div>
 
                   <div>
-                    <label htmlFor="geminiKey" className="block text-sm font-medium text-gray-700 mb-1">
-                      Gemini AI Key <span className="text-gray-400 font-normal">(Opcional)</span>
-                    </label>
-                    <div className="flex gap-2">
-                      <div className="relative flex-grow">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                          <Sparkles size={16} className="text-purple-500" />
-                        </div>
+                    <label htmlFor="webhook" className="block text-sm font-medium text-gray-700 mb-1">Webhook Discord</label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <Wifi size={16} className="text-gray-400" />
+                      </div>
+                      <input
+                        type="text"
+                        id="webhook"
+                        value={currentWebhook}
+                        onChange={(e) => setCurrentWebhook(e.target.value)}
+                        className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition-all"
+                        placeholder="https://discord.com/api/webhooks/..."
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* YouTube API */}
+                <div>
+                  <label htmlFor="apiKey" className="block text-sm font-medium text-gray-700 mb-1">
+                    YouTube Data API Key <span className="text-gray-400 font-normal">(Opcional)</span>
+                  </label>
+                  <div className="flex gap-2">
+                    <div className="relative flex-grow">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <Key size={16} className="text-gray-400" />
+                      </div>
+                      <input
+                        type="password"
+                        id="apiKey"
+                        value={currentApiKey}
+                        onChange={(e) => {
+                          setCurrentApiKey(e.target.value);
+                          setTestResult(null);
+                        }}
+                        className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition-all font-mono text-sm"
+                        placeholder="AIzaSy..."
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleTestApiKey}
+                      disabled={!currentApiKey || isTestingKey}
+                      className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 text-sm font-medium"
+                    >
+                      {isTestingKey ? <Loader2 size={16} className="animate-spin" /> : 'Testar'}
+                    </button>
+                  </div>
+                  {testResult && (
+                    <p className={`text-xs mt-2 flex items-center gap-1 ${testResult.success ? 'text-green-600' : 'text-red-600'}`}>
+                      {testResult.success ? <CheckCircle size={12} /> : <AlertCircle size={12} />}
+                      {testResult.message}
+                    </p>
+                  )}
+                </div>
+
+                {/* Configuração de IA */}
+                <div className="border-t border-gray-100 pt-6">
+                  <h3 className="text-md font-bold text-gray-800 mb-4 flex items-center gap-2">
+                    <Sparkles size={18} className="text-purple-500" />
+                    Configuração de Inteligência Artificial
+                  </h3>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    <button
+                      type="button"
+                      onClick={() => setAiProvider('gemini')}
+                      className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all ${
+                        aiProvider === 'gemini' 
+                          ? 'border-blue-500 bg-blue-50 text-blue-700' 
+                          : 'border-gray-200 hover:border-blue-200 text-gray-600'
+                      }`}
+                    >
+                      <Sparkles size={24} className="mb-2" />
+                      <span className="font-bold">Google Gemini</span>
+                      <span className="text-xs mt-1">Rápido & Gratuito (Tier Free)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setAiProvider('groq')}
+                      className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all ${
+                        aiProvider === 'groq' 
+                          ? 'border-orange-500 bg-orange-50 text-orange-700' 
+                          : 'border-gray-200 hover:border-orange-200 text-gray-600'
+                      }`}
+                    >
+                      <Zap size={24} className="mb-2" />
+                      <span className="font-bold">Groq (Llama 3)</span>
+                      <span className="text-xs mt-1">Ultra Rápido & Baixo Custo</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setAiProvider('ollama')}
+                      className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all ${
+                        aiProvider === 'ollama' 
+                          ? 'border-gray-800 bg-gray-100 text-gray-900' 
+                          : 'border-gray-200 hover:border-gray-400 text-gray-600'
+                      }`}
+                    >
+                      <Server size={24} className="mb-2" />
+                      <span className="font-bold">Ollama (Local)</span>
+                      <span className="text-xs mt-1">Privado & Gratuito</span>
+                    </button>
+                  </div>
+
+                  {/* Campos Dinâmicos baseados no Provider */}
+                  <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                    {aiProvider === 'gemini' && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Gemini API Key</label>
                         <input
                           type="password"
-                          id="geminiKey"
                           value={currentGeminiKey}
-                          onChange={(e) => {
-                            setCurrentGeminiKey(e.target.value);
-                            setGeminiTestResult(null);
-                          }}
-                          className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition-all font-mono text-sm"
+                          onChange={(e) => { setCurrentGeminiKey(e.target.value); setAiTestResult(null); }}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
                           placeholder="AIzaSy..."
                         />
                       </div>
+                    )}
+
+                    {aiProvider === 'groq' && (
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Groq API Key</label>
+                          <input
+                            type="password"
+                            value={currentGroqKey}
+                            onChange={(e) => { setCurrentGroqKey(e.target.value); setAiTestResult(null); }}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500 font-mono text-sm"
+                            placeholder="gsk_..."
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Modelo (Opcional)</label>
+                          <input
+                            type="text"
+                            value={currentAiModel}
+                            onChange={(e) => setCurrentAiModel(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500 font-mono text-sm"
+                            placeholder="llama3-70b-8192"
+                          />
+                          <p className="text-xs text-gray-500 mt-1">Padrão: llama3-70b-8192</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {aiProvider === 'ollama' && (
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">URL do Servidor Ollama</label>
+                          <input
+                            type="text"
+                            value={currentOllamaUrl}
+                            onChange={(e) => { setCurrentOllamaUrl(e.target.value); setAiTestResult(null); }}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-gray-500 focus:border-gray-500 font-mono text-sm"
+                            placeholder="http://localhost:11434"
+                          />
+                          <p className="text-xs text-gray-500 mt-1">Certifique-se de rodar com <code>OLLAMA_ORIGINS="*"</code></p>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Modelo</label>
+                          <input
+                            type="text"
+                            value={currentAiModel}
+                            onChange={(e) => setCurrentAiModel(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-gray-500 focus:border-gray-500 font-mono text-sm"
+                            placeholder="llama3"
+                          />
+                          <p className="text-xs text-gray-500 mt-1">Padrão: llama3</p>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="mt-4 flex justify-end">
                       <button
                         type="button"
-                        onClick={handleTestGeminiKey}
-                        disabled={!currentGeminiKey || isTestingGeminiKey}
-                        className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 text-sm font-medium"
+                        onClick={handleTestAI}
+                        disabled={isTestingAI}
+                        className="text-sm flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                       >
-                        {isTestingGeminiKey ? <Loader2 size={16} className="animate-spin" /> : 'Testar'}
+                        {isTestingAI ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+                        Testar Conexão IA
                       </button>
                     </div>
-                    {geminiTestResult && (
-                      <p className={`text-xs mt-2 flex items-center gap-1 ${geminiTestResult.success ? 'text-green-600' : 'text-red-600'}`}>
-                        {geminiTestResult.success ? <CheckCircle size={12} /> : <AlertCircle size={12} />}
-                        {geminiTestResult.message}
+                    {aiTestResult && (
+                      <p className={`text-xs mt-2 text-right ${aiTestResult.success ? 'text-green-600' : 'text-red-600'}`}>
+                        {aiTestResult.message}
                       </p>
                     )}
-                    <p className="text-xs text-gray-500 mt-1">Usada para gerar títulos, descrições e tags com IA.</p>
                   </div>
                 </div>
               </div>
@@ -563,6 +695,7 @@ const Settings: React.FC = () => {
                   <div className="flex items-center gap-3 mb-1">
                     <h4 className="font-bold text-gray-800 text-lg">{setting.channel}</h4>
                     <div className="flex gap-2">
+                      {/* Badge YouTube */}
                       {setting.youtube_api_key ? (
                         <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800" title="YouTube API Ativa">
                           <Key size={10} className="mr-1" /> YT
@@ -572,15 +705,15 @@ const Settings: React.FC = () => {
                           Sem YT
                         </span>
                       )}
-                      {setting.gemini_key ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800" title="Gemini AI Ativa">
-                          <Sparkles size={10} className="mr-1" /> AI
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600" title="Sem Gemini AI">
-                          Sem AI
-                        </span>
-                      )}
+                      
+                      {/* Badge IA */}
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium capitalize
+                        ${setting.ai_provider === 'gemini' ? 'bg-blue-100 text-blue-800' : 
+                          setting.ai_provider === 'groq' ? 'bg-orange-100 text-orange-800' : 
+                          'bg-gray-100 text-gray-800'}`}
+                      >
+                        <Sparkles size={10} className="mr-1" /> {setting.ai_provider || 'Gemini'}
+                      </span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 text-sm text-gray-500 font-mono bg-gray-50 px-2 py-1 rounded w-fit max-w-full">

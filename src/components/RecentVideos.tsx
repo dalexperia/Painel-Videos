@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, X, Calendar, Sparkles, Tv, Edit2, Save, XCircle, Hash, Tag } from 'lucide-react';
 import PostModal, { Video as PostModalVideo } from './PostModal';
-import { generateContent } from '../lib/gemini';
+import { generateContentAI } from '../lib/ai'; // Atualizado para usar o novo serviço
 
 // Reutiliza a interface do PostModal para consistência
 type Video = PostModalVideo;
@@ -166,24 +166,32 @@ const RecentVideos: React.FC = () => {
     setGeneratingField(field);
 
     try {
-      // 1. Buscar a chave do Gemini para o canal do vídeo
+      // 1. Buscar configurações completas do canal
       const { data: settings, error } = await supabase
         .from('shorts_settings')
-        .select('gemini_key')
+        .select('ai_provider, gemini_key, groq_key, ollama_url, ai_model')
         .eq('channel', selectedVideo.channel)
         .single();
 
-      if (error || !settings?.gemini_key) {
-        throw new Error("Chave Gemini AI não configurada para este canal. Vá em Configurações.");
+      if (error || !settings) {
+        throw new Error("Configurações do canal não encontradas.");
       }
 
-      // 2. Preparar o prompt (usando o título atual ou descrição como base)
+      // 2. Preparar configuração da IA
+      const aiConfig = {
+        provider: settings.ai_provider || 'gemini',
+        apiKey: settings.ai_provider === 'groq' ? settings.groq_key : settings.gemini_key,
+        url: settings.ollama_url,
+        model: settings.ai_model
+      };
+
+      // 3. Preparar o prompt
       const basePrompt = editForm.title || selectedVideo.title || "Vídeo sem título";
       
-      // 3. Gerar conteúdo
-      const content = await generateContent(settings.gemini_key, basePrompt, field);
+      // 4. Gerar conteúdo usando o novo serviço unificado
+      const content = await generateContentAI(aiConfig as any, basePrompt, field);
 
-      // 4. Atualizar o formulário
+      // 5. Atualizar o formulário
       setEditForm(prev => ({
         ...prev,
         [field]: content

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Save, Wand2, Loader2, Download, Calendar as CalendarIcon, AlertCircle } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
-import { generateMetadata } from '../lib/gemini';
+import { generateContentAI } from '../lib/ai'; // Atualizado
 
 interface Video {
   id: number;
@@ -12,6 +12,7 @@ interface Video {
   link_s3: string;
   thumbnail?: string;
   status: string;
+  channel?: string; // Adicionado para buscar config
 }
 
 interface VideoDetailsModalProps {
@@ -55,10 +56,28 @@ const VideoDetailsModal: React.FC<VideoDetailsModalProps> = ({ video, onClose, o
     setGeneratingField(field);
     
     try {
-      const result = await generateMetadata(field, {
-        title: formData.title,
-        description: formData.description
-      });
+      if (!video.channel) throw new Error("Canal não identificado.");
+
+      // 1. Buscar configurações
+      const { data: settings, error: settingsError } = await supabase
+        .from('shorts_settings')
+        .select('ai_provider, gemini_key, groq_key, ollama_url, ai_model')
+        .eq('channel', video.channel)
+        .single();
+
+      if (settingsError || !settings) throw new Error("Configurações de IA não encontradas para este canal.");
+
+      // 2. Configurar IA
+      const aiConfig = {
+        provider: settings.ai_provider || 'gemini',
+        apiKey: settings.ai_provider === 'groq' ? settings.groq_key : settings.gemini_key,
+        url: settings.ollama_url,
+        model: settings.ai_model
+      };
+
+      // 3. Gerar
+      const basePrompt = formData.title || video.title || "Vídeo sem título";
+      const result = await generateContentAI(aiConfig as any, basePrompt, field);
 
       setFormData(prev => ({
         ...prev,
