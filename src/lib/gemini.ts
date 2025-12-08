@@ -102,6 +102,7 @@ export const generateContent = async (
 
   } catch (error) {
     console.error("Erro na API Gemini:", error);
-    throw new Error("Falha ao conectar com a IA.");
+    // A mensagem de erro genérica é lançada para a UI, mas o erro real está no console.
+    throw new Error("Falha ao conectar com a IA. Verifique o console do navegador (F12) para detalhes técnicos.");
   }
 };

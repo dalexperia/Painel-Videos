@@ -190,13 +190,14 @@ const Settings: React.FC = () => {
     setGeminiTestResult(null);
 
     try {
-      await generateContent(currentGeminiKey, "teste", 'title');
+      // Usamos um prompt simples e seguro para o teste
+      await generateContent(currentGeminiKey, "Olá, mundo!", 'title');
       setGeminiTestResult({ success: true, message: "Chave válida! Conexão com Gemini estabelecida." });
     } catch (err: any) {
       console.error("Gemini Key Test Error:", err);
       setGeminiTestResult({
         success: false,
-        message: "Chave inválida ou erro de conexão. Verifique a chave e as permissões."
+        message: "Chave inválida ou erro de conexão. Verifique o console (F12) para detalhes."
       });
     } finally {
       setIsTestingGeminiKey(false);
