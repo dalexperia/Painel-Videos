@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // Log para confirmar que a nova versão foi carregada
-console.log("Gemini Lib: Versão Strict Carregada 🚀 | Modelo: gemini-2.0-flash-001");
+console.log("Gemini Lib: Versão Variação Carregada 🚀 | Modelo: gemini-2.0-flash-001 | Temp: 0.75");
 
 export const generateContent = async (
   apiKey: string,
@@ -11,7 +11,6 @@ export const generateContent = async (
   // 1. Validação Inicial
   if (!apiKey) throw new Error("Chave da API Gemini não configurada.");
   
-  // Debug: Verifique isso no Console do Navegador (F12)
   console.log(`[Gemini Request] Tipo: ${type} | Prompt recebido: "${prompt}"`);
 
   if (!prompt || prompt.trim().length < 3) {
@@ -21,9 +20,9 @@ export const generateContent = async (
 
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ 
-    model: "gemini-2.0-flash-001", // ATUALIZAÇÃO AQUI para o modelo estável e funcional
+    model: "gemini-2.0-flash-001",
     generationConfig: {
-      temperature: 0.4, // Baixa temperatura para ser MENOS criativo e MAIS preciso
+      temperature: 0.75, // AUMENTADO: Mais criatividade para gerar variações
     }
   });
 
@@ -32,34 +31,34 @@ export const generateContent = async (
   switch (type) {
     case 'title':
       systemInstruction = `
-        Você é um especialista em Copywriting.
-        Crie UM título para vídeo sobre o tema abaixo.
-        - Deve ser chamativo mas fiel ao assunto.
-        - Sem aspas.
+        Você é um especialista em Copywriting viral.
+        Crie UMA NOVA E CRIATIVA variação de título para o vídeo sobre o tema abaixo.
+        - Seja ousado e chamativo, mas fiel ao assunto.
+        - Responda APENAS com o título, sem aspas.
         - Máximo 60 caracteres.
       `;
       break;
 
     case 'description':
       systemInstruction = `
-        Crie uma descrição de 2 frases para este vídeo.
+        Crie uma NOVA variação da descrição (2 frases) para este vídeo.
         - Use palavras-chave do título.
-        - Inclua uma chamada para ação (CTA).
+        - Inclua uma chamada para ação (CTA) diferente da anterior.
         - Sem hashtags na descrição.
       `;
       break;
 
     case 'tags':
       systemInstruction = `
-        EXTRAÇÃO DE ENTIDADES PARA METADATOS.
-        Analise o texto fornecido e extraia APENAS as entidades principais (Nomes, Lugares, Cargos, Assuntos Técnicos).
+        EXTRAÇÃO DE ENTIDADES E SUGESTÃO DE METADATOS.
+        Analise o texto e sugira as melhores entidades (Nomes, Lugares, Assuntos Técnicos).
         
         REGRAS RÍGIDAS (PROIBIÇÕES):
         - PROIBIDO usar palavras genéricas: "shorts", "viral", "video", "youtube", "fyp", "tiktok", "capcut", "dicas", "tutorial".
         - Se o texto for sobre um concurso, retorne a banca, o órgão, o cargo e o estado.
         
         FORMATO:
-        Retorne 5 a 8 tags separadas APENAS por vírgula.
+        Retorne 5 a 8 tags separadas APENAS por vírgula. Pense em variações ou sinônimos relevantes.
         Exemplo de Entrada: "Concurso ALE-RO 2025"
         Exemplo de Saída: Concurso ALE-RO, Assembleia Legislativa Rondônia, Edital 2025, Vagas Rondônia, Serviço Público
       `;
@@ -67,7 +66,7 @@ export const generateContent = async (
 
     case 'hashtags':
       systemInstruction = `
-        Gere 5 hashtags.
+        Gere uma NOVA combinação de 5 hashtags.
         - As 3 primeiras DEVEM ser sobre o tema específico (ex: #NomeDoConcurso #Estado #Cargo).
         - As 2 últimas podem ser de nicho (ex: #ConcursosPublicos #Estudos).
         - PROIBIDO: #shorts #viral #fyp (a menos que não haja nada específico).
@@ -84,7 +83,7 @@ export const generateContent = async (
       CONTEÚDO DE ENTRADA (TÍTULO): "${prompt}"
       ---
       
-      Responda seguindo estritamente as regras acima.
+      Responda seguindo estritamente as regras acima. Gere um resultado diferente do anterior.
     `;
 
     const result = await model.generateContent(finalPrompt);
@@ -102,7 +101,6 @@ export const generateContent = async (
 
   } catch (error) {
     console.error("Erro na API Gemini:", error);
-    // A mensagem de erro genérica é lançada para a UI, mas o erro real está no console.
     throw new Error("Falha ao conectar com a IA. Verifique o console do navegador (F12) para detalhes técnicos.");
   }
 };
