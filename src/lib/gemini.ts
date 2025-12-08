@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // Log para confirmar que a nova versão foi carregada
-console.log("Gemini Lib: Versão Strict Carregada 🚀 | Modelo: gemini-pro");
+console.log("Gemini Lib: Versão Strict Carregada 🚀 | Modelo: gemini-2.0-flash-001");
 
 export const generateContent = async (
   apiKey: string,
@@ -21,7 +21,7 @@ export const generateContent = async (
 
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ 
-    model: "gemini-pro", // ATUALIZAÇÃO AQUI para o modelo estável
+    model: "gemini-2.0-flash-001", // ATUALIZAÇÃO AQUI para o modelo estável e funcional
     generationConfig: {
       temperature: 0.4, // Baixa temperatura para ser MENOS criativo e MAIS preciso
     }
@@ -51,7 +51,7 @@ export const generateContent = async (
 
     case 'tags':
       systemInstruction = `
-        EXTRAÇÃO DE ENTIDADES PARA METADADOS.
+        EXTRAÇÃO DE ENTIDADES PARA METADATOS.
         Analise o texto fornecido e extraia APENAS as entidades principais (Nomes, Lugares, Cargos, Assuntos Técnicos).
         
         REGRAS RÍGIDAS (PROIBIÇÕES):
