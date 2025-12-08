@@ -1,43 +1,129 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
+// Log para confirmar que a nova versão foi carregada
+console.log("Gemini Lib: Versão Strict Carregada 🚀");
+
+/**
+ * Testa a conexão com a API do Gemini fazendo uma requisição mínima.
+ */
+export const testGeminiConnection = async (apiKey: string): Promise<boolean> => {
+  if (!apiKey) return false;
+
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+    
+    // Prompt mínimo apenas para testar conectividade (token count baixo)
+    const result = await model.generateContent("Say Hi");
+    const response = await result.response;
+    const text = response.text();
+    
+    return text.length > 0;
+  } catch (error) {
+    console.error("Falha no teste de conexão Gemini:", error);
+    throw error;
+  }
+};
+
 export const generateContent = async (
   apiKey: string,
   prompt: string,
   type: 'title' | 'description' | 'tags' | 'hashtags'
 ): Promise<string> => {
+  // 1. Validação Inicial
   if (!apiKey) throw new Error("Chave da API Gemini não configurada.");
+  
+  // Debug: Verifique isso no Console do Navegador (F12)
+  console.log(`[Gemini Request] Tipo: ${type} | Prompt recebido: "${prompt}"`);
+
+  if (!prompt || prompt.trim().length < 3) {
+    console.warn("[Gemini] Prompt muito curto ou vazio.");
+    throw new Error("O título é muito curto para gerar contexto. Digite algo mais específico.");
+  }
 
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+  const model = genAI.getGenerativeModel({ 
+    model: "gemini-pro",
+    generationConfig: {
+      temperature: 0.4, // Baixa temperatura para ser MENOS criativo e MAIS preciso
+    }
+  });
 
   let systemInstruction = "";
+  
   switch (type) {
     case 'title':
-      systemInstruction = "Crie UM título chamativo, curto e viral para um vídeo Short do YouTube sobre o seguinte tema. Responda APENAS com o título, sem aspas.";
+      systemInstruction = `
+        Você é um especialista em Copywriting.
+        Crie UM título para vídeo sobre o tema abaixo.
+        - Deve ser chamativo mas fiel ao assunto.
+        - Sem aspas.
+        - Máximo 60 caracteres.
+      `;
       break;
+
     case 'description':
-      systemInstruction = "Crie uma descrição engajadora e curta (máximo 3 frases) para um vídeo Short do YouTube sobre o tema. Inclua uma chamada para ação.";
+      systemInstruction = `
+        Crie uma descrição de 2 frases para este vídeo.
+        - Use palavras-chave do título.
+        - Inclua uma chamada para ação (CTA).
+        - Sem hashtags na descrição.
+      `;
       break;
+
     case 'tags':
-      systemInstruction = "Gere 5 a 8 tags relevantes para YouTube separadas APENAS por vírgula, sem espaços extras, sobre o tema. Exemplo: tag1,tag2,tag3";
+      systemInstruction = `
+        EXTRAÇÃO DE ENTIDADES PARA METADADOS.
+        Analise o texto fornecido e extraia APENAS as entidades principais (Nomes, Lugares, Cargos, Assuntos Técnicos).
+        
+        REGRAS RÍGIDAS (PROIBIÇÕES):
+        - PROIBIDO usar palavras genéricas: "shorts", "viral", "video", "youtube", "fyp", "tiktok", "capcut", "dicas", "tutorial".
+        - Se o texto for sobre um concurso, retorne a banca, o órgão, o cargo e o estado.
+        
+        FORMATO:
+        Retorne 5 a 8 tags separadas APENAS por vírgula.
+        Exemplo de Entrada: "Concurso ALE-RO 2025"
+        Exemplo de Saída: Concurso ALE-RO, Assembleia Legislativa Rondônia, Edital 2025, Vagas Rondônia, Serviço Público
+      `;
       break;
+
     case 'hashtags':
-      systemInstruction = "Gere 5 hashtags virais e relevantes separadas por espaço ou vírgula para este tema. Exemplo: #viral #shorts";
+      systemInstruction = `
+        Gere 5 hashtags.
+        - As 3 primeiras DEVEM ser sobre o tema específico (ex: #NomeDoConcurso #Estado #Cargo).
+        - As 2 últimas podem ser de nicho (ex: #ConcursosPublicos #Estudos).
+        - PROIBIDO: #shorts #viral #fyp (a menos que não haja nada específico).
+        - Separadas por espaço.
+      `;
       break;
   }
 
   try {
-    const result = await model.generateContent(`${systemInstruction}\n\nTema/Conteúdo: ${prompt}`);
+    const finalPrompt = `
+      INSTRUÇÃO DO SISTEMA: ${systemInstruction}
+      
+      ---
+      CONTEÚDO DE ENTRADA (TÍTULO): "${prompt}"
+      ---
+      
+      Responda seguindo estritamente as regras acima.
+    `;
+
+    const result = await model.generateContent(finalPrompt);
     const response = await result.response;
     let text = response.text();
     
-    // Limpeza básica
+    // Limpeza
     text = text.replace(/^"|"$/g, '').trim();
-    if (type === 'tags') text = text.replace(/\s*,\s*/g, ', ');
-    
+    if (type === 'tags') {
+      text = text.replace(/\.$/, ''); // Remove ponto final
+    }
+
+    console.log(`[Gemini Response] Resultado: "${text}"`);
     return text;
+
   } catch (error) {
     console.error("Erro na API Gemini:", error);
-    throw new Error("Falha ao gerar conteúdo com IA.");
+    throw new Error("Falha ao conectar com a IA.");
   }
 };

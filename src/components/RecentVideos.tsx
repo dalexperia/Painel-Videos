@@ -546,7 +546,7 @@ const RecentVideos: React.FC = () => {
             {/* Coluna de Detalhes/Edição */}
             <div className="w-full md:w-1/2 p-6 text-white overflow-y-auto bg-gray-800 flex flex-col">
               <div className="flex justify-between items-start mb-4">
-                <h2 className="text-lg font-semibold text-gray-300 uppercase tracking-wider">Detalhes do Vídeo</h2>
+                <h2 className="text-lg font-semibold text-gray-300 uppercase tracking-wider">Detalhes do Vídeo (v3 DEBUG)</h2>
                 {!isEditing ? (
                   <button 
                     onClick={() => setIsEditing(true)}
