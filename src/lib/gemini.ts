@@ -1,128 +1,107 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { supabase } from './supabaseClient';
 
-// --- Helper: Fetch API Key ---
-const getGeminiKey = async (): Promise<string> => {
-  // 1. Try Environment Variable
-  if (import.meta.env.VITE_GEMINI_API_KEY) {
-    return import.meta.env.VITE_GEMINI_API_KEY;
-  }
+// Log para confirmar que a nova versão foi carregada
+console.log("Gemini Lib: Versão Strict Carregada 🚀");
 
-  // 2. Try Supabase (Common patterns: api_keys table or shorts_settings)
-  try {
-    const { data, error } = await supabase
-      .from('api_keys')
-      .select('key')
-      .eq('service', 'gemini')
-      .single();
-      
-    if (data?.key) return data.key;
-    
-    // Fallback check in settings if api_keys doesn't exist
-    const { data: settings } = await supabase
-      .from('shorts_settings')
-      .select('gemini_key')
-      .single();
-      
-    if (settings?.gemini_key) return settings.gemini_key;
-    
-  } catch (err) {
-    console.warn("Error fetching Gemini key from DB:", err);
-  }
-
-  throw new Error("Gemini API Key not found. Please set VITE_GEMINI_API_KEY or configure it in the database.");
-};
-
-// --- Core Generation Logic ---
 export const generateContent = async (
   apiKey: string,
   prompt: string,
   type: 'title' | 'description' | 'tags' | 'hashtags'
 ): Promise<string> => {
-  if (!apiKey) throw new Error("API Key is missing.");
+  // 1. Validação Inicial
+  if (!apiKey) throw new Error("Chave da API Gemini não configurada.");
+  
+  // Debug: Verifique isso no Console do Navegador (F12)
+  console.log(`[Gemini Request] Tipo: ${type} | Prompt recebido: "${prompt}"`);
+
   if (!prompt || prompt.trim().length < 3) {
-    throw new Error("Prompt is too short to generate context.");
+    console.warn("[Gemini] Prompt muito curto ou vazio.");
+    throw new Error("O título é muito curto para gerar contexto. Digite algo mais específico.");
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ 
     model: "gemini-pro",
-    generationConfig: { temperature: 0.4 }
+    generationConfig: {
+      temperature: 0.4, // Baixa temperatura para ser MENOS criativo e MAIS preciso
+    }
   });
 
   let systemInstruction = "";
   
   switch (type) {
     case 'title':
-      systemInstruction = `Create ONE catchy, click-worthy title (max 60 chars) for a video about this topic. No quotes.`;
+      systemInstruction = `
+        Você é um especialista em Copywriting.
+        Crie UM título para vídeo sobre o tema abaixo.
+        - Deve ser chamativo mas fiel ao assunto.
+        - Sem aspas.
+        - Máximo 60 caracteres.
+      `;
       break;
+
     case 'description':
-      systemInstruction = `Write a 2-sentence engaging description for this video. Include a CTA. No hashtags.`;
+      systemInstruction = `
+        Crie uma descrição de 2 frases para este vídeo.
+        - Use palavras-chave do título.
+        - Inclua uma chamada para ação (CTA).
+        - Sem hashtags na descrição.
+      `;
       break;
+
     case 'tags':
-      systemInstruction = `Extract 5-8 main entities/keywords (comma separated). No generic words like 'video', 'viral'.`;
+      systemInstruction = `
+        EXTRAÇÃO DE ENTIDADES PARA METADADOS.
+        Analise o texto fornecido e extraia APENAS as entidades principais (Nomes, Lugares, Cargos, Assuntos Técnicos).
+        
+        REGRAS RÍGIDAS (PROIBIÇÕES):
+        - PROIBIDO usar palavras genéricas: "shorts", "viral", "video", "youtube", "fyp", "tiktok", "capcut", "dicas", "tutorial".
+        - Se o texto for sobre um concurso, retorne a banca, o órgão, o cargo e o estado.
+        
+        FORMATO:
+        Retorne 5 a 8 tags separadas APENAS por vírgula.
+        Exemplo de Entrada: "Concurso ALE-RO 2025"
+        Exemplo de Saída: Concurso ALE-RO, Assembleia Legislativa Rondônia, Edital 2025, Vagas Rondônia, Serviço Público
+      `;
       break;
+
     case 'hashtags':
-      systemInstruction = `Generate 5 hashtags (space separated). First 3 specific, last 2 niche.`;
+      systemInstruction = `
+        Gere 5 hashtags.
+        - As 3 primeiras DEVEM ser sobre o tema específico (ex: #NomeDoConcurso #Estado #Cargo).
+        - As 2 últimas podem ser de nicho (ex: #ConcursosPublicos #Estudos).
+        - PROIBIDO: #shorts #viral #fyp (a menos que não haja nada específico).
+        - Separadas por espaço.
+      `;
       break;
   }
 
-  const finalPrompt = `
-    SYSTEM: ${systemInstruction}
-    INPUT: "${prompt}"
-    
-    Return ONLY the result string.
-  `;
-
   try {
+    const finalPrompt = `
+      INSTRUÇÃO DO SISTEMA: ${systemInstruction}
+      
+      ---
+      CONTEÚDO DE ENTRADA (TÍTULO): "${prompt}"
+      ---
+      
+      Responda seguindo estritamente as regras acima.
+    `;
+
     const result = await model.generateContent(finalPrompt);
     const response = await result.response;
     let text = response.text();
-    return text.replace(/^"|"$/g, '').trim();
+    
+    // Limpeza
+    text = text.replace(/^"|"$/g, '').trim();
+    if (type === 'tags') {
+      text = text.replace(/\.$/, ''); // Remove ponto final
+    }
+
+    console.log(`[Gemini Response] Resultado: "${text}"`);
+    return text;
+
   } catch (error) {
-    console.error("Gemini API Error:", error);
-    throw new Error("Failed to generate content with AI.");
+    console.error("Erro na API Gemini:", error);
+    throw new Error("Falha ao conectar com a IA.");
   }
-};
-
-// --- Unified Export for Components (VideoDetailsModal) ---
-export const generateMetadata = async (
-  field: 'title' | 'description' | 'tags' | 'hashtags',
-  context: { title?: string; description?: string }
-): Promise<string> => {
-  const apiKey = await getGeminiKey();
-  
-  // Construct a rich prompt based on available context
-  let prompt = "";
-  if (context.title && context.description) {
-    prompt = `Title: ${context.title}\nDescription: ${context.description}`;
-  } else if (context.title) {
-    prompt = context.title;
-  } else if (context.description) {
-    prompt = context.description;
-  } else {
-    throw new Error("Please provide a title or description for context.");
-  }
-
-  return generateContent(apiKey, prompt, field);
-};
-
-// --- Legacy/Direct Exports (Fixes 'generateTags' import error) ---
-
-export const generateTags = async (input: string | { title: string, description?: string }) => {
-  const context = typeof input === 'string' ? { title: input } : input;
-  return generateMetadata('tags', context);
-};
-
-export const generateHashtags = async (input: string | { title: string, description?: string }) => {
-  const context = typeof input === 'string' ? { title: input } : input;
-  return generateMetadata('hashtags', context);
-};
-
-export const generateTitle = async (description: string) => {
-  return generateMetadata('title', { description });
-};
-
-export const generateDescription = async (title: string) => {
-  return generateMetadata('description', { title });
 };

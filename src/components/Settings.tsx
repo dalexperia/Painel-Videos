@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { fetchVideoDetails } from '../lib/youtube';
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { useAuth, UserRole } from '../contexts/AuthContext';
 import { 
   Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle, Key, 
@@ -35,20 +34,13 @@ const Settings: React.FC = () => {
   
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isEditing, setIsEditing] = useState<number | null>(null);
-  
-  // Form Fields
   const [currentChannel, setCurrentChannel] = useState('');
   const [currentWebhook, setCurrentWebhook] = useState('');
   const [currentApiKey, setCurrentApiKey] = useState('');
   const [currentGeminiKey, setCurrentGeminiKey] = useState('');
 
-  // Test States
   const [isTestingKey, setIsTestingKey] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
-  
-  const [isTestingGemini, setIsTestingGemini] = useState(false);
-  const [geminiTestResult, setGeminiTestResult] = useState<{ success: boolean; message: string } | null>(null);
-
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<{ updated: number; total: number; message: string } | null>(null);
 
@@ -116,7 +108,6 @@ const Settings: React.FC = () => {
     setCurrentApiKey('');
     setCurrentGeminiKey('');
     setTestResult(null);
-    setGeminiTestResult(null);
     setError(null);
   };
 
@@ -128,7 +119,6 @@ const Settings: React.FC = () => {
     setCurrentApiKey('');
     setCurrentGeminiKey('');
     setTestResult(null);
-    setGeminiTestResult(null);
   };
 
   const handleEdit = (setting: Setting) => {
@@ -139,7 +129,6 @@ const Settings: React.FC = () => {
     setCurrentGeminiKey(setting.gemini_key || '');
     setIsFormOpen(true);
     setTestResult(null);
-    setGeminiTestResult(null);
   };
 
   const handleDelete = async (id: number) => {
@@ -184,50 +173,6 @@ const Settings: React.FC = () => {
     }
   };
 
-  const handleTestGeminiKey = async () => {
-    if (!currentGeminiKey) {
-      setGeminiTestResult({ success: false, message: "Insira uma chave para testar." });
-      return;
-    }
-
-    setIsTestingGemini(true);
-    setGeminiTestResult(null);
-
-    try {
-      const genAI = new GoogleGenerativeAI(currentGeminiKey);
-      // Usando gemini-1.5-flash que é o modelo padrão atual e mais rápido
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-      
-      const result = await model.generateContent("Responda apenas com a palavra 'OK' para testar a conexão.");
-      const response = await result.response;
-      const text = response.text();
-      
-      if (text) {
-        setGeminiTestResult({ success: true, message: "Chave válida! Conexão com Gemini estabelecida." });
-      } else {
-        throw new Error("Resposta vazia");
-      }
-    } catch (err: any) {
-      console.error("Gemini Key Test Error:", err);
-      let msg = "Erro ao conectar.";
-      
-      if (err.message?.includes('API key not valid')) {
-        msg = "Chave inválida. Verifique se copiou corretamente.";
-      } else if (err.message?.includes('Generative Language API has not been used in project')) {
-        msg = "A API não está ativada no Google Cloud. Ative a 'Generative Language API'.";
-      } else if (err.message?.includes('fetch failed')) {
-        msg = "Erro de conexão. Verifique sua internet.";
-      }
-      
-      setGeminiTestResult({ 
-        success: false, 
-        message: msg
-      });
-    } finally {
-      setIsTestingGemini(false);
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isAdmin) return;
@@ -264,7 +209,7 @@ const Settings: React.FC = () => {
 
       resetForm();
       fetchSettings();
-      setSuccessMessage("Configuração salva com sucesso!");
+      setSuccessMessage("Canal salvo com sucesso!");
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (err: any) {
       console.error("Error saving setting:", err);
@@ -478,7 +423,6 @@ const Settings: React.FC = () => {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* YouTube API Key */}
                   <div>
                     <label htmlFor="apiKey" className="block text-sm font-medium text-gray-700 mb-1">
                       YouTube Data API Key <span className="text-gray-400 font-normal">(Opcional)</span>
@@ -515,47 +459,26 @@ const Settings: React.FC = () => {
                         {testResult.message}
                       </p>
                     )}
-                    <p className="text-xs text-gray-500 mt-1">Para buscar títulos e durações.</p>
                   </div>
 
-                  {/* Gemini API Key */}
                   <div>
                     <label htmlFor="geminiKey" className="block text-sm font-medium text-gray-700 mb-1">
                       Gemini AI Key <span className="text-gray-400 font-normal">(Opcional)</span>
                     </label>
-                    <div className="flex gap-2">
-                      <div className="relative flex-grow">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                          <Sparkles size={16} className="text-purple-400" />
-                        </div>
-                        <input
-                          type="password"
-                          id="geminiKey"
-                          value={currentGeminiKey}
-                          onChange={(e) => {
-                            setCurrentGeminiKey(e.target.value);
-                            setGeminiTestResult(null);
-                          }}
-                          className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all font-mono text-sm"
-                          placeholder="AIzaSy..."
-                        />
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <Sparkles size={16} className="text-purple-500" />
                       </div>
-                      <button
-                        type="button"
-                        onClick={handleTestGeminiKey}
-                        disabled={!currentGeminiKey || isTestingGemini}
-                        className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 text-sm font-medium"
-                      >
-                        {isTestingGemini ? <Loader2 size={16} className="animate-spin" /> : 'Testar'}
-                      </button>
+                      <input
+                        type="password"
+                        id="geminiKey"
+                        value={currentGeminiKey}
+                        onChange={(e) => setCurrentGeminiKey(e.target.value)}
+                        className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition-all font-mono text-sm"
+                        placeholder="AIzaSy..."
+                      />
                     </div>
-                    {geminiTestResult && (
-                      <p className={`text-xs mt-2 flex items-center gap-1 ${geminiTestResult.success ? 'text-green-600' : 'text-red-600'}`}>
-                        {geminiTestResult.success ? <CheckCircle size={12} /> : <AlertCircle size={12} />}
-                        {geminiTestResult.message}
-                      </p>
-                    )}
-                    <p className="text-xs text-gray-500 mt-1">Para gerar tags e descrições com IA.</p>
+                    <p className="text-xs text-gray-500 mt-1">Usada para gerar títulos, descrições e tags com IA.</p>
                   </div>
                 </div>
               </div>
@@ -595,17 +518,17 @@ const Settings: React.FC = () => {
                           <Key size={10} className="mr-1" /> YT
                         </span>
                       ) : (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-400" title="Sem YouTube API">
-                          <Key size={10} className="mr-1" /> YT
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600" title="Sem YouTube API">
+                          Sem YT
                         </span>
                       )}
                       {setting.gemini_key ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800" title="Gemini API Ativa">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800" title="Gemini AI Ativa">
                           <Sparkles size={10} className="mr-1" /> AI
                         </span>
                       ) : (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-400" title="Sem Gemini API">
-                          <Sparkles size={10} className="mr-1" /> AI
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600" title="Sem Gemini AI">
+                          Sem AI
                         </span>
                       )}
                     </div>

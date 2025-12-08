@@ -2,123 +2,104 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabaseClient';
 
+export type UserRole = 'admin' | 'editor' | 'viewer';
+
+interface UserProfile {
+  id: string;
+  email: string;
+  role: UserRole;
+}
+
 interface AuthContextType {
   session: Session | null;
   user: User | null;
-  profile: any | null;
+  profile: UserProfile | null;
   loading: boolean;
   isAdmin: boolean;
+  isEditor: boolean; // Editor ou Admin
+  refreshProfile: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType>({
-  session: null,
-  user: null,
-  profile: null,
-  loading: true,
-  isAdmin: false,
-});
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [session, setSession] = useState<Session | null>(null);
-  const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<any | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let mounted = true;
-
-    // 1. SAFETY TIMEOUT: Force loading to false after 5 seconds to prevent infinite loops
-    const safetyTimeout = setTimeout(() => {
-      if (mounted && loading) {
-        console.warn("Auth initialization timed out. Forcing app load.");
-        setLoading(false);
-      }
-    }, 5000);
-
-    const initAuth = async () => {
-      try {
-        // Get initial session
-        const { data: { session: initialSession }, error } = await supabase.auth.getSession();
-        
-        if (error && error.message !== 'Auth session missing!') {
-          console.error("Error getting session:", error);
-        }
-
-        if (mounted) {
-          setSession(initialSession);
-          setUser(initialSession?.user ?? null);
-          
-          if (initialSession?.user) {
-            // Don't await profile fetch to prevent blocking the UI
-            fetchProfile(initialSession.user.id).catch(console.warn);
-          }
-        }
-      } catch (err) {
-        console.error("Auth initialization unexpected error:", err);
-      } finally {
-        if (mounted) {
-          setLoading(false);
-          clearTimeout(safetyTimeout); // Clear timeout if successful
-        }
-      }
-    };
-
-    initAuth();
-
-    // 2. Listen for changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
-      if (mounted) {
-        setSession(newSession);
-        setUser(newSession?.user ?? null);
-        
-        if (newSession?.user) {
-          fetchProfile(newSession.user.id).catch(console.warn);
-        } else {
-          setProfile(null);
-        }
-        
-        // Ensure loading is false after any auth change
-        setLoading(false);
-      }
-    });
-
-    return () => {
-      mounted = false;
-      clearTimeout(safetyTimeout);
-      subscription.unsubscribe();
-    };
-  }, []);
 
   const fetchProfile = async (userId: string) => {
     try {
       const { data, error } = await supabase
-        .from('profiles')
+        .from('user_profiles')
         .select('*')
         .eq('id', userId)
         .single();
 
-      if (!error && data) {
+      if (error) {
+        console.error('Erro ao buscar perfil:', error);
+        // Fallback seguro se o perfil não existir ainda (ex: delay do trigger)
+        setProfile({ id: userId, email: '', role: 'viewer' });
+      } else {
         setProfile(data);
       }
     } catch (err) {
-      // Silent fail for profile to not break auth flow
-      console.warn("Profile fetch warning:", err);
+      console.error('Erro inesperado ao buscar perfil:', err);
     }
   };
 
+  useEffect(() => {
+    // 1. Check active session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session?.user) {
+        fetchProfile(session.user.id);
+      } else {
+        setLoading(false);
+      }
+    });
+
+    // 2. Listen for changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (session?.user) {
+        fetchProfile(session.user.id);
+      } else {
+        setProfile(null);
+      }
+      setLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Quando o profile é carregado, paramos o loading
+  useEffect(() => {
+    if (session && profile) {
+      setLoading(false);
+    }
+  }, [profile, session]);
+
   const value = {
     session,
-    user,
+    user: session?.user ?? null,
     profile,
     loading,
-    isAdmin: profile?.role === 'admin'
+    isAdmin: profile?.role === 'admin',
+    isEditor: profile?.role === 'admin' || profile?.role === 'editor',
+    refreshProfile: async () => {
+      if (session?.user) await fetchProfile(session.user.id);
+    }
   };
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
-export const useAuth = () => useContext(AuthContext);
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};

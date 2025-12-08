@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, X, Calendar, Sparkles, Tv, Edit2, Save, XCircle, Hash, Tag } from 'lucide-react';
 import PostModal, { Video as PostModalVideo } from './PostModal';
-import { generateTags } from '../lib/gemini';
+import { generateContent } from '../lib/gemini';
 
 // Reutiliza a interface do PostModal para consistência
 type Video = PostModalVideo;
@@ -31,10 +31,9 @@ const RecentVideos: React.FC = () => {
     hashtags: ''
   });
   const [isSaving, setIsSaving] = useState(false);
-
+  
   // Estados para IA
-  const [isGeneratingAI, setIsGeneratingAI] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
+  const [generatingField, setGeneratingField] = useState<string | null>(null);
 
   useEffect(() => {
     fetchRecentVideos();
@@ -51,7 +50,6 @@ const RecentVideos: React.FC = () => {
         hashtags: Array.isArray(selectedVideo.hashtags) ? selectedVideo.hashtags.join(', ') : ''
       });
       setIsEditing(false);
-      setAiError(null);
     }
   }, [selectedVideo]);
 
@@ -159,50 +157,43 @@ const RecentVideos: React.FC = () => {
     }
   };
 
-  const handleGenerateAI = async () => {
-    if (!selectedVideo) return;
-    setIsGeneratingAI(true);
-    setAiError(null);
+  const handleGenerateAI = async (field: 'title' | 'description' | 'tags' | 'hashtags') => {
+    if (!selectedVideo || !selectedVideo.channel) {
+      alert("Canal não identificado para este vídeo.");
+      return;
+    }
+
+    setGeneratingField(field);
 
     try {
-      // 1. Buscar a chave do banco de dados primeiro
-      let apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      // 1. Buscar a chave do Gemini para o canal do vídeo
+      const { data: settings, error } = await supabase
+        .from('shorts_settings')
+        .select('gemini_key')
+        .eq('channel', selectedVideo.channel)
+        .single();
+
+      if (error || !settings?.gemini_key) {
+        throw new Error("Chave Gemini AI não configurada para este canal. Vá em Configurações.");
+      }
+
+      // 2. Preparar o prompt (usando o título atual ou descrição como base)
+      const basePrompt = editForm.title || selectedVideo.title || "Vídeo sem título";
       
-      if (selectedVideo.channel) {
-        const { data: settings } = await supabase
-          .from('shorts_settings')
-          .select('gemini_key')
-          .eq('channel', selectedVideo.channel)
-          .single();
-          
-        if (settings?.gemini_key) {
-          apiKey = settings.gemini_key;
-        }
-      }
+      // 3. Gerar conteúdo
+      const content = await generateContent(settings.gemini_key, basePrompt, field);
 
-      if (!apiKey) {
-        throw new Error("Chave da API Gemini não configurada. Adicione nas Configurações ou no arquivo .env");
-      }
-
-      // 2. Gerar conteúdo
-      const result = await generateTags(
-        editForm.title || selectedVideo.title || "Vídeo sem título",
-        editForm.description || selectedVideo.description || "",
-        apiKey
-      );
-
-      // 3. Atualizar formulário
+      // 4. Atualizar o formulário
       setEditForm(prev => ({
         ...prev,
-        tags: result.tags.join(', '),
-        hashtags: result.hashtags.join(', ')
+        [field]: content
       }));
 
     } catch (err: any) {
-      console.error("Erro na geração IA:", err);
-      setAiError(err.message || "Falha ao gerar tags com IA.");
+      console.error("Erro ao gerar AI:", err);
+      alert(err.message || "Erro ao gerar conteúdo com IA.");
     } finally {
-      setIsGeneratingAI(false);
+      setGeneratingField(null);
     }
   };
 
@@ -588,30 +579,18 @@ const RecentVideos: React.FC = () => {
 
               {isEditing ? (
                 <div className="space-y-4 flex-grow">
-                  {/* Botão de IA */}
-                  <div className="bg-gray-800/50 p-3 rounded-lg border border-gray-700">
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="text-xs font-medium text-purple-300 flex items-center gap-1">
-                        <Sparkles size={12} /> Assistente IA
-                      </span>
-                    </div>
-                    <button
-                      onClick={handleGenerateAI}
-                      disabled={isGeneratingAI}
-                      className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded-md transition-colors disabled:opacity-50"
-                    >
-                      {isGeneratingAI ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                      Gerar Tags e Hashtags
-                    </button>
-                    {aiError && (
-                      <p className="text-xs text-red-400 mt-2 flex items-center gap-1">
-                        <AlertCircle size={10} /> {aiError}
-                      </p>
-                    )}
-                  </div>
-
                   <div>
-                    <label className="block text-xs text-gray-400 mb-1">Título</label>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="block text-xs text-gray-400">Título</label>
+                      <button 
+                        onClick={() => handleGenerateAI('title')}
+                        disabled={!!generatingField}
+                        className="text-xs flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
+                      >
+                        {generatingField === 'title' ? <RefreshCw size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                        Gerar IA
+                      </button>
+                    </div>
                     <input
                       type="text"
                       value={editForm.title}
@@ -620,7 +599,17 @@ const RecentVideos: React.FC = () => {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-400 mb-1">Descrição</label>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="block text-xs text-gray-400">Descrição</label>
+                      <button 
+                        onClick={() => handleGenerateAI('description')}
+                        disabled={!!generatingField}
+                        className="text-xs flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
+                      >
+                        {generatingField === 'description' ? <RefreshCw size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                        Gerar IA
+                      </button>
+                    </div>
                     <textarea
                       value={editForm.description}
                       onChange={(e) => setEditForm({...editForm, description: e.target.value})}
@@ -629,9 +618,19 @@ const RecentVideos: React.FC = () => {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-400 mb-1 flex items-center gap-1">
-                      <Tag size={12} /> Tags (separadas por vírgula)
-                    </label>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="block text-xs text-gray-400 flex items-center gap-1">
+                        <Tag size={12} /> Tags (separadas por vírgula)
+                      </label>
+                      <button 
+                        onClick={() => handleGenerateAI('tags')}
+                        disabled={!!generatingField}
+                        className="text-xs flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
+                      >
+                        {generatingField === 'tags' ? <RefreshCw size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                        Gerar IA
+                      </button>
+                    </div>
                     <input
                       type="text"
                       value={editForm.tags}
@@ -641,9 +640,19 @@ const RecentVideos: React.FC = () => {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-400 mb-1 flex items-center gap-1">
-                      <Hash size={12} /> Hashtags (separadas por vírgula)
-                    </label>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="block text-xs text-gray-400 flex items-center gap-1">
+                        <Hash size={12} /> Hashtags (separadas por vírgula)
+                      </label>
+                      <button 
+                        onClick={() => handleGenerateAI('hashtags')}
+                        disabled={!!generatingField}
+                        className="text-xs flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
+                      >
+                        {generatingField === 'hashtags' ? <RefreshCw size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                        Gerar IA
+                      </button>
+                    </div>
                     <input
                       type="text"
                       value={editForm.hashtags}
