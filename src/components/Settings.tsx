@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { fetchVideoDetails } from '../lib/youtube';
-import { generateContentAI, AIProvider } from '../lib/ai'; // Nova importação
+import { generateContentAI, AIProvider } from '../lib/ai';
 import { useAuth, UserRole } from '../contexts/AuthContext';
 import { 
   Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle, Key, 
   CheckCircle, Wifi, RefreshCw, Database, Users, Shield, Lock, User, Sparkles,
-  Cpu, Server, Zap
+  Cpu, Server, Zap, Globe
 } from 'lucide-react';
 
 interface Setting {
@@ -19,6 +19,7 @@ interface Setting {
   gemini_key?: string;
   groq_key?: string;
   ollama_url?: string;
+  ollama_key?: string; // Novo campo
   ai_model?: string;
 }
 
@@ -52,6 +53,7 @@ const Settings: React.FC = () => {
   const [currentGeminiKey, setCurrentGeminiKey] = useState('');
   const [currentGroqKey, setCurrentGroqKey] = useState('');
   const [currentOllamaUrl, setCurrentOllamaUrl] = useState('http://localhost:11434');
+  const [currentOllamaKey, setCurrentOllamaKey] = useState(''); // Novo estado
   const [currentAiModel, setCurrentAiModel] = useState('');
 
   const [isTestingKey, setIsTestingKey] = useState(false);
@@ -129,6 +131,7 @@ const Settings: React.FC = () => {
     setCurrentGeminiKey('');
     setCurrentGroqKey('');
     setCurrentOllamaUrl('http://localhost:11434');
+    setCurrentOllamaKey('');
     setCurrentAiModel('');
 
     setTestResult(null);
@@ -151,6 +154,7 @@ const Settings: React.FC = () => {
     setCurrentGeminiKey(setting.gemini_key || '');
     setCurrentGroqKey(setting.groq_key || '');
     setCurrentOllamaUrl(setting.ollama_url || 'http://localhost:11434');
+    setCurrentOllamaKey(setting.ollama_key || '');
     setCurrentAiModel(setting.ai_model || '');
 
     setIsFormOpen(true);
@@ -205,13 +209,20 @@ const Settings: React.FC = () => {
     setAiTestResult(null);
 
     try {
+      // Determina qual chave usar baseado no provedor
+      let apiKeyToUse = '';
+      if (aiProvider === 'gemini') apiKeyToUse = currentGeminiKey;
+      else if (aiProvider === 'groq') apiKeyToUse = currentGroqKey;
+      else if (aiProvider === 'ollama') apiKeyToUse = currentOllamaKey;
+
       const config = {
         provider: aiProvider,
-        apiKey: aiProvider === 'gemini' ? currentGeminiKey : currentGroqKey,
+        apiKey: apiKeyToUse,
         url: currentOllamaUrl,
         model: currentAiModel
       };
 
+      // Validação básica antes de chamar
       if (aiProvider !== 'ollama' && !config.apiKey) {
         throw new Error("Chave de API necessária.");
       }
@@ -221,7 +232,7 @@ const Settings: React.FC = () => {
     } catch (err: any) {
       console.error("AI Test Error:", err);
       let msg = "Erro de conexão.";
-      if (aiProvider === 'ollama') msg += " Verifique se o Ollama está rodando e com CORS habilitado.";
+      if (aiProvider === 'ollama') msg += " Verifique URL, CORS e Modelo.";
       setAiTestResult({
         success: false,
         message: `${msg} (${err.message})`
@@ -250,6 +261,7 @@ const Settings: React.FC = () => {
         gemini_key: currentGeminiKey || null,
         groq_key: currentGroqKey || null,
         ollama_url: currentOllamaUrl || null,
+        ollama_key: currentOllamaKey || null,
         ai_model: currentAiModel || null
       };
 
@@ -572,8 +584,8 @@ const Settings: React.FC = () => {
                       }`}
                     >
                       <Server size={24} className="mb-2" />
-                      <span className="font-bold">Ollama (Local)</span>
-                      <span className="text-xs mt-1">Privado & Gratuito</span>
+                      <span className="font-bold">Ollama / API</span>
+                      <span className="text-xs mt-1">Local ou Remoto</span>
                     </button>
                   </div>
 
@@ -621,16 +633,40 @@ const Settings: React.FC = () => {
                     {aiProvider === 'ollama' && (
                       <div className="space-y-4">
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">URL do Servidor Ollama</label>
-                          <input
-                            type="text"
-                            value={currentOllamaUrl}
-                            onChange={(e) => { setCurrentOllamaUrl(e.target.value); setAiTestResult(null); }}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-gray-500 focus:border-gray-500 font-mono text-sm"
-                            placeholder="http://localhost:11434"
-                          />
-                          <p className="text-xs text-gray-500 mt-1">Certifique-se de rodar com <code>OLLAMA_ORIGINS="*"</code></p>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">URL do Servidor / API</label>
+                          <div className="relative">
+                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                              <Globe size={16} className="text-gray-400" />
+                            </div>
+                            <input
+                              type="text"
+                              value={currentOllamaUrl}
+                              onChange={(e) => { setCurrentOllamaUrl(e.target.value); setAiTestResult(null); }}
+                              className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-gray-500 focus:border-gray-500 font-mono text-sm"
+                              placeholder="http://localhost:11434 ou https://api.exemplo.com"
+                            />
+                          </div>
+                          <p className="text-xs text-gray-500 mt-1">Para local: <code>http://localhost:11434</code> (requer CORS). Para remoto: URL base.</p>
                         </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            API Key / Token <span className="text-gray-400 font-normal">(Opcional - para servidores remotos)</span>
+                          </label>
+                          <div className="relative">
+                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                              <Key size={16} className="text-gray-400" />
+                            </div>
+                            <input
+                              type="password"
+                              value={currentOllamaKey}
+                              onChange={(e) => { setCurrentOllamaKey(e.target.value); setAiTestResult(null); }}
+                              className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-gray-500 focus:border-gray-500 font-mono text-sm"
+                              placeholder="Bearer Token ou API Key"
+                            />
+                          </div>
+                        </div>
+
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">Modelo</label>
                           <input

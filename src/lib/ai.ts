@@ -6,7 +6,7 @@ export type GenerationType = 'title' | 'description' | 'tags' | 'hashtags';
 
 interface AIConfig {
   provider: AIProvider;
-  apiKey?: string; // Para Gemini ou Groq
+  apiKey?: string; // Para Gemini, Groq ou Ollama (Opcional)
   url?: string;    // Para Ollama
   model?: string;  // Opcional, para especificar modelo
 }
@@ -52,7 +52,7 @@ const generateGemini = async (apiKey: string, prompt: string, type: GenerationTy
 
 // --- Implementação Groq ---
 const generateGroq = async (apiKey: string, prompt: string, type: GenerationType, modelId: string = 'llama3-70b-8192') => {
-  const groq = new Groq({ apiKey, dangerouslyAllowBrowser: true }); // Permitir browser para demo, idealmente via backend
+  const groq = new Groq({ apiKey, dangerouslyAllowBrowser: true }); 
   
   const completion = await groq.chat.completions.create({
     messages: [
@@ -67,15 +67,23 @@ const generateGroq = async (apiKey: string, prompt: string, type: GenerationType
 };
 
 // --- Implementação Ollama ---
-const generateOllama = async (url: string, prompt: string, type: GenerationType, modelId: string = 'llama3') => {
-  // Nota: O usuário precisa configurar CORS no Ollama localmente para funcionar via browser
-  // OLLAMA_ORIGINS="*" ollama serve
+const generateOllama = async (url: string, apiKey: string | undefined, prompt: string, type: GenerationType, modelId: string = 'llama3') => {
+  // Remove barra final se existir e garante endpoint correto
+  const baseUrl = url.replace(/\/$/, '');
+  const fullUrl = baseUrl.endsWith('/api/generate') ? baseUrl : `${baseUrl}/api/generate`;
   
-  const fullUrl = `${url.replace(/\/$/, '')}/api/generate`;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json'
+  };
+
+  // Adiciona autenticação se a chave for fornecida
+  if (apiKey && apiKey.trim() !== '') {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  }
   
   const response = await fetch(fullUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: headers,
     body: JSON.stringify({
       model: modelId,
       prompt: `${getSystemInstruction(type)}\n\nCONTEXTO: "${prompt}"`,
@@ -83,7 +91,10 @@ const generateOllama = async (url: string, prompt: string, type: GenerationType,
     })
   });
 
-  if (!response.ok) throw new Error(`Erro Ollama: ${response.statusText}`);
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => 'Erro desconhecido');
+    throw new Error(`Erro Ollama (${response.status}): ${errorText}`);
+  }
   
   const data = await response.json();
   return data.response;
@@ -117,7 +128,8 @@ export const generateContentAI = async (
         
       case 'ollama':
         if (!config.url) throw new Error("URL do Ollama não configurada.");
-        result = await generateOllama(config.url, prompt, type, config.model || 'llama3');
+        // Passamos a apiKey também para o Ollama
+        result = await generateOllama(config.url, config.apiKey, prompt, type, config.model || 'llama3');
         break;
         
       default:
