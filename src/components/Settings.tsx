@@ -4,7 +4,7 @@ import { fetchVideoDetails } from '../lib/youtube';
 import { useAuth, UserRole } from '../contexts/AuthContext';
 import { 
   Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle, Key, 
-  CheckCircle, Wifi, RefreshCw, Database, Users, Shield, Lock, User
+  CheckCircle, Wifi, RefreshCw, Database, Users, Shield, Lock, User, Sparkles
 } from 'lucide-react';
 
 interface Setting {
@@ -12,6 +12,7 @@ interface Setting {
   channel: string;
   webhook: string;
   youtube_api_key?: string;
+  gemini_key?: string;
 }
 
 interface UserProfile {
@@ -36,6 +37,7 @@ const Settings: React.FC = () => {
   const [currentChannel, setCurrentChannel] = useState('');
   const [currentWebhook, setCurrentWebhook] = useState('');
   const [currentApiKey, setCurrentApiKey] = useState('');
+  const [currentGeminiKey, setCurrentGeminiKey] = useState('');
 
   const [isTestingKey, setIsTestingKey] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -104,6 +106,7 @@ const Settings: React.FC = () => {
     setCurrentChannel('');
     setCurrentWebhook('');
     setCurrentApiKey('');
+    setCurrentGeminiKey('');
     setTestResult(null);
     setError(null);
   };
@@ -114,6 +117,7 @@ const Settings: React.FC = () => {
     setCurrentChannel('');
     setCurrentWebhook('');
     setCurrentApiKey('');
+    setCurrentGeminiKey('');
     setTestResult(null);
   };
 
@@ -122,6 +126,7 @@ const Settings: React.FC = () => {
     setCurrentChannel(setting.channel);
     setCurrentWebhook(setting.webhook);
     setCurrentApiKey(setting.youtube_api_key || '');
+    setCurrentGeminiKey(setting.gemini_key || '');
     setIsFormOpen(true);
     setTestResult(null);
   };
@@ -154,9 +159,7 @@ const Settings: React.FC = () => {
     setTestResult(null);
 
     try {
-      // Tenta buscar um vídeo qualquer (ex: vídeo do YouTube Developers) para validar a chave
       const testVideoId = 'Ks-_Mh1QhMc'; 
-      // Passa como array para a nova assinatura da função
       await fetchVideoDetails([testVideoId], currentApiKey);
       setTestResult({ success: true, message: "Chave válida! Conexão com YouTube estabelecida." });
     } catch (err: any) {
@@ -184,7 +187,8 @@ const Settings: React.FC = () => {
       const payload = { 
         channel: currentChannel, 
         webhook: currentWebhook,
-        youtube_api_key: currentApiKey || null
+        youtube_api_key: currentApiKey || null,
+        gemini_key: currentGeminiKey || null
       };
 
       let error;
@@ -224,8 +228,6 @@ const Settings: React.FC = () => {
     setError(null);
 
     try {
-      // 1. Buscar vídeos sem duração ou título
-      // CORREÇÃO: Usando 'youtube_id' em vez de 'video_id'
       const { data: videos, error: fetchError } = await supabase
         .from('shorts_youtube')
         .select('id, youtube_id, channel')
@@ -240,7 +242,6 @@ const Settings: React.FC = () => {
 
       let updatedCount = 0;
       
-      // Agrupar por canal para usar a API Key correta
       const videosByChannel: Record<string, typeof videos> = {};
       videos.forEach(v => {
         if (!videosByChannel[v.channel]) videosByChannel[v.channel] = [];
@@ -252,16 +253,12 @@ const Settings: React.FC = () => {
         if (!channelSettings?.youtube_api_key) continue;
 
         const channelVideos = videosByChannel[channelName];
-        // CORREÇÃO: Mapeando 'youtube_id'
         const videoIds = channelVideos.map(v => v.youtube_id); 
         
         try {
-          // Busca em lote (muito mais eficiente e correto)
           const detailsMap = await fetchVideoDetails(videoIds, channelSettings.youtube_api_key);
           
-          // Atualiza um por um no banco
           for (const video of channelVideos) {
-            // CORREÇÃO: Acessando via 'youtube_id'
             const details = detailsMap[video.youtube_id];
             
             if (details) {
@@ -279,7 +276,6 @@ const Settings: React.FC = () => {
           console.error(`Falha ao processar lote do canal ${channelName}:`, err);
         }
         
-        // Pequeno delay entre canais para evitar rate limit
         await new Promise(resolve => setTimeout(resolve, 200));
       }
 
@@ -426,43 +422,64 @@ const Settings: React.FC = () => {
                   </div>
                 </div>
 
-                <div>
-                  <label htmlFor="apiKey" className="block text-sm font-medium text-gray-700 mb-1">
-                    YouTube Data API Key <span className="text-gray-400 font-normal">(Opcional)</span>
-                  </label>
-                  <div className="flex gap-2">
-                    <div className="relative flex-grow">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label htmlFor="apiKey" className="block text-sm font-medium text-gray-700 mb-1">
+                      YouTube Data API Key <span className="text-gray-400 font-normal">(Opcional)</span>
+                    </label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-grow">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                          <Key size={16} className="text-gray-400" />
+                        </div>
+                        <input
+                          type="password"
+                          id="apiKey"
+                          value={currentApiKey}
+                          onChange={(e) => {
+                            setCurrentApiKey(e.target.value);
+                            setTestResult(null);
+                          }}
+                          className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition-all font-mono text-sm"
+                          placeholder="AIzaSy..."
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleTestApiKey}
+                        disabled={!currentApiKey || isTestingKey}
+                        className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 text-sm font-medium"
+                      >
+                        {isTestingKey ? <Loader2 size={16} className="animate-spin" /> : 'Testar'}
+                      </button>
+                    </div>
+                    {testResult && (
+                      <p className={`text-xs mt-2 flex items-center gap-1 ${testResult.success ? 'text-green-600' : 'text-red-600'}`}>
+                        {testResult.success ? <CheckCircle size={12} /> : <AlertCircle size={12} />}
+                        {testResult.message}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label htmlFor="geminiKey" className="block text-sm font-medium text-gray-700 mb-1">
+                      Gemini AI Key <span className="text-gray-400 font-normal">(Opcional)</span>
+                    </label>
+                    <div className="relative">
                       <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <Key size={16} className="text-gray-400" />
+                        <Sparkles size={16} className="text-purple-500" />
                       </div>
                       <input
                         type="password"
-                        id="apiKey"
-                        value={currentApiKey}
-                        onChange={(e) => {
-                          setCurrentApiKey(e.target.value);
-                          setTestResult(null);
-                        }}
+                        id="geminiKey"
+                        value={currentGeminiKey}
+                        onChange={(e) => setCurrentGeminiKey(e.target.value)}
                         className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition-all font-mono text-sm"
                         placeholder="AIzaSy..."
                       />
                     </div>
-                    <button
-                      type="button"
-                      onClick={handleTestApiKey}
-                      disabled={!currentApiKey || isTestingKey}
-                      className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 text-sm font-medium"
-                    >
-                      {isTestingKey ? <Loader2 size={16} className="animate-spin" /> : 'Testar'}
-                    </button>
+                    <p className="text-xs text-gray-500 mt-1">Usada para gerar títulos, descrições e tags com IA.</p>
                   </div>
-                  {testResult && (
-                    <p className={`text-xs mt-2 flex items-center gap-1 ${testResult.success ? 'text-green-600' : 'text-red-600'}`}>
-                      {testResult.success ? <CheckCircle size={12} /> : <AlertCircle size={12} />}
-                      {testResult.message}
-                    </p>
-                  )}
-                  <p className="text-xs text-gray-500 mt-1">Necessária para buscar títulos e durações automaticamente.</p>
                 </div>
               </div>
 
@@ -495,15 +512,26 @@ const Settings: React.FC = () => {
                 <div className="flex-grow min-w-0">
                   <div className="flex items-center gap-3 mb-1">
                     <h4 className="font-bold text-gray-800 text-lg">{setting.channel}</h4>
-                    {setting.youtube_api_key ? (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800" title="API Key Configurada">
-                        <Key size={10} className="mr-1" /> API Ativa
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600" title="Sem API Key">
-                        Sem API
-                      </span>
-                    )}
+                    <div className="flex gap-2">
+                      {setting.youtube_api_key ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800" title="YouTube API Ativa">
+                          <Key size={10} className="mr-1" /> YT
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600" title="Sem YouTube API">
+                          Sem YT
+                        </span>
+                      )}
+                      {setting.gemini_key ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800" title="Gemini AI Ativa">
+                          <Sparkles size={10} className="mr-1" /> AI
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600" title="Sem Gemini AI">
+                          Sem AI
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="flex items-center gap-2 text-sm text-gray-500 font-mono bg-gray-50 px-2 py-1 rounded w-fit max-w-full">
                     <Wifi size={12} />
