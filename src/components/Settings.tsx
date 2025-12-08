@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { fetchVideoDetails } from '../lib/youtube';
-import { testGeminiConnection } from '../lib/gemini';
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { useAuth, UserRole } from '../contexts/AuthContext';
 import { 
   Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle, Key, 
@@ -35,16 +35,17 @@ const Settings: React.FC = () => {
   
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isEditing, setIsEditing] = useState<number | null>(null);
+  
+  // Form Fields
   const [currentChannel, setCurrentChannel] = useState('');
   const [currentWebhook, setCurrentWebhook] = useState('');
   const [currentApiKey, setCurrentApiKey] = useState('');
   const [currentGeminiKey, setCurrentGeminiKey] = useState('');
 
-  // Estados de Teste YouTube
+  // Test States
   const [isTestingKey, setIsTestingKey] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
-
-  // Estados de Teste Gemini
+  
   const [isTestingGemini, setIsTestingGemini] = useState(false);
   const [geminiTestResult, setGeminiTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
@@ -193,13 +194,34 @@ const Settings: React.FC = () => {
     setGeminiTestResult(null);
 
     try {
-      await testGeminiConnection(currentGeminiKey);
-      setGeminiTestResult({ success: true, message: "Chave válida! IA conectada." });
+      const genAI = new GoogleGenerativeAI(currentGeminiKey);
+      // Usando gemini-1.5-flash que é o modelo padrão atual e mais rápido
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+      
+      const result = await model.generateContent("Responda apenas com a palavra 'OK' para testar a conexão.");
+      const response = await result.response;
+      const text = response.text();
+      
+      if (text) {
+        setGeminiTestResult({ success: true, message: "Chave válida! Conexão com Gemini estabelecida." });
+      } else {
+        throw new Error("Resposta vazia");
+      }
     } catch (err: any) {
       console.error("Gemini Key Test Error:", err);
+      let msg = "Erro ao conectar.";
+      
+      if (err.message?.includes('API key not valid')) {
+        msg = "Chave inválida. Verifique se copiou corretamente.";
+      } else if (err.message?.includes('Generative Language API has not been used in project')) {
+        msg = "A API não está ativada no Google Cloud. Ative a 'Generative Language API'.";
+      } else if (err.message?.includes('fetch failed')) {
+        msg = "Erro de conexão. Verifique sua internet.";
+      }
+      
       setGeminiTestResult({ 
         success: false, 
-        message: "Chave inválida. Verifique se a API Generative Language está ativa." 
+        message: msg
       });
     } finally {
       setIsTestingGemini(false);
@@ -242,7 +264,7 @@ const Settings: React.FC = () => {
 
       resetForm();
       fetchSettings();
-      setSuccessMessage("Canal salvo com sucesso!");
+      setSuccessMessage("Configuração salva com sucesso!");
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (err: any) {
       console.error("Error saving setting:", err);
@@ -493,6 +515,7 @@ const Settings: React.FC = () => {
                         {testResult.message}
                       </p>
                     )}
+                    <p className="text-xs text-gray-500 mt-1">Para buscar títulos e durações.</p>
                   </div>
 
                   {/* Gemini API Key */}
@@ -503,7 +526,7 @@ const Settings: React.FC = () => {
                     <div className="flex gap-2">
                       <div className="relative flex-grow">
                         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                          <Sparkles size={16} className="text-purple-500" />
+                          <Sparkles size={16} className="text-purple-400" />
                         </div>
                         <input
                           type="password"
@@ -513,7 +536,7 @@ const Settings: React.FC = () => {
                             setCurrentGeminiKey(e.target.value);
                             setGeminiTestResult(null);
                           }}
-                          className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition-all font-mono text-sm"
+                          className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all font-mono text-sm"
                           placeholder="AIzaSy..."
                         />
                       </div>
@@ -532,9 +555,7 @@ const Settings: React.FC = () => {
                         {geminiTestResult.message}
                       </p>
                     )}
-                    {!geminiTestResult && (
-                      <p className="text-xs text-gray-500 mt-1">Usada para gerar títulos, descrições e tags com IA.</p>
-                    )}
+                    <p className="text-xs text-gray-500 mt-1">Para gerar tags e descrições com IA.</p>
                   </div>
                 </div>
               </div>
@@ -574,17 +595,17 @@ const Settings: React.FC = () => {
                           <Key size={10} className="mr-1" /> YT
                         </span>
                       ) : (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600" title="Sem YouTube API">
-                          Sem YT
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-400" title="Sem YouTube API">
+                          <Key size={10} className="mr-1" /> YT
                         </span>
                       )}
                       {setting.gemini_key ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800" title="Gemini AI Ativa">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800" title="Gemini API Ativa">
                           <Sparkles size={10} className="mr-1" /> AI
                         </span>
                       ) : (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600" title="Sem Gemini AI">
-                          Sem AI
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-400" title="Sem Gemini API">
+                          <Sparkles size={10} className="mr-1" /> AI
                         </span>
                       )}
                     </div>
