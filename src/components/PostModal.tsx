@@ -63,6 +63,7 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
 
   useEffect(() => {
     if (video) {
+      console.log("Modal montado para vídeo:", video.title); // Debug
       const now = new Date();
       if (!selectedDate) {
         const defaultTime = new Date(now.getTime() + 60 * 60000);
@@ -295,7 +296,7 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
 
   return (
     <div 
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in"
       onClick={onClose}
     >
       <div 

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from './lib/supabaseClient';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import ErrorBoundary from './components/ErrorBoundary';
 import Login from './components/Login';
 import ReprovedVideos from './components/ReprovedVideos';
 import PostedVideos from './components/PostedVideos';
@@ -235,12 +236,14 @@ const AppContent = () => {
 
       {/* Conteúdo Principal */}
       <main className="flex-grow">
-        {view === 'dashboard' && <Dashboard />}
-        {view === 'recent' && <RecentVideos />}
-        {view === 'scheduled' && <ScheduledVideos />}
-        {view === 'posted' && <PostedVideos />}
-        {view === 'reproved' && <ReprovedVideos />}
-        {view === 'settings' && <Settings />}
+        <ErrorBoundary>
+          {view === 'dashboard' && <Dashboard />}
+          {view === 'recent' && <RecentVideos />}
+          {view === 'scheduled' && <ScheduledVideos />}
+          {view === 'posted' && <PostedVideos />}
+          {view === 'reproved' && <ReprovedVideos />}
+          {view === 'settings' && <Settings />}
+        </ErrorBoundary>
       </main>
     </div>
   );
@@ -248,9 +251,11 @@ const AppContent = () => {
 
 function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
 
