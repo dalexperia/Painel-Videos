@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { supabase } from './lib/supabaseClient';
+import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import Login from './components/Login';
@@ -21,7 +21,8 @@ import {
   X,
   LogOut,
   User,
-  Shield
+  Shield,
+  AlertTriangle
 } from 'lucide-react';
 
 type View = 'dashboard' | 'recent' | 'reproved' | 'posted' | 'scheduled' | 'settings';
@@ -84,18 +85,50 @@ const AppContent = () => {
     await supabase.auth.signOut();
   };
 
-  if (loading) {
+  // 1. Check for Missing Config FIRST
+  if (!isSupabaseConfigured) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-600"></div>
+      <div className="min-h-screen flex items-center justify-center bg-gray-900 p-4">
+        <div className="bg-gray-800 p-8 rounded-2xl shadow-2xl max-w-md w-full border border-red-500/30">
+          <div className="flex justify-center mb-6">
+            <div className="bg-red-500/20 p-4 rounded-full">
+              <AlertTriangle className="w-12 h-12 text-red-500" />
+            </div>
+          </div>
+          <h1 className="text-xl font-bold text-white text-center mb-4">Configuração Pendente</h1>
+          <p className="text-gray-300 text-center mb-6">
+            O aplicativo não conseguiu conectar ao banco de dados.
+          </p>
+          <div className="bg-black/30 p-4 rounded-lg text-sm text-gray-400 font-mono mb-6 overflow-x-auto">
+            VITE_SUPABASE_URL<br/>
+            VITE_SUPABASE_ANON_KEY
+          </div>
+          <p className="text-gray-400 text-xs text-center">
+            Se você está no Vercel, adicione estas variáveis nas configurações do projeto.
+          </p>
+        </div>
       </div>
     );
   }
 
+  // 2. Loading State
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+        <div className="flex flex-col items-center gap-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-600"></div>
+          <p className="text-gray-500 text-sm animate-pulse">Carregando sistema...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. Login Screen
   if (!session) {
     return <Login />;
   }
 
+  // 4. Main App
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col">
       {/* Header Responsivo */}

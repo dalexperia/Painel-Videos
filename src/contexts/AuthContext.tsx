@@ -27,25 +27,39 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     let mounted = true;
 
+    // 1. SAFETY TIMEOUT: Force loading to false after 5 seconds to prevent infinite loops
+    const safetyTimeout = setTimeout(() => {
+      if (mounted && loading) {
+        console.warn("Auth initialization timed out. Forcing app load.");
+        setLoading(false);
+      }
+    }, 5000);
+
     const initAuth = async () => {
       try {
-        // 1. Get initial session
+        // Get initial session
         const { data: { session: initialSession }, error } = await supabase.auth.getSession();
         
-        if (error) throw error;
+        if (error && error.message !== 'Auth session missing!') {
+          console.error("Error getting session:", error);
+        }
 
         if (mounted) {
           setSession(initialSession);
           setUser(initialSession?.user ?? null);
           
           if (initialSession?.user) {
-            await fetchProfile(initialSession.user.id);
+            // Don't await profile fetch to prevent blocking the UI
+            fetchProfile(initialSession.user.id).catch(console.warn);
           }
         }
       } catch (err) {
-        console.error("Auth initialization error:", err);
+        console.error("Auth initialization unexpected error:", err);
       } finally {
-        if (mounted) setLoading(false);
+        if (mounted) {
+          setLoading(false);
+          clearTimeout(safetyTimeout); // Clear timeout if successful
+        }
       }
     };
 
@@ -58,23 +72,25 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         setUser(newSession?.user ?? null);
         
         if (newSession?.user) {
-          await fetchProfile(newSession.user.id);
+          fetchProfile(newSession.user.id).catch(console.warn);
         } else {
           setProfile(null);
         }
+        
+        // Ensure loading is false after any auth change
         setLoading(false);
       }
     });
 
     return () => {
       mounted = false;
+      clearTimeout(safetyTimeout);
       subscription.unsubscribe();
     };
   }, []);
 
   const fetchProfile = async (userId: string) => {
     try {
-      // Try to fetch profile, but don't block if table doesn't exist yet
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
@@ -85,6 +101,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         setProfile(data);
       }
     } catch (err) {
+      // Silent fail for profile to not break auth flow
       console.warn("Profile fetch warning:", err);
     }
   };
