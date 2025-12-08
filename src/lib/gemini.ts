@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // Log para confirmar que a nova versão foi carregada
-console.log("Gemini Lib: Versão Strict Carregada 🚀 | Modelo: gemini-1.5-pro-latest");
+console.log("Gemini Lib: Versão Strict Carregada 🚀 | Modelo: gemini-pro");
 
 export const generateContent = async (
   apiKey: string,
@@ -21,7 +21,7 @@ export const generateContent = async (
 
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ 
-    model: "gemini-1.5-pro-latest", // ATUALIZAÇÃO AQUI
+    model: "gemini-pro", // ATUALIZAÇÃO AQUI para o modelo estável
     generationConfig: {
       temperature: 0.4, // Baixa temperatura para ser MENOS criativo e MAIS preciso
     }
