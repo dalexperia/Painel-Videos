@@ -30,7 +30,6 @@ const ScheduledVideos: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   
-  // Define 'calendar' como padrão inicial se preferir, ou mantém 'grid'
   const [viewMode, setViewMode] = useState<ViewMode>('calendar');
 
   // Estados para o Calendário
@@ -58,7 +57,7 @@ const ScheduledVideos: React.FC = () => {
         .from('shorts_youtube')
         .select('id, link_s3, title, description, publish_at, channel, youtube_id')
         .eq('failed', false)
-        .eq('status', 'Posted') // Mantendo lógica original onde 'Posted' com data futura = Agendado
+        .eq('status', 'Posted')
         .not('publish_at', 'is', null)
         .gt('publish_at', new Date().toISOString())
         .order('publish_at', { ascending: true });
@@ -85,8 +84,6 @@ const ScheduledVideos: React.FC = () => {
       const matchesChannel = selectedChannel ? video.channel === selectedChannel : true;
 
       let matchesDate = true;
-      // Se estiver no modo calendário, ignoramos o filtro de data manual para mostrar o mês todo
-      // a menos que o usuário force uma data específica nos filtros
       if (viewMode !== 'calendar') {
         if (dateStart || dateEnd) {
           if (!video.publish_at) return false;
@@ -115,7 +112,7 @@ const ScheduledVideos: React.FC = () => {
     setDateEnd('');
   };
 
-  // --- Ações de Vídeo (Reprovar, Download, Editar Data) ---
+  // --- Ações de Vídeo ---
   
   const handleReprove = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -158,7 +155,6 @@ const ScheduledVideos: React.FC = () => {
     setEditingDateId(video.id);
     if (video.publish_at) {
       const date = new Date(video.publish_at);
-      // Ajuste simples para input datetime-local
       const iso = date.toISOString().slice(0, 16); 
       setNewDateValue(iso);
     } else {
@@ -235,87 +231,91 @@ const ScheduledVideos: React.FC = () => {
           </div>
         </div>
 
-        {/* Week Days Header */}
-        <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
-          {weekDays.map(day => (
-            <div key={day} className="py-2 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">
-              {day}
-            </div>
-          ))}
-        </div>
-
-        {/* Calendar Grid */}
-        <div className="grid grid-cols-7 auto-rows-fr bg-gray-200 gap-px border-b border-gray-200">
-          {calendarDays.map((day, dayIdx) => {
-            const isSelectedMonth = isSameMonth(day, monthStart);
-            const isTodayDate = isToday(day);
-            
-            // Encontrar vídeos deste dia
-            const dayVideos = filteredVideos.filter(video => 
-              video.publish_at && isSameDay(parseISO(video.publish_at), day)
-            );
-
-            // Ordenar por horário
-            dayVideos.sort((a, b) => {
-              if (!a.publish_at || !b.publish_at) return 0;
-              return new Date(a.publish_at).getTime() - new Date(b.publish_at).getTime();
-            });
-
-            return (
-              <div 
-                key={day.toString()} 
-                className={`min-h-[120px] bg-white p-2 flex flex-col gap-1 transition-colors hover:bg-gray-50
-                  ${!isSelectedMonth ? 'bg-gray-50/50 text-gray-400' : ''}
-                  ${isTodayDate ? 'bg-blue-50/30' : ''}
-                `}
-              >
-                <div className="flex justify-between items-start">
-                  <span className={`
-                    text-sm font-medium w-7 h-7 flex items-center justify-center rounded-full
-                    ${isTodayDate ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-700'}
-                    ${!isSelectedMonth ? 'text-gray-400' : ''}
-                  `}>
-                    {format(day, 'd')}
-                  </span>
-                  {dayVideos.length > 0 && (
-                    <span className="text-[10px] font-medium text-gray-400 bg-gray-100 px-1.5 rounded-full">
-                      {dayVideos.length}
-                    </span>
-                  )}
+        {/* Wrapper com scroll horizontal para mobile */}
+        <div className="overflow-x-auto">
+          <div className="min-w-[800px]">
+            {/* Week Days Header */}
+            <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
+              {weekDays.map(day => (
+                <div key={day} className="py-2 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  {day}
                 </div>
+              ))}
+            </div>
 
-                <div className="flex-1 flex flex-col gap-1 mt-1 overflow-y-auto max-h-[150px] custom-scrollbar">
-                  {dayVideos.map(video => (
-                    <div 
-                      key={video.id}
-                      onClick={() => setSelectedVideo(video)}
-                      className="group relative bg-white border border-purple-100 hover:border-purple-300 rounded p-1.5 shadow-sm cursor-pointer hover:shadow-md transition-all text-left"
-                    >
-                      <div className="flex items-center gap-2">
-                        <div className="w-1 h-8 bg-purple-500 rounded-full flex-shrink-0"></div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-semibold text-gray-800 truncate leading-tight">
-                            {video.title || 'Sem título'}
-                          </p>
-                          <div className="flex items-center gap-1 mt-0.5">
-                            <Clock size={10} className="text-gray-400" />
-                            <span className="text-[10px] text-gray-500">
-                              {video.publish_at ? format(parseISO(video.publish_at), 'HH:mm') : '--:--'}
-                            </span>
+            {/* Calendar Grid */}
+            <div className="grid grid-cols-7 auto-rows-fr bg-gray-200 gap-px border-b border-gray-200">
+              {calendarDays.map((day, dayIdx) => {
+                const isSelectedMonth = isSameMonth(day, monthStart);
+                const isTodayDate = isToday(day);
+                
+                const dayVideos = filteredVideos.filter(video => 
+                  video.publish_at && isSameDay(parseISO(video.publish_at), day)
+                );
+
+                dayVideos.sort((a, b) => {
+                  if (!a.publish_at || !b.publish_at) return 0;
+                  return new Date(a.publish_at).getTime() - new Date(b.publish_at).getTime();
+                });
+
+                return (
+                  <div 
+                    key={day.toString()} 
+                    className={`min-h-[120px] bg-white p-2 flex flex-col gap-1 transition-colors hover:bg-gray-50
+                      ${!isSelectedMonth ? 'bg-gray-50/50 text-gray-400' : ''}
+                      ${isTodayDate ? 'bg-blue-50/30' : ''}
+                    `}
+                  >
+                    <div className="flex justify-between items-start">
+                      <span className={`
+                        text-sm font-medium w-7 h-7 flex items-center justify-center rounded-full
+                        ${isTodayDate ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-700'}
+                        ${!isSelectedMonth ? 'text-gray-400' : ''}
+                      `}>
+                        {format(day, 'd')}
+                      </span>
+                      {dayVideos.length > 0 && (
+                        <span className="text-[10px] font-medium text-gray-400 bg-gray-100 px-1.5 rounded-full">
+                          {dayVideos.length}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex-1 flex flex-col gap-1 mt-1 overflow-y-auto max-h-[150px] custom-scrollbar">
+                      {dayVideos.map(video => (
+                        <div 
+                          key={video.id}
+                          onClick={() => setSelectedVideo(video)}
+                          className="group relative bg-white border border-purple-100 hover:border-purple-300 rounded p-1.5 shadow-sm cursor-pointer hover:shadow-md transition-all text-left"
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className="w-1 h-8 bg-purple-500 rounded-full flex-shrink-0"></div>
+                            <div className="min-w-0 flex-1">
+                              {/* Exibindo Canal em vez de Título */}
+                              <p className="text-xs font-semibold text-gray-800 truncate leading-tight">
+                                {video.channel || 'Sem canal'}
+                              </p>
+                              <div className="flex items-center gap-1 mt-0.5">
+                                <Clock size={10} className="text-gray-400" />
+                                <span className="text-[10px] text-gray-500">
+                                  {video.publish_at ? format(parseISO(video.publish_at), 'HH:mm') : '--:--'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          {/* Tooltip com título completo */}
+                          <div className="hidden group-hover:block absolute z-10 bottom-full left-0 w-48 bg-gray-900 text-white text-xs p-2 rounded shadow-lg mb-1 pointer-events-none">
+                            <div className="font-bold mb-1">{video.channel}</div>
+                            <div className="line-clamp-2">{video.title}</div>
                           </div>
                         </div>
-                      </div>
-                      {/* Tooltip simples nativo */}
-                      <div className="hidden group-hover:block absolute z-10 bottom-full left-0 w-48 bg-gray-900 text-white text-xs p-2 rounded shadow-lg mb-1 pointer-events-none">
-                        <div className="font-bold mb-1">{video.channel}</div>
-                        <div className="line-clamp-2">{video.title}</div>
-                      </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -616,7 +616,7 @@ const ScheduledVideos: React.FC = () => {
             </select>
           </div>
 
-          {/* Data Início (Desabilitado no modo calendário para evitar confusão, ou mantido para filtro estrito) */}
+          {/* Data Início */}
           <div className={`relative ${viewMode === 'calendar' ? 'opacity-50 pointer-events-none' : ''}`}>
             <CalendarIcon size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
