@@ -1,6 +1,16 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, X, Calendar, Tv, Edit2, Save, Search, Filter, CheckCircle2, Clock } from 'lucide-react';
+import { 
+  Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, 
+  Download, X, Calendar as CalendarIcon, Tv, Edit2, Save, Search, 
+  Filter, CheckCircle2, Clock, ChevronLeft, ChevronRight 
+} from 'lucide-react';
+import { 
+  format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, 
+  eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, 
+  isToday, parseISO 
+} from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 
 interface Video {
   id: string;
@@ -9,17 +19,22 @@ interface Video {
   description?: string;
   publish_at?: string;
   channel?: string;
-  youtube_id?: string; // Adicionado para verificação visual
+  youtube_id?: string;
 }
 
-type ViewMode = 'grid' | 'list';
+type ViewMode = 'grid' | 'list' | 'calendar';
 
 const ScheduledVideos: React.FC = () => {
   const [videos, setVideos] = useState<Video[]>([]);
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>('grid');
+  
+  // Define 'calendar' como padrão inicial se preferir, ou mantém 'grid'
+  const [viewMode, setViewMode] = useState<ViewMode>('calendar');
+
+  // Estados para o Calendário
+  const [currentMonth, setCurrentMonth] = useState(new Date());
 
   // Estados para edição de data
   const [editingDateId, setEditingDateId] = useState<string | null>(null);
@@ -39,12 +54,11 @@ const ScheduledVideos: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      // Adicionado youtube_id ao select
       const { data, error } = await supabase
         .from('shorts_youtube')
         .select('id, link_s3, title, description, publish_at, channel, youtube_id')
         .eq('failed', false)
-        .eq('status', 'Posted')
+        .eq('status', 'Posted') // Mantendo lógica original onde 'Posted' com data futura = Agendado
         .not('publish_at', 'is', null)
         .gt('publish_at', new Date().toISOString())
         .order('publish_at', { ascending: true });
@@ -67,29 +81,28 @@ const ScheduledVideos: React.FC = () => {
   // Lógica de Filtragem
   const filteredVideos = useMemo(() => {
     return videos.filter(video => {
-      // Filtro de Texto (Título)
       const matchesSearch = video.title?.toLowerCase().includes(searchTerm.toLowerCase());
-      
-      // Filtro de Canal
       const matchesChannel = selectedChannel ? video.channel === selectedChannel : true;
 
-      // Filtro de Data (Publish At)
       let matchesDate = true;
-      if (dateStart || dateEnd) {
-        if (!video.publish_at) return false;
-        const videoDate = new Date(video.publish_at).setHours(0,0,0,0);
-        const start = dateStart ? new Date(dateStart).setHours(0,0,0,0) : null;
-        const end = dateEnd ? new Date(dateEnd).setHours(0,0,0,0) : null;
+      // Se estiver no modo calendário, ignoramos o filtro de data manual para mostrar o mês todo
+      // a menos que o usuário force uma data específica nos filtros
+      if (viewMode !== 'calendar') {
+        if (dateStart || dateEnd) {
+          if (!video.publish_at) return false;
+          const videoDate = new Date(video.publish_at).setHours(0,0,0,0);
+          const start = dateStart ? new Date(dateStart).setHours(0,0,0,0) : null;
+          const end = dateEnd ? new Date(dateEnd).setHours(0,0,0,0) : null;
 
-        if (start && videoDate < start) matchesDate = false;
-        if (end && videoDate > end) matchesDate = false;
+          if (start && videoDate < start) matchesDate = false;
+          if (end && videoDate > end) matchesDate = false;
+        }
       }
 
       return matchesSearch && matchesChannel && matchesDate;
     });
-  }, [videos, searchTerm, selectedChannel, dateStart, dateEnd]);
+  }, [videos, searchTerm, selectedChannel, dateStart, dateEnd, viewMode]);
 
-  // Lista única de canais para o dropdown
   const uniqueChannels = useMemo(() => {
     const channels = videos.map(v => v.channel).filter(Boolean);
     return Array.from(new Set(channels)).sort();
@@ -102,54 +115,38 @@ const ScheduledVideos: React.FC = () => {
     setDateEnd('');
   };
 
+  // --- Ações de Vídeo (Reprovar, Download, Editar Data) ---
+  
   const handleReprove = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm('Tem certeza que deseja reprovar este vídeo? Ele será movido para a lista de reprovados.')) return;
+    if (!window.confirm('Tem certeza que deseja reprovar este vídeo?')) return;
 
     try {
-      const { error } = await supabase
-        .from('shorts_youtube')
-        .update({ failed: true })
-        .eq('id', id);
-
+      const { error } = await supabase.from('shorts_youtube').update({ failed: true }).eq('id', id);
       if (error) throw error;
       setVideos(videos.filter((video) => video.id !== id));
       if (selectedVideo?.id === id) setSelectedVideo(null);
     } catch (err) {
-      console.error("Erro ao reprovar o vídeo:", err);
-      alert('Erro ao reprovar o vídeo. Verifique o console para mais detalhes.');
+      alert('Erro ao reprovar o vídeo.');
     }
   };
 
   const handleDownload = async (url: string, title: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    
-    if (!url) {
-      alert('URL inválida para download');
-      return;
-    }
-
+    if (!url) return alert('URL inválida');
     try {
       document.body.style.cursor = 'wait';
-      
       const response = await fetch(url);
-      if (!response.ok) throw new Error('Falha no download');
-      
       const blob = await response.blob();
       const blobUrl = window.URL.createObjectURL(blob);
-      
       const link = document.createElement('a');
       link.href = blobUrl;
-      const safeTitle = (title || 'video').replace(/[^a-z0-9]/gi, '_').toLowerCase();
-      link.setAttribute('download', `${safeTitle}.mp4`);
+      link.setAttribute('download', `${(title || 'video').replace(/[^a-z0-9]/gi, '_')}.mp4`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      
       setTimeout(() => window.URL.revokeObjectURL(blobUrl), 100);
     } catch (error) {
-      console.error('Erro no download:', error);
-      // Fallback: tenta abrir em nova aba se o download direto falhar
       window.open(url, '_blank');
     } finally {
       document.body.style.cursor = 'default';
@@ -161,16 +158,9 @@ const ScheduledVideos: React.FC = () => {
     setEditingDateId(video.id);
     if (video.publish_at) {
       const date = new Date(video.publish_at);
-      const parts = new Intl.DateTimeFormat('pt-BR', {
-        timeZone: 'America/Recife',
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit', hour12: false
-      }).formatToParts(date);
-      
-      const getPart = (type: string) => parts.find(p => p.type === type)?.value;
-      const localISOTime = `${getPart('year')}-${getPart('month')}-${getPart('day')}T${getPart('hour')}:${getPart('minute')}`;
-      
-      setNewDateValue(localISOTime);
+      // Ajuste simples para input datetime-local
+      const iso = date.toISOString().slice(0, 16); 
+      setNewDateValue(iso);
     } else {
       setNewDateValue('');
     }
@@ -179,26 +169,13 @@ const ScheduledVideos: React.FC = () => {
   const saveDate = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!newDateValue) return;
-
     try {
-      const isoDateWithOffset = `${newDateValue}:00-03:00`;
-      
-      const { error } = await supabase
-        .from('shorts_youtube')
-        .update({ publish_at: isoDateWithOffset })
-        .eq('id', id);
-
+      const isoDateWithOffset = new Date(newDateValue).toISOString();
+      const { error } = await supabase.from('shorts_youtube').update({ publish_at: isoDateWithOffset }).eq('id', id);
       if (error) throw error;
-
       setVideos(videos.map(v => v.id === id ? { ...v, publish_at: isoDateWithOffset } : v));
       setEditingDateId(null);
-      
-      if (new Date(isoDateWithOffset) <= new Date()) {
-        alert("Data atualizada para o passado. Este vídeo aparecerá na aba 'Postados' após recarregar.");
-      }
-
     } catch (err) {
-      console.error("Erro ao atualizar data:", err);
       alert("Erro ao salvar a nova data.");
     }
   };
@@ -212,21 +189,139 @@ const ScheduledVideos: React.FC = () => {
   const formatPublishDate = (dateString?: string) => {
     if (!dateString) return 'Data não definida';
     try {
-      const date = new Date(dateString);
-      const formatted = new Intl.DateTimeFormat('pt-BR', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        timeZone: 'America/Recife',
-      }).format(date);
-      
-      return formatted.replace(',', '');
+      return format(new Date(dateString), "dd/MM/yyyy 'às' HH:mm");
     } catch (e) {
       return 'Data inválida';
     }
   };
+
+  // --- Lógica do Calendário ---
+
+  const nextMonth = () => setCurrentMonth(addMonths(currentMonth, 1));
+  const prevMonth = () => setCurrentMonth(subMonths(currentMonth, 1));
+  const goToToday = () => setCurrentMonth(new Date());
+
+  const renderCalendar = () => {
+    const monthStart = startOfMonth(currentMonth);
+    const monthEnd = endOfMonth(monthStart);
+    const startDate = startOfWeek(monthStart);
+    const endDate = endOfWeek(monthEnd);
+
+    const calendarDays = eachDayOfInterval({ start: startDate, end: endDate });
+    const weekDays = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+    return (
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden animate-fade-in">
+        {/* Calendar Header */}
+        <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-gray-50">
+          <div className="flex items-center gap-4">
+            <h2 className="text-lg font-bold text-gray-900 capitalize">
+              {format(currentMonth, 'MMMM yyyy', { locale: ptBR })}
+            </h2>
+            <div className="flex items-center bg-white rounded-md border border-gray-300 shadow-sm">
+              <button onClick={prevMonth} className="p-1.5 hover:bg-gray-100 text-gray-600 rounded-l-md border-r border-gray-200">
+                <ChevronLeft size={18} />
+              </button>
+              <button onClick={goToToday} className="px-3 py-1.5 text-sm font-medium hover:bg-gray-100 text-gray-700">
+                Hoje
+              </button>
+              <button onClick={nextMonth} className="p-1.5 hover:bg-gray-100 text-gray-600 rounded-r-md border-l border-gray-200">
+                <ChevronRight size={18} />
+              </button>
+            </div>
+          </div>
+          <div className="text-sm text-gray-500 hidden sm:block">
+            {filteredVideos.length} agendamentos encontrados
+          </div>
+        </div>
+
+        {/* Week Days Header */}
+        <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
+          {weekDays.map(day => (
+            <div key={day} className="py-2 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              {day}
+            </div>
+          ))}
+        </div>
+
+        {/* Calendar Grid */}
+        <div className="grid grid-cols-7 auto-rows-fr bg-gray-200 gap-px border-b border-gray-200">
+          {calendarDays.map((day, dayIdx) => {
+            const isSelectedMonth = isSameMonth(day, monthStart);
+            const isTodayDate = isToday(day);
+            
+            // Encontrar vídeos deste dia
+            const dayVideos = filteredVideos.filter(video => 
+              video.publish_at && isSameDay(parseISO(video.publish_at), day)
+            );
+
+            // Ordenar por horário
+            dayVideos.sort((a, b) => {
+              if (!a.publish_at || !b.publish_at) return 0;
+              return new Date(a.publish_at).getTime() - new Date(b.publish_at).getTime();
+            });
+
+            return (
+              <div 
+                key={day.toString()} 
+                className={`min-h-[120px] bg-white p-2 flex flex-col gap-1 transition-colors hover:bg-gray-50
+                  ${!isSelectedMonth ? 'bg-gray-50/50 text-gray-400' : ''}
+                  ${isTodayDate ? 'bg-blue-50/30' : ''}
+                `}
+              >
+                <div className="flex justify-between items-start">
+                  <span className={`
+                    text-sm font-medium w-7 h-7 flex items-center justify-center rounded-full
+                    ${isTodayDate ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-700'}
+                    ${!isSelectedMonth ? 'text-gray-400' : ''}
+                  `}>
+                    {format(day, 'd')}
+                  </span>
+                  {dayVideos.length > 0 && (
+                    <span className="text-[10px] font-medium text-gray-400 bg-gray-100 px-1.5 rounded-full">
+                      {dayVideos.length}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex-1 flex flex-col gap-1 mt-1 overflow-y-auto max-h-[150px] custom-scrollbar">
+                  {dayVideos.map(video => (
+                    <div 
+                      key={video.id}
+                      onClick={() => setSelectedVideo(video)}
+                      className="group relative bg-white border border-purple-100 hover:border-purple-300 rounded p-1.5 shadow-sm cursor-pointer hover:shadow-md transition-all text-left"
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className="w-1 h-8 bg-purple-500 rounded-full flex-shrink-0"></div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-semibold text-gray-800 truncate leading-tight">
+                            {video.title || 'Sem título'}
+                          </p>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <Clock size={10} className="text-gray-400" />
+                            <span className="text-[10px] text-gray-500">
+                              {video.publish_at ? format(parseISO(video.publish_at), 'HH:mm') : '--:--'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      {/* Tooltip simples nativo */}
+                      <div className="hidden group-hover:block absolute z-10 bottom-full left-0 w-48 bg-gray-900 text-white text-xs p-2 rounded shadow-lg mb-1 pointer-events-none">
+                        <div className="font-bold mb-1">{video.channel}</div>
+                        <div className="line-clamp-2">{video.title}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  // --- Renderização Principal ---
 
   const renderContent = () => {
     if (loading) {
@@ -239,28 +334,28 @@ const ScheduledVideos: React.FC = () => {
 
     if (error) {
       return (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg relative flex items-center justify-center" role="alert">
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg relative flex items-center justify-center">
           <AlertCircle className="mr-2" />
           <span>{error}</span>
         </div>
       );
     }
 
-    if (filteredVideos.length === 0) {
+    if (filteredVideos.length === 0 && viewMode !== 'calendar') {
       return (
         <div className="text-center py-20 bg-white rounded-lg shadow-sm border border-gray-100">
-          <Calendar size={48} className="mx-auto text-gray-300 mb-4" />
+          <CalendarIcon size={48} className="mx-auto text-gray-300 mb-4" />
           <h3 className="text-gray-800 text-xl font-semibold">Nenhum vídeo encontrado</h3>
-          <p className="text-gray-500 text-sm mt-2">
-            {videos.length > 0 ? 'Tente ajustar os filtros de busca.' : 'Não há vídeos com data de publicação futura no momento.'}
-          </p>
-          {videos.length > 0 && (
-            <button onClick={clearFilters} className="mt-4 text-purple-600 hover:text-purple-700 font-medium text-sm">
-              Limpar filtros
-            </button>
-          )}
+          <p className="text-gray-500 text-sm mt-2">Tente ajustar os filtros de busca.</p>
+          <button onClick={clearFilters} className="mt-4 text-purple-600 hover:text-purple-700 font-medium text-sm">
+            Limpar filtros
+          </button>
         </div>
       );
+    }
+
+    if (viewMode === 'calendar') {
+      return renderCalendar();
     }
 
     if (viewMode === 'grid') {
@@ -292,14 +387,12 @@ const ScheduledVideos: React.FC = () => {
                       <PlayCircle size={32} className="text-white fill-white/20" />
                     </div>
                   </div>
-                  {/* Channel Badge */}
                   {video.channel && (
                     <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-md text-white text-xs px-2 py-1 rounded-md flex items-center gap-1">
                       <Tv size={10} />
                       <span className="truncate max-w-[100px]">{video.channel}</span>
                     </div>
                   )}
-                  {/* Status Badge */}
                   <div className={`absolute top-2 left-2 backdrop-blur-md text-white text-[10px] px-2 py-1 rounded-md flex items-center gap-1 ${hasYoutubeId ? 'bg-green-600/80' : 'bg-yellow-600/80'}`}>
                     {hasYoutubeId ? <CheckCircle2 size={10} /> : <Clock size={10} />}
                     <span>{hasYoutubeId ? 'Sincronizado' : 'Aguardando ID'}</span>
@@ -311,7 +404,6 @@ const ScheduledVideos: React.FC = () => {
                     {video.title || 'Vídeo sem título'}
                   </h3>
                   
-                  {/* Data e Edição */}
                   <div className="mb-4">
                     {isEditing ? (
                       <div className="p-2 bg-purple-50 rounded-lg border border-purple-100 animate-fade-in">
@@ -324,20 +416,8 @@ const ScheduledVideos: React.FC = () => {
                             className="w-full text-xs p-1 border border-purple-200 rounded"
                             onClick={(e) => e.stopPropagation()}
                           />
-                          <button 
-                            onClick={(e) => saveDate(video.id, e)}
-                            className="bg-purple-600 text-white p-1 rounded hover:bg-purple-700"
-                            title="Salvar"
-                          >
-                            <Save size={14} />
-                          </button>
-                          <button 
-                            onClick={cancelEditing}
-                            className="bg-gray-200 text-gray-600 p-1 rounded hover:bg-gray-300"
-                            title="Cancelar"
-                          >
-                            <X size={14} />
-                          </button>
+                          <button onClick={(e) => saveDate(video.id, e)} className="bg-purple-600 text-white p-1 rounded hover:bg-purple-700"><Save size={14} /></button>
+                          <button onClick={cancelEditing} className="bg-gray-200 text-gray-600 p-1 rounded hover:bg-gray-300"><X size={14} /></button>
                         </div>
                       </div>
                     ) : (
@@ -346,7 +426,7 @@ const ScheduledVideos: React.FC = () => {
                         onClick={(e) => startEditingDate(video, e)}
                         title="Clique para editar a data"
                       >
-                        <Calendar size={14} />
+                        <CalendarIcon size={14} />
                         <span className="font-medium">{formatPublishDate(video.publish_at)}</span>
                         <Edit2 size={12} className="opacity-50" />
                       </div>
@@ -357,7 +437,6 @@ const ScheduledVideos: React.FC = () => {
                     <button
                       onClick={(e) => handleDownload(video.link_s3, video.title || 'video', e)}
                       className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
-                      title="Baixar vídeo"
                     >
                       <Download size={16} />
                       <span>Baixar</span>
@@ -365,7 +444,6 @@ const ScheduledVideos: React.FC = () => {
                     <button
                       onClick={(e) => handleReprove(video.id, e)}
                       className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                      title="Reprovar vídeo"
                     >
                       <Trash2 size={18} />
                     </button>
@@ -378,6 +456,7 @@ const ScheduledVideos: React.FC = () => {
       );
     }
 
+    // List View
     return (
       <div className="space-y-3">
         {filteredVideos.map((video) => {
@@ -393,12 +472,7 @@ const ScheduledVideos: React.FC = () => {
                 className="relative w-full sm:w-32 h-20 bg-gray-900 rounded-md overflow-hidden cursor-pointer flex-shrink-0 group"
                 onClick={() => setSelectedVideo(video)}
               >
-                <video
-                  src={video.link_s3}
-                  className="w-full h-full object-cover"
-                  muted
-                  preload="metadata"
-                />
+                <video src={video.link_s3} className="w-full h-full object-cover" muted preload="metadata" />
                 <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
                   <PlayCircle size={24} className="text-white" />
                 </div>
@@ -429,7 +503,7 @@ const ScheduledVideos: React.FC = () => {
                       onClick={(e) => startEditingDate(video, e)}
                       title="Clique para editar"
                     >
-                      <Calendar size={14} />
+                      <CalendarIcon size={14} />
                       <span className="font-medium">{formatPublishDate(video.publish_at)}</span>
                       <Edit2 size={12} className="opacity-50" />
                     </div>
@@ -447,7 +521,6 @@ const ScheduledVideos: React.FC = () => {
                 <button
                   onClick={(e) => handleDownload(video.link_s3, video.title || 'video', e)}
                   className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
-                  title="Baixar vídeo"
                 >
                   <Download size={16} />
                   <span className="hidden md:inline">Baixar</span>
@@ -455,7 +528,6 @@ const ScheduledVideos: React.FC = () => {
                 <button
                   onClick={(e) => handleReprove(video.id, e)}
                   className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                  title="Reprovar vídeo"
                 >
                   <Trash2 size={18} />
                 </button>
@@ -473,6 +545,13 @@ const ScheduledVideos: React.FC = () => {
         <h1 className="text-3xl sm:text-4xl font-extrabold text-gray-900 tracking-tight">Vídeos Agendados</h1>
         <div className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto justify-end">
           <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg">
+            <button 
+              onClick={() => setViewMode('calendar')}
+              className={`p-1.5 rounded-md transition-colors ${viewMode === 'calendar' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
+              title="Visualização em Calendário"
+            >
+              <CalendarIcon size={20} />
+            </button>
             <button 
               onClick={() => setViewMode('grid')}
               className={`p-1.5 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
@@ -537,27 +616,29 @@ const ScheduledVideos: React.FC = () => {
             </select>
           </div>
 
-          {/* Data Início */}
-          <div className="relative">
-            <Calendar size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          {/* Data Início (Desabilitado no modo calendário para evitar confusão, ou mantido para filtro estrito) */}
+          <div className={`relative ${viewMode === 'calendar' ? 'opacity-50 pointer-events-none' : ''}`}>
+            <CalendarIcon size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               type="date"
               value={dateStart}
               onChange={(e) => setDateStart(e.target.value)}
               className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-600"
               placeholder="De"
+              disabled={viewMode === 'calendar'}
             />
           </div>
 
           {/* Data Fim */}
-          <div className="relative">
-            <Calendar size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <div className={`relative ${viewMode === 'calendar' ? 'opacity-50 pointer-events-none' : ''}`}>
+            <CalendarIcon size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               type="date"
               value={dateEnd}
               onChange={(e) => setDateEnd(e.target.value)}
               className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-600"
               placeholder="Até"
+              disabled={viewMode === 'calendar'}
             />
           </div>
         </div>
@@ -602,7 +683,7 @@ const ScheduledVideos: React.FC = () => {
               
               <div className="flex flex-wrap gap-2 mb-4">
                 <div className="flex items-center gap-2 text-sm text-purple-300 bg-purple-500/20 rounded-md px-3 py-1.5">
-                  <Calendar size={16} />
+                  <CalendarIcon size={16} />
                   <span className="font-medium">{formatPublishDate(selectedVideo.publish_at)}</span>
                 </div>
                 {selectedVideo.channel && (
