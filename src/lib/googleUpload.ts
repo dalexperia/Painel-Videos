@@ -169,7 +169,14 @@ export const uploadVideoToYouTube = async (
       }
     };
 
-    xhr.onerror = () => reject(new Error('Erro de rede durante o upload'));
+    // Tratamento específico para erro de CORS/Rede
+    xhr.onerror = () => {
+      console.error('Erro de rede/CORS no XHR:', xhr);
+      reject(new Error(
+        'Bloqueio de segurança (CORS). O domínio atual não está autorizado no Google Cloud Console. Adicione esta URL nas "Origens JavaScript Autorizadas" do seu ID de Cliente.'
+      ));
+    };
+
     xhr.send(formData);
   });
 };
