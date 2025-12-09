@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Save, Wand2, Loader2, Download, Calendar as CalendarIcon, AlertCircle, ChevronDown, Check } from 'lucide-react';
+import { X, Save, Wand2, Loader2, Download, Calendar as CalendarIcon, AlertCircle, ChevronDown, Check, Sparkles } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { generateContentAI } from '../lib/ai';
 
@@ -69,7 +69,7 @@ const VideoDetailsModal: React.FC<VideoDetailsModalProps> = ({ video, onClose, o
   const handleGenerateAI = async (field: 'tags' | 'hashtags' | 'title' | 'description') => {
     setError(null);
     setGeneratingField(field);
-    setActiveSuggestionField(null); // Fecha lista anterior se houver
+    setActiveSuggestionField(null); 
     
     try {
       if (!video.channel) throw new Error("Canal não identificado.");
@@ -89,19 +89,20 @@ const VideoDetailsModal: React.FC<VideoDetailsModalProps> = ({ video, onClose, o
         model: settings.ai_model
       };
 
+      // Usa o título atual ou o original como contexto
       const basePrompt = formData.title || video.title || "Vídeo sem título";
       
-      // Agora retorna um array de strings
       const results = await generateContentAI(aiConfig as any, basePrompt, field);
 
       if (results && results.length > 0) {
         setSuggestions(prev => ({ ...prev, [field]: results }));
-        setActiveSuggestionField(field);
+        setActiveSuggestionField(field); // Abre o dropdown automaticamente
       } else {
         throw new Error("A IA não retornou sugestões válidas.");
       }
 
     } catch (err: any) {
+      console.error("Erro ao gerar:", err);
       setError(err.message);
       setTimeout(() => setError(null), 4000);
     } finally {
@@ -158,7 +159,6 @@ const VideoDetailsModal: React.FC<VideoDetailsModalProps> = ({ video, onClose, o
     }
   };
 
-  // Componente auxiliar para renderizar o campo com dropdown
   const renderFieldWithSuggestions = (
     field: 'title' | 'description' | 'tags' | 'hashtags',
     label: string,
@@ -181,17 +181,19 @@ const VideoDetailsModal: React.FC<VideoDetailsModalProps> = ({ video, onClose, o
                 onClick={() => setActiveSuggestionField(field)}
                 className="text-xs flex items-center gap-1 text-gray-400 hover:text-white transition-colors"
               >
-                <ChevronDown size={12} /> Ver Sugestões
+                <ChevronDown size={12} /> Ver {suggestions[field].length} Sugestões
               </button>
             )}
             <button 
               onClick={() => handleGenerateAI(field)}
               disabled={!!generatingField}
-              className={`text-xs flex items-center gap-1.5 transition-colors disabled:opacity-50 ${
-                generatingField === field ? 'text-blue-400' : 'text-blue-400 hover:text-blue-300'
+              className={`text-xs flex items-center gap-1.5 transition-colors disabled:opacity-50 px-2 py-1 rounded-md ${
+                generatingField === field 
+                  ? 'bg-blue-500/10 text-blue-400' 
+                  : 'text-blue-400 hover:bg-blue-500/10 hover:text-blue-300'
               }`}
             >
-              {generatingField === field ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />}
+              {generatingField === field ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
               {hasSuggestions ? 'Gerar Novas' : 'Gerar IA'}
             </button>
           </div>
@@ -223,7 +225,10 @@ const VideoDetailsModal: React.FC<VideoDetailsModalProps> = ({ video, onClose, o
               className="absolute z-50 left-0 right-0 mt-2 bg-[#1f1f1f] border border-gray-700 rounded-xl shadow-2xl overflow-hidden animate-fade-in-down"
             >
               <div className="px-3 py-2 bg-[#2a2a2a] border-b border-gray-700 flex justify-between items-center">
-                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Sugestões da IA</span>
+                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-2">
+                  <Sparkles size={12} className="text-blue-400" />
+                  Sugestões da IA
+                </span>
                 <button onClick={() => setActiveSuggestionField(null)} className="text-gray-500 hover:text-white">
                   <X size={14} />
                 </button>
@@ -236,9 +241,9 @@ const VideoDetailsModal: React.FC<VideoDetailsModalProps> = ({ video, onClose, o
                     className="w-full text-left px-4 py-3 hover:bg-blue-600/20 hover:text-blue-100 text-gray-300 text-sm border-b border-gray-800 last:border-0 transition-colors flex items-start gap-3 group/item"
                   >
                     <span className="mt-0.5 text-gray-600 group-hover/item:text-blue-400 font-mono text-xs">{idx + 1}.</span>
-                    <span className="flex-1">{suggestion}</span>
-                    <span className="opacity-0 group-hover/item:opacity-100 text-blue-400">
-                      <Check size={14} />
+                    <span className="flex-1 leading-relaxed">{suggestion}</span>
+                    <span className="opacity-0 group-hover/item:opacity-100 text-blue-400 self-center">
+                      <Check size={16} />
                     </span>
                   </button>
                 ))}

@@ -224,8 +224,15 @@ const Settings: React.FC = () => {
         throw new Error("Chave de API necessária.");
       }
 
-      await generateContentAI(config, "Olá, teste de conexão.", 'title');
-      setAiTestResult({ success: true, message: `Conexão com ${aiProvider.toUpperCase()} bem sucedida!` });
+      // Para teste, usamos um prompt simples e pedimos apenas 1 variação (ou ignoramos o array)
+      // A função generateContentAI agora retorna string[], pegamos o primeiro
+      const results = await generateContentAI(config, "Olá, teste de conexão.", 'title');
+      
+      if (results && results.length > 0) {
+        setAiTestResult({ success: true, message: `Conexão com ${aiProvider.toUpperCase()} bem sucedida!` });
+      } else {
+        throw new Error("Resposta vazia da IA.");
+      }
     } catch (err: any) {
       console.error("AI Test Error:", err);
       let msg = "Erro de conexão.";
@@ -555,7 +562,7 @@ const Settings: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                     <button
                       type="button"
-                      onClick={() => setAiProvider('gemini')}
+                      onClick={() => { setAiProvider('gemini'); setAiTestResult(null); }}
                       className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all ${
                         aiProvider === 'gemini' 
                           ? 'border-blue-500 bg-blue-50 text-blue-700' 
@@ -569,7 +576,7 @@ const Settings: React.FC = () => {
 
                     <button
                       type="button"
-                      onClick={() => setAiProvider('groq')}
+                      onClick={() => { setAiProvider('groq'); setAiTestResult(null); }}
                       className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all ${
                         aiProvider === 'groq' 
                           ? 'border-orange-500 bg-orange-50 text-orange-700' 
@@ -583,7 +590,7 @@ const Settings: React.FC = () => {
 
                     <button
                       type="button"
-                      onClick={() => setAiProvider('ollama')}
+                      onClick={() => { setAiProvider('ollama'); setAiTestResult(null); }}
                       className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all ${
                         aiProvider === 'ollama' 
                           ? 'border-gray-800 bg-gray-100 text-gray-900' 
