@@ -6,7 +6,7 @@ import { useAuth, UserRole } from '../contexts/AuthContext';
 import { 
   Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle, Key, 
   CheckCircle, Wifi, RefreshCw, Database, Users, Shield, Lock, User, Sparkles,
-  Cpu, Server, Zap, Globe, HelpCircle, ExternalLink
+  Cpu, Server, Zap, Globe, HelpCircle, ExternalLink, Info
 } from 'lucide-react';
 
 interface Setting {
@@ -653,9 +653,14 @@ const Settings: React.FC = () => {
                               placeholder="https://ollama.com"
                             />
                           </div>
-                          <p className="text-xs text-gray-500 mt-1">
-                            Ex: <code>https://ollama.com</code> (Cloud) ou <code>http://localhost:11434</code> (Local).
-                          </p>
+                          <div className="mt-2 flex items-start gap-2 text-xs text-amber-700 bg-amber-50 p-2 rounded border border-amber-200">
+                            <Info size={14} className="mt-0.5 flex-shrink-0" />
+                            <p>
+                              <strong>Atenção CORS:</strong> Para conexões via navegador (Local ou Remoto), o servidor Ollama deve permitir a origem.
+                              <br />
+                              No terminal local, inicie com: <code>OLLAMA_ORIGINS="*" ollama serve</code>
+                            </p>
+                          </div>
                         </div>
 
                         <div>
