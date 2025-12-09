@@ -177,7 +177,7 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
     setDirectUploadStatus('Iniciando autenticação...');
     
     try {
-      // 1. Autenticação
+      // 1. Autenticação (Agora usa o novo fluxo GIS)
       const accessToken = await requestGoogleAuth();
       
       // 2. Download do Vídeo (Blob)
@@ -254,7 +254,14 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
 
     } catch (error: any) {
       console.error('Erro no upload direto:', error);
-      alert(`Erro: ${error.message || 'Falha no upload.'}`);
+      // Tratamento de erro mais amigável para o usuário
+      let msg = error.message || 'Falha no upload.';
+      if (msg.includes('popup_closed_by_user')) {
+        msg = 'Login cancelado pelo usuário.';
+      } else if (msg.includes('access_denied')) {
+        msg = 'Acesso negado. Você precisa autorizar o app.';
+      }
+      alert(`Erro: ${msg}`);
     } finally {
       setIsDirectUploading(false);
       setDirectUploadStatus('');

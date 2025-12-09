@@ -15,51 +15,95 @@ export interface UploadResult {
   etag: string;
 }
 
-// Inicializa a API do Google (Carrega o script gapi)
-export const initializeGoogleApi = async (clientId: string): Promise<void> => {
+// Variável global para armazenar o cliente de token do GIS
+let tokenClient: any = null;
+let gapiInited = false;
+let gisInited = false;
+
+// Função auxiliar para carregar scripts dinamicamente
+const loadScript = (src: string): Promise<void> => {
   return new Promise((resolve, reject) => {
-    if ((window as any).gapi) {
+    if (document.querySelector(`script[src="${src}"]`)) {
       resolve();
       return;
     }
-
     const script = document.createElement('script');
-    script.src = 'https://apis.google.com/js/api.js';
-    script.onload = () => {
-      (window as any).gapi.load('client:auth2', async () => {
-        try {
-          await (window as any).gapi.client.init({
-            clientId: clientId,
-            scope: 'https://www.googleapis.com/auth/youtube.upload',
-            discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/youtube/v3/rest'],
-          });
-          resolve();
-        } catch (error) {
-          console.error('Erro ao inicializar GAPI:', error);
-          // Não rejeitamos aqui para não travar a app se a API falhar, apenas logamos
-          resolve(); 
-        }
-      });
-    };
+    script.src = src;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
     script.onerror = (err) => reject(err);
     document.body.appendChild(script);
   });
 };
 
-// Solicita autenticação do usuário
-export const requestGoogleAuth = async (): Promise<string> => {
-  if (!(window as any).gapi) {
-    throw new Error('Google API não inicializada.');
-  }
-  
-  const GoogleAuth = (window as any).gapi.auth2.getAuthInstance();
-  if (!GoogleAuth) {
-    throw new Error('Instância de autenticação não encontrada. Verifique o Client ID.');
-  }
+// Inicializa as APIs do Google (GAPI para chamadas e GIS para Auth)
+export const initializeGoogleApi = async (clientId: string): Promise<void> => {
+  try {
+    await Promise.all([
+      loadScript('https://apis.google.com/js/api.js'),
+      loadScript('https://accounts.google.com/gsi/client')
+    ]);
 
-  const user = await GoogleAuth.signIn();
-  const authResponse = user.getAuthResponse();
-  return authResponse.access_token;
+    // Inicializa o cliente de Token do GIS (Google Identity Services)
+    // @ts-ignore - google global
+    if (window.google && window.google.accounts) {
+      // @ts-ignore
+      tokenClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: 'https://www.googleapis.com/auth/youtube.upload',
+        callback: '', // Será sobrescrito na chamada
+      });
+      gisInited = true;
+    }
+
+    // Inicializa o GAPI Client (opcional, mas bom para discovery docs)
+    await new Promise<void>((resolve) => {
+      // @ts-ignore
+      if (window.gapi) {
+        // @ts-ignore
+        window.gapi.load('client', async () => {
+          // @ts-ignore
+          await window.gapi.client.init({
+            // Não passamos clientId nem scope aqui no novo modelo, apenas discoveryDocs
+            discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/youtube/v3/rest'],
+          });
+          gapiInited = true;
+          resolve();
+        });
+      } else {
+        resolve();
+      }
+    });
+
+    console.log('Google APIs inicializadas (GIS + GAPI)');
+  } catch (error) {
+    console.error('Erro ao inicializar Google APIs:', error);
+  }
+};
+
+// Solicita autenticação do usuário e retorna o Access Token
+export const requestGoogleAuth = async (): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    if (!tokenClient) {
+      reject(new Error('Google Identity Services não inicializado. Recarregue a página.'));
+      return;
+    }
+
+    // Define o callback para capturar a resposta do popup
+    tokenClient.callback = (resp: any) => {
+      if (resp.error !== undefined) {
+        reject(resp);
+      }
+      // O token vem em resp.access_token
+      resolve(resp.access_token);
+    };
+
+    // Abre o popup de consentimento
+    // prompt: '' força o login se necessário, ou usa sessão ativa
+    // Se quiser forçar seleção de conta sempre: prompt: 'select_account'
+    tokenClient.requestAccessToken({ prompt: '' });
+  });
 };
 
 // Realiza o upload do vídeo
@@ -68,8 +112,6 @@ export const uploadVideoToYouTube = async (
   accessToken: string,
   options: UploadOptions
 ): Promise<UploadResult> => {
-  // Implementação simplificada de upload via API REST do YouTube
-  // Nota: Em produção real, recomenda-se usar o upload resumível (resumable upload)
   
   const metadata = {
     snippet: {
@@ -119,6 +161,7 @@ export const uploadVideoToYouTube = async (
       } else {
         try {
           const errorResp = JSON.parse(xhr.responseText);
+          console.error('Erro detalhado do YouTube:', errorResp);
           reject(new Error(errorResp.error?.message || 'Erro no upload'));
         } catch {
           reject(new Error(`Erro HTTP ${xhr.status}`));
