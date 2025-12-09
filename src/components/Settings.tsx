@@ -207,16 +207,6 @@ const Settings: React.FC = () => {
     setIsTestingAI(true);
     setAiTestResult(null);
 
-    // Validação específica para Ollama URL comum
-    if (aiProvider === 'ollama' && (currentOllamaUrl.includes('ollama.com') || !currentOllamaUrl.startsWith('http'))) {
-      setAiTestResult({
-        success: false,
-        message: "URL Inválida. Use o endereço do SEU servidor (ex: http://localhost:11434 ou seu IP público)."
-      });
-      setIsTestingAI(false);
-      return;
-    }
-
     try {
       let apiKeyToUse = '';
       if (aiProvider === 'gemini') apiKeyToUse = currentGeminiKey;
@@ -242,7 +232,7 @@ const Settings: React.FC = () => {
       
       if (aiProvider === 'ollama') {
         if (err.message.includes('Failed to fetch') || err.message.includes('CORS')) {
-          msg = "Bloqueio de CORS detectado.";
+          msg = "Bloqueio de CORS detectado. O servidor não permitiu a conexão.";
         } else {
           msg = `Erro: ${err.message}`;
         }
@@ -649,23 +639,6 @@ const Settings: React.FC = () => {
 
                     {aiProvider === 'ollama' && (
                       <div className="space-y-4">
-                        {/* Aviso de CORS */}
-                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800 flex gap-2 items-start">
-                          <HelpCircle className="flex-shrink-0 mt-0.5" size={16} />
-                          <div>
-                            <p className="font-bold mb-1">Erro de Conexão / CORS?</p>
-                            <p className="mb-2">
-                              O navegador bloqueia conexões diretas ao Ollama por segurança. Para corrigir, inicie seu servidor Ollama com a variável de ambiente:
-                            </p>
-                            <code className="block bg-yellow-100 px-2 py-1 rounded font-mono text-xs mb-2">
-                              OLLAMA_ORIGINS="*" ollama serve
-                            </code>
-                            <p className="text-xs">
-                              Não use <code>https://ollama.com</code> como URL, use seu servidor local (<code>http://localhost:11434</code>) ou IP próprio.
-                            </p>
-                          </div>
-                        </div>
-
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">URL do Servidor / API</label>
                           <div className="relative">
@@ -676,23 +649,18 @@ const Settings: React.FC = () => {
                               type="text"
                               value={currentOllamaUrl}
                               onChange={(e) => { setCurrentOllamaUrl(e.target.value); setAiTestResult(null); }}
-                              className={`w-full pl-10 px-3 py-2 border rounded-lg shadow-sm focus:ring-2 focus:ring-gray-500 focus:border-gray-500 font-mono text-sm ${
-                                currentOllamaUrl.includes('ollama.com') ? 'border-red-300 bg-red-50' : 'border-gray-300'
-                              }`}
-                              placeholder="http://localhost:11434"
+                              className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-gray-500 focus:border-gray-500 font-mono text-sm"
+                              placeholder="https://ollama.com"
                             />
                           </div>
-                          {currentOllamaUrl.includes('ollama.com') && (
-                            <p className="text-xs text-red-600 mt-1 font-medium">
-                              ⚠️ A URL 'ollama.com' não é uma API. Use seu servidor local ou IP.
-                            </p>
-                          )}
-                          <p className="text-xs text-gray-500 mt-1">Para local: <code>http://localhost:11434</code> (requer CORS). Para remoto: URL base.</p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            Ex: <code>https://ollama.com</code> (Cloud) ou <code>http://localhost:11434</code> (Local).
+                          </p>
                         </div>
 
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">
-                            API Key / Token <span className="text-gray-400 font-normal">(Opcional - para servidores remotos)</span>
+                            API Key / Token <span className="text-gray-400 font-normal">(Obrigatório para Cloud)</span>
                           </label>
                           <div className="relative">
                             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">

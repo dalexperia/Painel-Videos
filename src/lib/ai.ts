@@ -1,6 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import Groq from "groq-sdk";
-import { Ollama } from 'ollama/browser';
 
 export type AIProvider = 'gemini' | 'groq' | 'ollama';
 export type GenerationType = 'title' | 'description' | 'tags' | 'hashtags';
@@ -67,44 +66,53 @@ const generateGroq = async (apiKey: string, prompt: string, type: GenerationType
   return completion.choices[0]?.message?.content || "";
 };
 
-// --- Implementação Ollama (Via Biblioteca Oficial) ---
+// --- Implementação Ollama (Via Fetch Nativo para suporte a Cloud/Custom Headers) ---
 const generateOllama = async (url: string, apiKey: string | undefined, prompt: string, type: GenerationType, modelId: string = 'llama3') => {
-  // Validação de URL
-  if (url.includes('ollama.com')) {
-    throw new Error("URL inválida: 'ollama.com' não é uma API. Use seu servidor local (http://localhost:11434) ou IP próprio.");
-  }
+  // Remove barra final se existir
+  const baseUrl = url.replace(/\/$/, '');
+  
+  // Endpoint específico solicitado: /api/generate
+  const endpoint = `${baseUrl}/api/generate`;
 
-  // Configuração conforme documentação da lib ollama
-  const config: { host: string; headers?: Record<string, string> } = {
-    host: url
+  // Combina instrução do sistema com o prompt do usuário (já que /generate é single-prompt)
+  const systemInstruction = getSystemInstruction(type);
+  const finalPrompt = `${systemInstruction}\n\nCONTEXTO: "${prompt}"`;
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
   };
 
-  // Adiciona headers de autenticação se a chave for fornecida
+  // Adiciona Bearer Token se existir chave
   if (apiKey && apiKey.trim() !== '') {
-    config.headers = {
-      'Authorization': `Bearer ${apiKey}`
-    };
+    headers['Authorization'] = `Bearer ${apiKey}`;
   }
 
-  const ollama = new Ollama(config);
-
   try {
-    const response = await ollama.chat({
-      model: modelId,
-      messages: [
-        { role: 'system', content: getSystemInstruction(type) },
-        { role: 'user', content: prompt }
-      ],
-      stream: false, // Desativado stream para simplificar o retorno único
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: modelId,
+        prompt: finalPrompt,
+        stream: false
+      })
     });
 
-    return response.message.content;
-  } catch (error: any) {
-    console.error("Erro Ollama Lib:", error);
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Erro HTTP ${response.status}: ${errorText}`);
+    }
+
+    const data = await response.json();
     
-    // Tratamento específico para erros comuns
+    // O endpoint /api/generate retorna o texto no campo 'response'
+    return data.response;
+
+  } catch (error: any) {
+    console.error("Erro Ollama Fetch:", error);
+    
     if (error.message?.includes('Failed to fetch')) {
-      throw new Error(`Falha de conexão com ${url}. Verifique se o servidor está rodando e se o CORS está configurado (OLLAMA_ORIGINS="*").`);
+      throw new Error(`Falha de conexão com ${baseUrl}. Verifique se a URL está correta e se o servidor permite CORS.`);
     }
     
     throw error;
