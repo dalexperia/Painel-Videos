@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { X, Save, Wand2, Loader2, Download, Calendar as CalendarIcon, AlertCircle, ChevronDown, Check, Sparkles } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { X, Save, Wand2, Loader2, Download, Calendar as CalendarIcon, AlertCircle, ChevronDown, Check, Sparkles, Search } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { generateContentAI } from '../lib/ai';
 
@@ -37,7 +37,10 @@ const VideoDetailsModal: React.FC<VideoDetailsModalProps> = ({ video, onClose, o
   // Estado para sugestões
   const [suggestions, setSuggestions] = useState<Record<string, string[]>>({});
   const [activeSuggestionField, setActiveSuggestionField] = useState<string | null>(null);
+  const [isTyping, setIsTyping] = useState(false);
+  
   const suggestionsRef = useRef<HTMLDivElement>(null);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (video) {
@@ -66,53 +69,128 @@ const VideoDetailsModal: React.FC<VideoDetailsModalProps> = ({ video, onClose, o
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Função para obter configurações de IA
+  const getAIConfig = async () => {
+    if (!video.channel) throw new Error("Canal não identificado.");
+    const { data: settings, error } = await supabase
+      .from('shorts_settings')
+      .select('ai_provider, gemini_key, groq_key, ollama_url, ai_model')
+      .eq('channel', video.channel)
+      .single();
+    
+    if (error || !settings) throw new Error("Configurações de IA não encontradas.");
+    
+    return {
+      provider: settings.ai_provider || 'gemini',
+      apiKey: settings.ai_provider === 'groq' ? settings.groq_key : settings.gemini_key,
+      url: settings.ollama_url,
+      model: settings.ai_model
+    };
+  };
+
+  // Geração Manual (Botão "Gerar IA")
   const handleGenerateAI = async (field: 'tags' | 'hashtags' | 'title' | 'description') => {
     setError(null);
     setGeneratingField(field);
     setActiveSuggestionField(null); 
     
     try {
-      if (!video.channel) throw new Error("Canal não identificado.");
-
-      const { data: settings, error: settingsError } = await supabase
-        .from('shorts_settings')
-        .select('ai_provider, gemini_key, groq_key, ollama_url, ai_model')
-        .eq('channel', video.channel)
-        .single();
-
-      if (settingsError || !settings) throw new Error("Configurações de IA não encontradas para este canal.");
-
-      const aiConfig = {
-        provider: settings.ai_provider || 'gemini',
-        apiKey: settings.ai_provider === 'groq' ? settings.groq_key : settings.gemini_key,
-        url: settings.ollama_url,
-        model: settings.ai_model
-      };
-
-      // Usa o título atual ou o original como contexto
+      const aiConfig = await getAIConfig();
       const basePrompt = formData.title || video.title || "Vídeo sem título";
-      
       const results = await generateContentAI(aiConfig as any, basePrompt, field);
 
       if (results && results.length > 0) {
         setSuggestions(prev => ({ ...prev, [field]: results }));
-        setActiveSuggestionField(field); // Abre o dropdown automaticamente
+        setActiveSuggestionField(field);
       } else {
         throw new Error("A IA não retornou sugestões válidas.");
       }
-
     } catch (err: any) {
       console.error("Erro ao gerar:", err);
       setError(err.message);
-      setTimeout(() => setError(null), 4000);
     } finally {
       setGeneratingField(null);
     }
   };
 
-  const handleSelectSuggestion = (field: string, value: string) => {
+  // Autocomplete (Enquanto digita)
+  const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+    
+    // Apenas para tags e hashtags
+    if (field !== 'tags' && field !== 'hashtags') return;
+
+    // Limpa timer anterior
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+
+    // Identifica o termo atual (após a última vírgula ou espaço)
+    let currentTerm = '';
+    if (field === 'tags') {
+      const parts = value.split(',');
+      currentTerm = parts[parts.length - 1].trim();
+    } else {
+      const parts = value.split(' ');
+      currentTerm = parts[parts.length - 1].trim();
+    }
+
+    // Se o termo for muito curto, esconde sugestões
+    if (currentTerm.length < 3) {
+      setActiveSuggestionField(null);
+      return;
+    }
+
+    setIsTyping(true);
+
+    // Debounce de 800ms para chamar a IA
+    debounceTimerRef.current = setTimeout(async () => {
+      try {
+        const aiConfig = await getAIConfig();
+        const type = field === 'tags' ? 'autocomplete_tags' : 'autocomplete_hashtags';
+        
+        // Passa o termo atual + título do vídeo para contexto
+        const results = await generateContentAI(
+          aiConfig as any, 
+          currentTerm, 
+          type, 
+          formData.title || video.title
+        );
+
+        if (results && results.length > 0) {
+          setSuggestions(prev => ({ ...prev, [field]: results }));
+          setActiveSuggestionField(field);
+        }
+      } catch (err) {
+        console.error("Erro silencioso no autocomplete:", err);
+      } finally {
+        setIsTyping(false);
+      }
+    }, 800);
+  };
+
+  const handleSelectSuggestion = (field: string, suggestion: string) => {
+    let newValue = '';
+    
+    if (field === 'tags') {
+      // Substitui o último termo parcial pela sugestão completa
+      const parts = formData.tags.split(',');
+      parts.pop(); // Remove o termo incompleto
+      parts.push(suggestion); // Adiciona a sugestão
+      newValue = parts.join(', ') + ', '; // Adiciona vírgula para a próxima
+    } else if (field === 'hashtags') {
+      const parts = formData.hashtags.split(' ');
+      parts.pop();
+      parts.push(suggestion.startsWith('#') ? suggestion : `#${suggestion}`);
+      newValue = parts.join(' ') + ' ';
+    } else {
+      newValue = suggestion;
+    }
+
+    setFormData(prev => ({ ...prev, [field]: newValue }));
     setActiveSuggestionField(null);
+    
+    // Foca de volta no input (opcional, mas bom para UX)
+    const input = document.getElementById(`input-${field}`);
+    if (input) input.focus();
   };
 
   const handleSave = async () => {
@@ -176,13 +254,10 @@ const VideoDetailsModal: React.FC<VideoDetailsModalProps> = ({ video, onClose, o
             {field === 'tags' && <span className="text-xs font-normal text-gray-600">(separadas por vírgula)</span>}
           </label>
           <div className="flex gap-2">
-            {hasSuggestions && !isOpen && (
-              <button
-                onClick={() => setActiveSuggestionField(field)}
-                className="text-xs flex items-center gap-1 text-gray-400 hover:text-white transition-colors"
-              >
-                <ChevronDown size={12} /> Ver {suggestions[field].length} Sugestões
-              </button>
+            {isTyping && field === activeSuggestionField && (
+               <span className="text-xs text-blue-400 flex items-center gap-1 animate-pulse">
+                 <Loader2 size={10} className="animate-spin" /> Buscando sugestões...
+               </span>
             )}
             <button 
               onClick={() => handleGenerateAI(field)}
@@ -194,7 +269,7 @@ const VideoDetailsModal: React.FC<VideoDetailsModalProps> = ({ video, onClose, o
               }`}
             >
               {generatingField === field ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-              {hasSuggestions ? 'Gerar Novas' : 'Gerar IA'}
+              {hasSuggestions && !isOpen ? 'Ver Sugestões' : 'Gerar Ideias'}
             </button>
           </div>
         </div>
@@ -202,19 +277,22 @@ const VideoDetailsModal: React.FC<VideoDetailsModalProps> = ({ video, onClose, o
         <div className="relative">
           {Component === 'textarea' ? (
             <textarea
+              id={`input-${field}`}
               value={(formData as any)[field]}
-              onChange={e => setFormData({...formData, [field]: e.target.value})}
+              onChange={e => handleInputChange(field, e.target.value)}
               rows={field === 'description' ? 5 : 3}
               className="w-full bg-[#262626] border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all resize-none"
               placeholder={placeholder}
             />
           ) : (
             <input
+              id={`input-${field}`}
               type="text"
               value={(formData as any)[field]}
-              onChange={e => setFormData({...formData, [field]: e.target.value})}
+              onChange={e => handleInputChange(field, e.target.value)}
               className="w-full bg-[#262626] border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
               placeholder={placeholder}
+              autoComplete="off"
             />
           )}
 
@@ -226,8 +304,8 @@ const VideoDetailsModal: React.FC<VideoDetailsModalProps> = ({ video, onClose, o
             >
               <div className="px-3 py-2 bg-[#2a2a2a] border-b border-gray-700 flex justify-between items-center">
                 <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-2">
-                  <Sparkles size={12} className="text-blue-400" />
-                  Sugestões da IA
+                  <Search size={12} className="text-blue-400" />
+                  Sugestões para completar
                 </span>
                 <button onClick={() => setActiveSuggestionField(null)} className="text-gray-500 hover:text-white">
                   <X size={14} />
@@ -238,13 +316,10 @@ const VideoDetailsModal: React.FC<VideoDetailsModalProps> = ({ video, onClose, o
                   <button
                     key={idx}
                     onClick={() => handleSelectSuggestion(field, suggestion)}
-                    className="w-full text-left px-4 py-3 hover:bg-blue-600/20 hover:text-blue-100 text-gray-300 text-sm border-b border-gray-800 last:border-0 transition-colors flex items-start gap-3 group/item"
+                    className="w-full text-left px-4 py-2.5 hover:bg-blue-600/20 hover:text-blue-100 text-gray-300 text-sm border-b border-gray-800 last:border-0 transition-colors flex items-center gap-3 group/item"
                   >
-                    <span className="mt-0.5 text-gray-600 group-hover/item:text-blue-400 font-mono text-xs">{idx + 1}.</span>
-                    <span className="flex-1 leading-relaxed">{suggestion}</span>
-                    <span className="opacity-0 group-hover/item:opacity-100 text-blue-400 self-center">
-                      <Check size={16} />
-                    </span>
+                    <Search size={14} className="text-gray-600 group-hover/item:text-blue-400" />
+                    <span className="flex-1 font-medium">{suggestion}</span>
                   </button>
                 ))}
               </div>

@@ -2,7 +2,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import Groq from "groq-sdk";
 
 export type AIProvider = 'gemini' | 'groq' | 'ollama';
-export type GenerationType = 'title' | 'description' | 'tags' | 'hashtags';
+export type GenerationType = 'title' | 'description' | 'tags' | 'hashtags' | 'autocomplete_tags' | 'autocomplete_hashtags';
 
 interface AIConfig {
   provider: AIProvider;
@@ -12,37 +12,42 @@ interface AIConfig {
 }
 
 // --- Prompts Otimizados para JSON ---
-const getSystemInstruction = (type: GenerationType): string => {
+const getSystemInstruction = (type: GenerationType, context?: string): string => {
   const baseInstruction = `
-    Você é um especialista em SEO e Copywriting para YouTube Shorts.
-    Sua tarefa é gerar 5 variações distintas e criativas baseadas no contexto fornecido.
-
-    REGRAS CRÍTICAS DE FORMATAÇÃO:
+    Você é um assistente de IA especializado em YouTube.
+    REGRAS CRÍTICAS:
     1. Responda APENAS com um ARRAY JSON de strings válido.
-    2. NÃO use Markdown (sem \`\`\`json).
-    3. NÃO inclua explicações ou texto adicional.
-    4. Exemplo de formato esperado: ["Variação 1", "Variação 2", "Variação 3", "Variação 4", "Variação 5"]
+    2. NÃO use Markdown.
+    3. NÃO inclua explicações.
   `;
 
   switch (type) {
     case 'title':
       return `${baseInstruction}
-      OBJETIVO: Títulos virais, curtos (máx 60 caracteres), impactantes e curiosos. Sem aspas no texto.`;
+      OBJETIVO: Gere 5 títulos virais, curtos e impactantes para um vídeo sobre: "${context}".`;
     
     case 'description':
       return `${baseInstruction}
-      OBJETIVO: Descrições curtas (2 frases) com tom engajador e uma Chamada para Ação (CTA).`;
+      OBJETIVO: Gere 5 descrições curtas e engajadoras para um vídeo sobre: "${context}".`;
     
     case 'tags':
       return `${baseInstruction}
-      OBJETIVO: Listas de tags separadas por vírgula.
-      Cada item do array deve ser uma string contendo 5 a 8 tags.
-      Exemplo de item: "tecnologia, inovação, gadgets, review, unboxing"`;
+      OBJETIVO: Gere 5 listas de tags (separadas por vírgula) para um vídeo sobre: "${context}".`;
     
     case 'hashtags':
       return `${baseInstruction}
-      OBJETIVO: Combinações de 5 hashtags relevantes separadas por espaço.
-      Exemplo de item: "#tech #apple #iphone #review #shorts"`;
+      OBJETIVO: Gere 5 combinações de hashtags para um vídeo sobre: "${context}".`;
+
+    case 'autocomplete_tags':
+      return `${baseInstruction}
+      OBJETIVO: Você é um motor de autocomplete. O usuário digitou o termo parcial: "${context}".
+      Retorne 5 a 8 sugestões curtas de tags que completem ou se relacionem com esse termo.
+      As sugestões devem ser relevantes para YouTube.`;
+
+    case 'autocomplete_hashtags':
+      return `${baseInstruction}
+      OBJETIVO: Você é um motor de autocomplete. O usuário digitou o termo parcial: "${context}".
+      Retorne 5 a 8 sugestões de hashtags (com #) que completem esse termo.`;
     
     default:
       return baseInstruction;
@@ -52,10 +57,8 @@ const getSystemInstruction = (type: GenerationType): string => {
 // --- Parsers e Limpeza ---
 const parseAIResponse = (text: string): string[] => {
   try {
-    // 1. Remove blocos de código markdown se houver
     let cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
     
-    // 2. Tenta encontrar o array JSON no texto (caso a IA fale algo antes)
     const firstBracket = cleanText.indexOf('[');
     const lastBracket = cleanText.lastIndexOf(']');
     
@@ -63,7 +66,6 @@ const parseAIResponse = (text: string): string[] => {
       cleanText = cleanText.substring(firstBracket, lastBracket + 1);
     }
 
-    // 3. Parse JSON
     const parsed = JSON.parse(cleanText);
 
     if (Array.isArray(parsed)) {
@@ -74,11 +76,10 @@ const parseAIResponse = (text: string): string[] => {
 
   } catch (e) {
     console.warn("Falha ao fazer parse do JSON da IA. Tentando fallback manual.", e);
-    // Fallback: Tenta quebrar por linhas se o JSON falhar
     return text
       .split('\n')
-      .map(l => l.replace(/^\d+\.|-|\*|"|,/g, '').trim()) // Remove numeração/marcadores
-      .filter(l => l.length > 5);
+      .map(l => l.replace(/^\d+\.|-|\*|"|,|\[|\]/g, '').trim())
+      .filter(l => l.length > 1);
   }
 };
 
@@ -88,12 +89,14 @@ const generateGemini = async (apiKey: string, prompt: string, type: GenerationTy
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ 
     model: "gemini-2.0-flash",
-    generationConfig: { responseMimeType: "application/json" } // Força JSON no Gemini
+    generationConfig: { responseMimeType: "application/json" }
   });
   
-  const fullPrompt = `${getSystemInstruction(type)}\n\nCONTEXTO DO VÍDEO: "${prompt}"`;
+  const systemPrompt = getSystemInstruction(type, prompt);
+  // Para autocomplete, o prompt é o próprio termo parcial + contexto implícito se necessário
+  // Mas aqui simplificamos passando o termo no systemInstruction para autocomplete
   
-  const result = await model.generateContent(fullPrompt);
+  const result = await model.generateContent(systemPrompt);
   return result.response.text();
 };
 
@@ -102,12 +105,12 @@ const generateGroq = async (apiKey: string, prompt: string, type: GenerationType
   
   const completion = await groq.chat.completions.create({
     messages: [
-      { role: "system", content: getSystemInstruction(type) },
-      { role: "user", content: `CONTEXTO: "${prompt}"` }
+      { role: "system", content: getSystemInstruction(type, prompt) },
+      { role: "user", content: "Gere o JSON agora." }
     ],
     model: modelId,
-    temperature: 0.7,
-    response_format: { type: "json_object" } // Tenta forçar JSON mode se suportado
+    temperature: 0.5, // Temperatura menor para autocomplete ser mais preciso
+    response_format: { type: "json_object" }
   });
 
   return completion.choices[0]?.message?.content || "[]";
@@ -116,7 +119,8 @@ const generateGroq = async (apiKey: string, prompt: string, type: GenerationType
 const generateOllama = async (url: string, apiKey: string | undefined, prompt: string, type: GenerationType, modelId: string = 'llama3') => {
   const baseUrl = url.replace(/\/$/, '');
   const endpoint = `${baseUrl}/api/generate`;
-  const fullPrompt = `${getSystemInstruction(type)}\n\nCONTEXTO: "${prompt}"`;
+  
+  const fullPrompt = `${getSystemInstruction(type, prompt)}\nResponda apenas com o JSON.`;
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (apiKey && apiKey.trim() !== '') headers['Authorization'] = `Bearer ${apiKey}`;
@@ -128,7 +132,7 @@ const generateOllama = async (url: string, apiKey: string | undefined, prompt: s
       model: modelId, 
       prompt: fullPrompt, 
       stream: false,
-      format: "json" // Força JSON no Ollama
+      format: "json"
     })
   });
 
@@ -141,13 +145,18 @@ const generateOllama = async (url: string, apiKey: string | undefined, prompt: s
 export const generateContentAI = async (
   config: AIConfig,
   prompt: string,
-  type: GenerationType
+  type: GenerationType,
+  extraContext?: string // Usado para passar o título do vídeo no autocomplete
 ): Promise<string[]> => {
-  console.log(`[AI Service] Provider: ${config.provider} | Type: ${type} | JSON Mode`);
-
-  if (!prompt || prompt.trim().length < 3) {
-    throw new Error("Texto de entrada muito curto.");
+  // Se for autocomplete, combinamos o termo parcial com o contexto do vídeo
+  let finalPrompt = prompt;
+  
+  if (type === 'autocomplete_tags' || type === 'autocomplete_hashtags') {
+    if (!prompt || prompt.length < 2) return []; // Não gera para 1 letra
+    finalPrompt = `Termo parcial: "${prompt}". Contexto do vídeo: "${extraContext || ''}"`;
   }
+
+  console.log(`[AI Service] Provider: ${config.provider} | Type: ${type}`);
 
   let rawResult = "";
 
@@ -155,29 +164,27 @@ export const generateContentAI = async (
     switch (config.provider) {
       case 'gemini':
         if (!config.apiKey) throw new Error("Chave Gemini não configurada.");
-        rawResult = await generateGemini(config.apiKey, prompt, type);
+        rawResult = await generateGemini(config.apiKey, finalPrompt, type);
         break;
       case 'groq':
         if (!config.apiKey) throw new Error("Chave Groq não configurada.");
-        rawResult = await generateGroq(config.apiKey, prompt, type, config.model || 'llama3-70b-8192');
+        rawResult = await generateGroq(config.apiKey, finalPrompt, type, config.model || 'llama3-70b-8192');
         break;
       case 'ollama':
         if (!config.url) throw new Error("URL do Ollama não configurada.");
-        rawResult = await generateOllama(config.url, config.apiKey, prompt, type, config.model || 'llama3');
+        rawResult = await generateOllama(config.url, config.apiKey, finalPrompt, type, config.model || 'llama3');
         break;
       default:
         throw new Error("Provedor desconhecido.");
     }
 
-    console.log("[AI Raw Output]", rawResult);
     const variations = parseAIResponse(rawResult);
-    
-    if (variations.length === 0) throw new Error("Nenhuma variação válida gerada.");
-    
     return variations;
 
   } catch (error: any) {
     console.error(`Erro na geração (${config.provider}):`, error);
+    // Em autocomplete, falhas silenciosas são preferíveis a alertas de erro
+    if (type.includes('autocomplete')) return [];
     throw new Error(`Falha na IA: ${error.message}`);
   }
 };
