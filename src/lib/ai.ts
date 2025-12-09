@@ -40,14 +40,16 @@ const getSystemInstruction = (type: GenerationType, context?: string): string =>
 
     case 'autocomplete_tags':
       return `${baseInstruction}
-      OBJETIVO: Você é um motor de autocomplete. O usuário digitou o termo parcial: "${context}".
-      Retorne 5 a 8 sugestões curtas de tags que completem ou se relacionem com esse termo.
-      As sugestões devem ser relevantes para YouTube.`;
+      OBJETIVO: Você é um motor de autocomplete inteligente estilo YouTube Studio.
+      CONTEXTO DO VÍDEO: O vídeo é sobre "${context}".
+      TAREFA: O usuário digitou um termo parcial. Retorne 5 a 8 sugestões de tags que completem esse termo e sejam altamente relevantes para o contexto do vídeo.
+      Exemplo: Se o contexto é "Salmos" e o termo é "salm", retorne ["salmo 91", "salmo 23", "salmos poderosos"].`;
 
     case 'autocomplete_hashtags':
       return `${baseInstruction}
-      OBJETIVO: Você é um motor de autocomplete. O usuário digitou o termo parcial: "${context}".
-      Retorne 5 a 8 sugestões de hashtags (com #) que completem esse termo.`;
+      OBJETIVO: Você é um motor de autocomplete de hashtags.
+      CONTEXTO DO VÍDEO: O vídeo é sobre "${context}".
+      TAREFA: O usuário digitou um termo parcial. Retorne 5 a 8 hashtags (com #) que completem esse termo.`;
     
     default:
       return baseInstruction;
@@ -93,8 +95,6 @@ const generateGemini = async (apiKey: string, prompt: string, type: GenerationTy
   });
   
   const systemPrompt = getSystemInstruction(type, prompt);
-  // Para autocomplete, o prompt é o próprio termo parcial + contexto implícito se necessário
-  // Mas aqui simplificamos passando o termo no systemInstruction para autocomplete
   
   const result = await model.generateContent(systemPrompt);
   return result.response.text();
@@ -109,7 +109,7 @@ const generateGroq = async (apiKey: string, prompt: string, type: GenerationType
       { role: "user", content: "Gere o JSON agora." }
     ],
     model: modelId,
-    temperature: 0.5, // Temperatura menor para autocomplete ser mais preciso
+    temperature: 0.3, // Temperatura baixa para autocomplete preciso
     response_format: { type: "json_object" }
   });
 
@@ -148,12 +148,21 @@ export const generateContentAI = async (
   type: GenerationType,
   extraContext?: string // Usado para passar o título do vídeo no autocomplete
 ): Promise<string[]> => {
-  // Se for autocomplete, combinamos o termo parcial com o contexto do vídeo
-  let finalPrompt = prompt;
   
+  // Lógica especial para Autocomplete:
+  // O "prompt" aqui será o termo parcial (ex: "salm")
+  // O "extraContext" será o título do vídeo (ex: "Salmo 91 Oração")
+  // Precisamos passar ambos para o prompt do sistema
+  
+  let finalPrompt = prompt;
+  let contextForSystem = prompt; // Default
+
   if (type === 'autocomplete_tags' || type === 'autocomplete_hashtags') {
     if (!prompt || prompt.length < 2) return []; // Não gera para 1 letra
-    finalPrompt = `Termo parcial: "${prompt}". Contexto do vídeo: "${extraContext || ''}"`;
+    // Para autocomplete, passamos o Título como contexto principal para o System Instruction
+    // E o termo parcial concatenado na instrução
+    contextForSystem = extraContext || "Vídeo Genérico";
+    finalPrompt = `Termo parcial digitado pelo usuário: "${prompt}"`;
   }
 
   console.log(`[AI Service] Provider: ${config.provider} | Type: ${type}`);
@@ -161,18 +170,36 @@ export const generateContentAI = async (
   let rawResult = "";
 
   try {
+    // Modificamos as chamadas para passar o contextForSystem corretamente nas instruções
+    // Nota: As funções generate* usam o segundo argumento como input para o getSystemInstruction
+    // Então precisamos garantir que o getSystemInstruction receba o contexto correto.
+    
+    // Hack rápido: As funções generate* chamam getSystemInstruction(type, prompt).
+    // Para autocomplete, vamos passar o contexto no lugar do prompt para a instrução de sistema,
+    // e o termo parcial já está embutido na lógica do switch case acima ou será passado de outra forma.
+    
+    // Vamos ajustar a chamada das funções internas para passar o contexto correto:
+    
+    const promptToUse = (type.includes('autocomplete')) ? contextForSystem : finalPrompt;
+    // Mas espere, o termo parcial precisa ir também.
+    // Vamos concatenar no promptToUse para simplificar sem mudar assinaturas
+    
+    const effectivePrompt = (type.includes('autocomplete')) 
+      ? `${contextForSystem}. Termo parcial a completar: "${prompt}"`
+      : finalPrompt;
+
     switch (config.provider) {
       case 'gemini':
         if (!config.apiKey) throw new Error("Chave Gemini não configurada.");
-        rawResult = await generateGemini(config.apiKey, finalPrompt, type);
+        rawResult = await generateGemini(config.apiKey, effectivePrompt, type);
         break;
       case 'groq':
         if (!config.apiKey) throw new Error("Chave Groq não configurada.");
-        rawResult = await generateGroq(config.apiKey, finalPrompt, type, config.model || 'llama3-70b-8192');
+        rawResult = await generateGroq(config.apiKey, effectivePrompt, type, config.model || 'llama3-70b-8192');
         break;
       case 'ollama':
         if (!config.url) throw new Error("URL do Ollama não configurada.");
-        rawResult = await generateOllama(config.url, config.apiKey, finalPrompt, type, config.model || 'llama3');
+        rawResult = await generateOllama(config.url, config.apiKey, effectivePrompt, type, config.model || 'llama3');
         break;
       default:
         throw new Error("Provedor desconhecido.");
@@ -183,7 +210,6 @@ export const generateContentAI = async (
 
   } catch (error: any) {
     console.error(`Erro na geração (${config.provider}):`, error);
-    // Em autocomplete, falhas silenciosas são preferíveis a alertas de erro
     if (type.includes('autocomplete')) return [];
     throw new Error(`Falha na IA: ${error.message}`);
   }

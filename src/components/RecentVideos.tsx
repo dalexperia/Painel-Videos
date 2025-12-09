@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, X, Calendar, Sparkles, Tv, Edit2, Save, XCircle, Hash, Tag } from 'lucide-react';
+import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, X, Calendar, Sparkles, Tv, Edit2, Save, XCircle, Hash, Tag, Search, Loader2 } from 'lucide-react';
 import PostModal, { Video as PostModalVideo } from './PostModal';
-import { generateContentAI } from '../lib/ai'; // Atualizado para usar o novo serviço
+import { generateContentAI } from '../lib/ai';
 
 // Reutiliza a interface do PostModal para consistência
 type Video = PostModalVideo;
@@ -32,8 +32,14 @@ const RecentVideos: React.FC = () => {
   });
   const [isSaving, setIsSaving] = useState(false);
   
-  // Estados para IA
+  // Estados para IA e Autocomplete
   const [generatingField, setGeneratingField] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<Record<string, string[]>>({});
+  const [activeSuggestionField, setActiveSuggestionField] = useState<string | null>(null);
+  const [isTyping, setIsTyping] = useState(false);
+  
+  const suggestionsRef = useRef<HTMLDivElement>(null);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     fetchRecentVideos();
@@ -45,13 +51,25 @@ const RecentVideos: React.FC = () => {
       setEditForm({
         title: selectedVideo.title || '',
         description: selectedVideo.description || '',
-        // Converte arrays para string separada por vírgula para edição visual
         tags: Array.isArray(selectedVideo.tags) ? selectedVideo.tags.join(', ') : '',
         hashtags: Array.isArray(selectedVideo.hashtags) ? selectedVideo.hashtags.join(', ') : ''
       });
       setIsEditing(false);
+      setSuggestions({});
+      setActiveSuggestionField(null);
     }
   }, [selectedVideo]);
+
+  // Fecha sugestões ao clicar fora
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (suggestionsRef.current && !suggestionsRef.current.contains(event.target as Node)) {
+        setActiveSuggestionField(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const fetchRecentVideos = async () => {
     setLoading(true);
@@ -77,7 +95,6 @@ const RecentVideos: React.FC = () => {
         link_s3: item.link_s3,
         link_drive: item.link_drive || '',
         channel: item.channel || '',
-        // Garante que sejam arrays
         hashtags: Array.isArray(item.hashtags) ? item.hashtags : [],
         tags: Array.isArray(item.tags) ? item.tags : [],
         duration: item.duration || 0,
@@ -96,6 +113,107 @@ const RecentVideos: React.FC = () => {
       setLoading(false);
     }
   };
+
+  // --- Lógica de Autocomplete Inteligente ---
+
+  const getAIConfig = async () => {
+    if (!selectedVideo?.channel) throw new Error("Canal não identificado.");
+    const { data: settings, error } = await supabase
+      .from('shorts_settings')
+      .select('ai_provider, gemini_key, groq_key, ollama_url, ai_model')
+      .eq('channel', selectedVideo.channel)
+      .single();
+    
+    if (error || !settings) throw new Error("Configurações de IA não encontradas.");
+    
+    return {
+      provider: settings.ai_provider || 'gemini',
+      apiKey: settings.ai_provider === 'groq' ? settings.groq_key : settings.gemini_key,
+      url: settings.ollama_url,
+      model: settings.ai_model
+    };
+  };
+
+  const handleInputChange = (field: string, value: string) => {
+    setEditForm(prev => ({ ...prev, [field]: value }));
+    
+    // Apenas para tags e hashtags
+    if (field !== 'tags' && field !== 'hashtags') return;
+
+    // Limpa timer anterior
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+
+    // Identifica o termo atual (após a última vírgula ou espaço)
+    let currentTerm = '';
+    if (field === 'tags') {
+      const parts = value.split(',');
+      currentTerm = parts[parts.length - 1].trim();
+    } else {
+      const parts = value.split(' ');
+      currentTerm = parts[parts.length - 1].trim();
+    }
+
+    // Se o termo for muito curto, esconde sugestões
+    if (currentTerm.length < 2) {
+      setActiveSuggestionField(null);
+      setIsTyping(false);
+      return;
+    }
+
+    setIsTyping(true);
+    setActiveSuggestionField(field); // Mantém o campo ativo para mostrar o loader se quiser
+
+    // Debounce de 800ms para chamar a IA
+    debounceTimerRef.current = setTimeout(async () => {
+      try {
+        const aiConfig = await getAIConfig();
+        const type = field === 'tags' ? 'autocomplete_tags' : 'autocomplete_hashtags';
+        
+        // Passa o termo atual + título do vídeo para contexto
+        const results = await generateContentAI(
+          aiConfig as any, 
+          currentTerm, 
+          type, 
+          editForm.title || selectedVideo?.title // Contexto
+        );
+
+        if (results && results.length > 0) {
+          setSuggestions(prev => ({ ...prev, [field]: results }));
+          setActiveSuggestionField(field);
+        }
+      } catch (err) {
+        console.error("Erro silencioso no autocomplete:", err);
+      } finally {
+        setIsTyping(false);
+      }
+    }, 800);
+  };
+
+  const handleSelectSuggestion = (field: string, suggestion: string) => {
+    let newValue = '';
+    
+    if (field === 'tags') {
+      // Substitui o último termo parcial pela sugestão completa
+      const parts = editForm.tags.split(',');
+      parts.pop(); // Remove o termo incompleto
+      parts.push(suggestion); // Adiciona a sugestão
+      newValue = parts.join(', ') + ', '; // Adiciona vírgula para a próxima
+    } else if (field === 'hashtags') {
+      const parts = editForm.hashtags.split(' ');
+      parts.pop();
+      parts.push(suggestion.startsWith('#') ? suggestion : `#${suggestion}`);
+      newValue = parts.join(' ') + ' ';
+    }
+
+    setEditForm(prev => ({ ...prev, [field]: newValue }));
+    setActiveSuggestionField(null);
+    
+    // Foca de volta no input
+    const input = document.getElementById(`edit-input-${field}`);
+    if (input) input.focus();
+  };
+
+  // --- Fim Lógica Autocomplete ---
 
   const handleReprove = async (id: string | number, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -121,7 +239,6 @@ const RecentVideos: React.FC = () => {
     setIsSaving(true);
 
     try {
-      // Converte strings de volta para arrays, removendo espaços extras e itens vazios
       const tagsArray = editForm.tags.split(',').map(t => t.trim()).filter(t => t.length > 0);
       const hashtagsArray = editForm.hashtags.split(',').map(t => t.trim()).filter(t => t.length > 0);
 
@@ -139,7 +256,6 @@ const RecentVideos: React.FC = () => {
 
       if (error) throw error;
 
-      // Atualiza estado local
       const updatedVideo = { 
         ...selectedVideo, 
         ...updates 
@@ -164,38 +280,33 @@ const RecentVideos: React.FC = () => {
     }
 
     setGeneratingField(field);
+    setActiveSuggestionField(null); // Fecha autocomplete se estiver aberto
 
     try {
-      // 1. Buscar configurações completas do canal
-      const { data: settings, error } = await supabase
-        .from('shorts_settings')
-        .select('ai_provider, gemini_key, groq_key, ollama_url, ai_model')
-        .eq('channel', selectedVideo.channel)
-        .single();
-
-      if (error || !settings) {
-        throw new Error("Configurações do canal não encontradas.");
-      }
-
-      // 2. Preparar configuração da IA
-      const aiConfig = {
-        provider: settings.ai_provider || 'gemini',
-        apiKey: settings.ai_provider === 'groq' ? settings.groq_key : settings.gemini_key,
-        url: settings.ollama_url,
-        model: settings.ai_model
-      };
-
-      // 3. Preparar o prompt
+      const aiConfig = await getAIConfig();
       const basePrompt = editForm.title || selectedVideo.title || "Vídeo sem título";
-      
-      // 4. Gerar conteúdo usando o novo serviço unificado
       const content = await generateContentAI(aiConfig as any, basePrompt, field);
 
-      // 5. Atualizar o formulário
-      setEditForm(prev => ({
-        ...prev,
-        [field]: content
-      }));
+      // Se for tags ou hashtags, a IA retorna array, precisamos converter para string
+      let finalValue = '';
+      if (Array.isArray(content)) {
+        if (field === 'tags') finalValue = content.join(', ');
+        else if (field === 'hashtags') finalValue = content.join(' ');
+        else finalValue = content[0]; // Fallback
+      } else {
+        // Caso a IA retorne string direta (não deveria com o novo parser, mas por segurança)
+        finalValue = String(content);
+      }
+      
+      // Se a IA retornou múltiplas opções para título/descrição, pegamos a primeira ou abrimos modal (simplificado aqui para pegar primeira)
+      if (field === 'title' || field === 'description') {
+         if (Array.isArray(content) && content.length > 0) {
+             setEditForm(prev => ({ ...prev, [field]: content[0] }));
+         }
+      } else {
+         // Para tags/hashtags, substituímos tudo
+         setEditForm(prev => ({ ...prev, [field]: finalValue }));
+      }
 
     } catch (err: any) {
       console.error("Erro ao gerar AI:", err);
@@ -207,21 +318,13 @@ const RecentVideos: React.FC = () => {
 
   const handleDownload = async (url: string, title: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    
-    if (!url) {
-      alert('URL inválida para download');
-      return;
-    }
-
+    if (!url) { alert('URL inválida'); return; }
     try {
       document.body.style.cursor = 'wait';
-      
       const response = await fetch(url);
       if (!response.ok) throw new Error('Falha no download');
-      
       const blob = await response.blob();
       const blobUrl = window.URL.createObjectURL(blob);
-      
       const link = document.createElement('a');
       link.href = blobUrl;
       const safeTitle = (title || 'video').replace(/[^a-z0-9]/gi, '_').toLowerCase();
@@ -229,7 +332,6 @@ const RecentVideos: React.FC = () => {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      
       setTimeout(() => window.URL.revokeObjectURL(blobUrl), 100);
     } catch (error) {
       console.error('Erro no download:', error);
@@ -247,25 +349,11 @@ const RecentVideos: React.FC = () => {
 
   const handlePost = async (video: PostModalVideo, options: { scheduleDate?: string; webhookUrl: string }) => {
     setIsPosting(true);
-    console.log('--- INÍCIO DO PROCESSO DE POSTAGEM ---');
-
     try {
-      if (!options.webhookUrl) {
-        throw new Error('URL do Webhook não está definida.');
-      }
-
+      if (!options.webhookUrl) throw new Error('URL do Webhook não está definida.');
       const isScheduled = !!options.scheduleDate;
-      
-      let privacy_status: string;
-      let posting_date: string;
-
-      if (isScheduled) {
-        privacy_status = 'private';
-        posting_date = options.scheduleDate!;
-      } else {
-        privacy_status = 'public';
-        posting_date = new Date().toISOString();
-      }
+      let privacy_status = isScheduled ? 'private' : 'public';
+      let posting_date = isScheduled ? options.scheduleDate! : new Date().toISOString();
 
       const payload = {
         link_drive: video.link_drive || "",
@@ -281,37 +369,20 @@ const RecentVideos: React.FC = () => {
         posting_date: posting_date
       };
 
-      console.log('Enviando payload para Webhook:', payload);
-
       const response = await fetch(options.webhookUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
 
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Sem detalhes');
-        throw new Error(`Erro no Webhook (${response.status}): ${errorText}`);
-      }
+      if (!response.ok) throw new Error(`Erro no Webhook: ${response.status}`);
       
-      console.log('Webhook disparado com sucesso!');
-
       if (isScheduled) {
-        const { error } = await supabase
-          .from('shorts_youtube')
-          .update({
-            publish_at: posting_date,
-          })
-          .eq('id', video.id);
-
-        if (error) throw error;
-        
+        await supabase.from('shorts_youtube').update({ publish_at: posting_date }).eq('id', video.id);
         setVideos(prev => prev.filter(v => v.id !== video.id));
         alert('Vídeo agendado com sucesso!');
       } else {
-        alert('Solicitação de publicação imediata enviada!');
+        alert('Solicitação de publicação enviada!');
       }
       
       setIsPostModalOpen(false);
@@ -320,99 +391,108 @@ const RecentVideos: React.FC = () => {
       
     } catch (error: any) {
       console.error('ERRO FATAL:', error);
-      alert(`Erro: ${error.message || 'Falha ao processar.'}`);
+      alert(`Erro: ${error.message}`);
     } finally {
       setIsPosting(false);
-      console.log('--- FIM DO PROCESSO ---');
     }
   };
 
+  // Renderizador de Input com Autocomplete
+  const renderInputWithAutocomplete = (field: 'tags' | 'hashtags', label: string, icon: React.ReactNode, placeholder: string) => {
+    const hasSuggestions = suggestions[field] && suggestions[field].length > 0;
+    const isOpen = activeSuggestionField === field;
+    const showLoader = isTyping && activeSuggestionField === field;
+
+    return (
+      <div className="relative group">
+        <div className="flex justify-between items-center mb-1">
+          <label className="block text-xs text-gray-400 flex items-center gap-1">
+            {icon} {label}
+          </label>
+          <div className="flex gap-2">
+            {showLoader && (
+               <span className="text-xs text-blue-400 flex items-center gap-1 animate-pulse">
+                 <Loader2 size={10} className="animate-spin" /> Buscando...
+               </span>
+            )}
+            <button 
+              onClick={() => handleGenerateAI(field)}
+              disabled={!!generatingField}
+              className="text-xs flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors disabled:opacity-50"
+            >
+              {generatingField === field ? <RefreshCw size={12} className="animate-spin" /> : <Sparkles size={12} />}
+              Gerar Lista
+            </button>
+          </div>
+        </div>
+        
+        <div className="relative">
+          <input
+            id={`edit-input-${field}`}
+            type="text"
+            value={(editForm as any)[field]}
+            onChange={(e) => handleInputChange(field, e.target.value)}
+            placeholder={placeholder}
+            autoComplete="off"
+            className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none"
+          />
+
+          {/* Dropdown de Sugestões */}
+          {isOpen && hasSuggestions && (
+            <div 
+              ref={suggestionsRef}
+              className="absolute z-50 left-0 right-0 mt-1 bg-[#1f1f1f] border border-gray-600 rounded-lg shadow-xl overflow-hidden animate-fade-in-down max-h-48 overflow-y-auto custom-scrollbar"
+            >
+              <div className="px-3 py-1.5 bg-[#2a2a2a] border-b border-gray-700 flex justify-between items-center">
+                <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1">
+                  <Sparkles size={10} className="text-blue-400" />
+                  Sugestões Inteligentes
+                </span>
+              </div>
+              {suggestions[field].map((suggestion, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => handleSelectSuggestion(field, suggestion)}
+                  className="w-full text-left px-3 py-2 hover:bg-blue-600/20 hover:text-blue-100 text-gray-300 text-sm border-b border-gray-700/50 last:border-0 transition-colors flex items-center gap-2 group/item"
+                >
+                  <Search size={12} className="text-gray-500 group-hover/item:text-blue-400" />
+                  <span className="flex-1 truncate">{suggestion}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const renderContent = () => {
-    if (loading) {
-      return (
-        <div className="flex justify-center items-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-600"></div>
-        </div>
-      );
-    }
-
-    if (error) {
-      return (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg relative flex items-center justify-center" role="alert">
-          <AlertCircle className="mr-2" />
-          <span>{error}</span>
-        </div>
-      );
-    }
-
-    if (videos.length === 0) {
-      return (
-        <div className="text-center py-20 bg-white rounded-lg shadow-sm border border-gray-100">
-          <Sparkles size={48} className="mx-auto text-gray-300 mb-4" />
-          <h3 className="text-gray-800 text-xl font-semibold">Nenhum vídeo recente</h3>
-          <p className="text-gray-500 text-sm mt-2">Não há novos vídeos aguardando agendamento.</p>
-        </div>
-      );
-    }
+    if (loading) return <div className="flex justify-center items-center h-64"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-600"></div></div>;
+    if (error) return <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center justify-center"><AlertCircle className="mr-2" /><span>{error}</span></div>;
+    if (videos.length === 0) return <div className="text-center py-20 bg-white rounded-lg shadow-sm border border-gray-100"><Sparkles size={48} className="mx-auto text-gray-300 mb-4" /><h3 className="text-gray-800 text-xl font-semibold">Nenhum vídeo recente</h3></div>;
 
     if (viewMode === 'grid') {
       return (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {videos.map((video) => (
-            <div 
-              key={video.id} 
-              className="group bg-white rounded-xl shadow-md hover:shadow-lg transition-all duration-300 border border-gray-100 overflow-hidden flex flex-col hover:-translate-y-1"
-            >
-              <div 
-                className="relative aspect-video bg-gray-900 cursor-pointer overflow-hidden"
-                onClick={() => setSelectedVideo(video)}
-              >
+            <div key={video.id} className="group bg-white rounded-xl shadow-md hover:shadow-lg transition-all duration-300 border border-gray-100 overflow-hidden flex flex-col hover:-translate-y-1">
+              <div className="relative aspect-video bg-gray-900 cursor-pointer overflow-hidden" onClick={() => setSelectedVideo(video)}>
                 <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-800 to-gray-900">
-                  <video 
-                    src={video.link_s3}
-                    className="w-full h-full object-cover opacity-60 group-hover:opacity-40 transition-opacity"
-                    muted
-                    preload="metadata"
-                  />
+                  <video src={video.link_s3} className="w-full h-full object-cover opacity-60 group-hover:opacity-40 transition-opacity" muted preload="metadata" />
                 </div>
                 <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors duration-300">
                   <div className="bg-white/20 backdrop-blur-sm p-3 rounded-full opacity-0 group-hover:opacity-100 scale-75 group-hover:scale-100 transition-all duration-300">
                     <PlayCircle size={32} className="text-white fill-white/20" />
                   </div>
                 </div>
-                {video.channel && (
-                  <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-md text-white text-xs px-2 py-1 rounded-md flex items-center gap-1">
-                    <Tv size={10} />
-                    <span className="truncate max-w-[100px]">{video.channel}</span>
-                  </div>
-                )}
+                {video.channel && <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-md text-white text-xs px-2 py-1 rounded-md flex items-center gap-1"><Tv size={10} /><span className="truncate max-w-[100px]">{video.channel}</span></div>}
               </div>
-
               <div className="p-4 flex flex-col flex-grow">
-                <h3 className="font-semibold text-gray-800 mb-1 line-clamp-2 min-h-[3rem]" title={video.title}>
-                  {video.title || 'Vídeo sem título'}
-                </h3>
-                <div className="flex items-center gap-2 text-sm text-gray-500 mb-4">
-                  <Sparkles size={14} className="text-brand-500" />
-                  <span>Criado em {new Date(video.created_at).toLocaleDateString('pt-BR')}</span>
-                </div>
-                
+                <h3 className="font-semibold text-gray-800 mb-1 line-clamp-2 min-h-[3rem]" title={video.title}>{video.title || 'Vídeo sem título'}</h3>
+                <div className="flex items-center gap-2 text-sm text-gray-500 mb-4"><Sparkles size={14} className="text-brand-500" /><span>Criado em {new Date(video.created_at).toLocaleDateString('pt-BR')}</span></div>
                 <div className="mt-auto pt-4 flex items-center gap-2 border-t border-gray-100">
-                  <button
-                    onClick={(e) => openPostModal(video, e)}
-                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-colors shadow-sm"
-                    title="Agendar publicação"
-                  >
-                    <Calendar size={16} />
-                    <span>Agendar</span>
-                  </button>
-                  <button
-                    onClick={(e) => handleReprove(video.id, e)}
-                    className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                    title="Reprovar vídeo"
-                  >
-                    <Trash2 size={18} />
-                  </button>
+                  <button onClick={(e) => openPostModal(video, e)} className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-colors shadow-sm"><Calendar size={16} /><span>Agendar</span></button>
+                  <button onClick={(e) => handleReprove(video.id, e)} className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={18} /></button>
                 </div>
               </div>
             </div>
@@ -424,64 +504,22 @@ const RecentVideos: React.FC = () => {
     return (
       <div className="space-y-3">
         {videos.map((video) => (
-          <div
-            key={video.id}
-            className="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 border border-gray-100 flex flex-col sm:flex-row items-start sm:items-center p-3 gap-4"
-          >
-            <div
-              className="relative w-full sm:w-32 h-20 bg-gray-900 rounded-md overflow-hidden cursor-pointer flex-shrink-0 group"
-              onClick={() => setSelectedVideo(video)}
-            >
-              <video
-                src={video.link_s3}
-                className="w-full h-full object-cover"
-                muted
-                preload="metadata"
-              />
-              <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
-                <PlayCircle size={24} className="text-white" />
-              </div>
+          <div key={video.id} className="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 border border-gray-100 flex flex-col sm:flex-row items-start sm:items-center p-3 gap-4">
+            <div className="relative w-full sm:w-32 h-20 bg-gray-900 rounded-md overflow-hidden cursor-pointer flex-shrink-0 group" onClick={() => setSelectedVideo(video)}>
+              <video src={video.link_s3} className="w-full h-full object-cover" muted preload="metadata" />
+              <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity"><PlayCircle size={24} className="text-white" /></div>
             </div>
             <div className="flex-grow min-w-0">
-              <h3 className="font-semibold text-gray-800 truncate" title={video.title}>
-                {video.title || 'Vídeo sem título'}
-              </h3>
+              <h3 className="font-semibold text-gray-800 truncate" title={video.title}>{video.title || 'Vídeo sem título'}</h3>
               <div className="flex flex-wrap items-center gap-3 mt-1">
-                <div className="flex items-center gap-2 text-sm text-gray-500">
-                  <Sparkles size={14} className="text-brand-500" />
-                  <span>Criado em {new Date(video.created_at).toLocaleDateString('pt-BR')}</span>
-                </div>
-                {video.channel && (
-                  <div className="flex items-center gap-1 text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
-                    <Tv size={12} />
-                    <span>{video.channel}</span>
-                  </div>
-                )}
+                <div className="flex items-center gap-2 text-sm text-gray-500"><Sparkles size={14} className="text-brand-500" /><span>Criado em {new Date(video.created_at).toLocaleDateString('pt-BR')}</span></div>
+                {video.channel && <div className="flex items-center gap-1 text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full"><Tv size={12} /><span>{video.channel}</span></div>}
               </div>
             </div>
             <div className="flex items-center gap-2 self-end sm:self-center">
-              <button
-                onClick={(e) => openPostModal(video, e)}
-                className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-colors shadow-sm"
-                title="Agendar publicação"
-              >
-                <Calendar size={16} />
-                <span className="hidden md:inline">Agendar</span>
-              </button>
-              <button
-                onClick={(e) => handleDownload(video.link_s3, video.title || 'video', e)}
-                className="flex items-center justify-center p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                title="Baixar vídeo"
-              >
-                <Download size={18} />
-              </button>
-              <button
-                onClick={(e) => handleReprove(video.id, e)}
-                className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                title="Reprovar vídeo"
-              >
-                <Trash2 size={18} />
-              </button>
+              <button onClick={(e) => openPostModal(video, e)} className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-colors shadow-sm"><Calendar size={16} /><span className="hidden md:inline">Agendar</span></button>
+              <button onClick={(e) => handleDownload(video.link_s3, video.title || 'video', e)} className="flex items-center justify-center p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"><Download size={18} /></button>
+              <button onClick={(e) => handleReprove(video.id, e)} className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={18} /></button>
             </div>
           </div>
         ))}
@@ -498,28 +536,10 @@ const RecentVideos: React.FC = () => {
         </div>
         <div className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto justify-end">
           <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg">
-            <button 
-              onClick={() => setViewMode('grid')}
-              className={`p-1.5 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-white text-brand-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
-              title="Visualização em Grade"
-            >
-              <LayoutGrid size={20} />
-            </button>
-            <button 
-              onClick={() => setViewMode('list')}
-              className={`p-1.5 rounded-md transition-colors ${viewMode === 'list' ? 'bg-white text-brand-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
-              title="Visualização em Lista"
-            >
-              <List size={20} />
-            </button>
+            <button onClick={() => setViewMode('grid')} className={`p-1.5 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-white text-brand-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}><LayoutGrid size={20} /></button>
+            <button onClick={() => setViewMode('list')} className={`p-1.5 rounded-md transition-colors ${viewMode === 'list' ? 'bg-white text-brand-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}><List size={20} /></button>
           </div>
-          <button 
-            onClick={fetchRecentVideos}
-            className="p-2 text-gray-500 hover:text-brand-600 hover:bg-brand-50 rounded-full transition-colors"
-            title="Recarregar lista"
-          >
-            <RefreshCw size={22} />
-          </button>
+          <button onClick={fetchRecentVideos} className="p-2 text-gray-500 hover:text-brand-600 hover:bg-brand-50 rounded-full transition-colors"><RefreshCw size={22} /></button>
           <div className="bg-brand-100 text-brand-800 text-center rounded-2xl px-5 py-2 shadow-sm">
             <div className="text-2xl font-bold leading-none">{videos.length}</div>
             <div className="text-xs leading-none tracking-tight mt-1">{videos.length === 1 ? 'Vídeo' : 'Vídeos'}</div>
@@ -531,56 +551,21 @@ const RecentVideos: React.FC = () => {
 
       {/* Modal de Preview e Edição */}
       {selectedVideo && (
-        <div 
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in"
-          onClick={() => setSelectedVideo(null)}
-        >
-          <div 
-            className="relative w-full max-w-4xl mx-auto bg-gray-900 rounded-2xl overflow-hidden shadow-2xl animate-slide-up flex flex-col md:flex-row max-h-[90vh]"
-            onClick={e => e.stopPropagation()}
-          >
-            {/* Coluna do Vídeo */}
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in" onClick={() => setSelectedVideo(null)}>
+          <div className="relative w-full max-w-4xl mx-auto bg-gray-900 rounded-2xl overflow-hidden shadow-2xl animate-slide-up flex flex-col md:flex-row max-h-[90vh]" onClick={e => e.stopPropagation()}>
             <div className="w-full md:w-1/2 bg-black flex items-center justify-center">
-              <video 
-                src={selectedVideo.link_s3} 
-                controls 
-                autoPlay 
-                className="w-full h-auto max-h-[50vh] md:max-h-full object-contain"
-              >
-                Seu navegador não suporta a tag de vídeo.
-              </video>
+              <video src={selectedVideo.link_s3} controls autoPlay className="w-full h-auto max-h-[50vh] md:max-h-full object-contain">Seu navegador não suporta a tag de vídeo.</video>
             </div>
             
-            {/* Coluna de Detalhes/Edição */}
-            <div className="w-full md:w-1/2 p-6 text-white overflow-y-auto bg-gray-800 flex flex-col">
+            <div className="w-full md:w-1/2 p-6 text-white overflow-y-auto bg-gray-800 flex flex-col custom-scrollbar">
               <div className="flex justify-between items-start mb-4">
                 <h2 className="text-lg font-semibold text-gray-300 uppercase tracking-wider">Detalhes do Vídeo</h2>
                 {!isEditing ? (
-                  <button 
-                    onClick={() => setIsEditing(true)}
-                    className="flex items-center gap-1 text-sm text-brand-400 hover:text-brand-300 transition-colors"
-                  >
-                    <Edit2 size={16} />
-                    Editar
-                  </button>
+                  <button onClick={() => setIsEditing(true)} className="flex items-center gap-1 text-sm text-brand-400 hover:text-brand-300 transition-colors"><Edit2 size={16} /> Editar</button>
                 ) : (
                   <div className="flex gap-2">
-                    <button 
-                      onClick={() => setIsEditing(false)}
-                      className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-300 transition-colors"
-                      disabled={isSaving}
-                    >
-                      <XCircle size={16} />
-                      Cancelar
-                    </button>
-                    <button 
-                      onClick={handleSaveEdit}
-                      className="flex items-center gap-1 text-sm text-green-400 hover:text-green-300 transition-colors font-medium"
-                      disabled={isSaving}
-                    >
-                      {isSaving ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
-                      Salvar
-                    </button>
+                    <button onClick={() => setIsEditing(false)} className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-300 transition-colors" disabled={isSaving}><XCircle size={16} /> Cancelar</button>
+                    <button onClick={handleSaveEdit} className="flex items-center gap-1 text-sm text-green-400 hover:text-green-300 transition-colors font-medium" disabled={isSaving}>{isSaving ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />} Salvar</button>
                   </div>
                 )}
               </div>
@@ -590,180 +575,51 @@ const RecentVideos: React.FC = () => {
                   <div>
                     <div className="flex justify-between items-center mb-1">
                       <label className="block text-xs text-gray-400">Título</label>
-                      <button 
-                        onClick={() => handleGenerateAI('title')}
-                        disabled={!!generatingField}
-                        className="text-xs flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
-                      >
-                        {generatingField === 'title' ? <RefreshCw size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                        Gerar IA
-                      </button>
+                      <button onClick={() => handleGenerateAI('title')} disabled={!!generatingField} className="text-xs flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors">{generatingField === 'title' ? <RefreshCw size={12} className="animate-spin" /> : <Sparkles size={12} />} Gerar IA</button>
                     </div>
-                    <input
-                      type="text"
-                      value={editForm.title}
-                      onChange={(e) => setEditForm({...editForm, title: e.target.value})}
-                      className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none"
-                    />
+                    <input type="text" value={editForm.title} onChange={(e) => setEditForm({...editForm, title: e.target.value})} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none" />
                   </div>
                   <div>
                     <div className="flex justify-between items-center mb-1">
                       <label className="block text-xs text-gray-400">Descrição</label>
-                      <button 
-                        onClick={() => handleGenerateAI('description')}
-                        disabled={!!generatingField}
-                        className="text-xs flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
-                      >
-                        {generatingField === 'description' ? <RefreshCw size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                        Gerar IA
-                      </button>
+                      <button onClick={() => handleGenerateAI('description')} disabled={!!generatingField} className="text-xs flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors">{generatingField === 'description' ? <RefreshCw size={12} className="animate-spin" /> : <Sparkles size={12} />} Gerar IA</button>
                     </div>
-                    <textarea
-                      value={editForm.description}
-                      onChange={(e) => setEditForm({...editForm, description: e.target.value})}
-                      rows={4}
-                      className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none resize-none"
-                    />
+                    <textarea value={editForm.description} onChange={(e) => setEditForm({...editForm, description: e.target.value})} rows={4} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none resize-none" />
                   </div>
-                  <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <label className="block text-xs text-gray-400 flex items-center gap-1">
-                        <Tag size={12} /> Tags (separadas por vírgula)
-                      </label>
-                      <button 
-                        onClick={() => handleGenerateAI('tags')}
-                        disabled={!!generatingField}
-                        className="text-xs flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
-                      >
-                        {generatingField === 'tags' ? <RefreshCw size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                        Gerar IA
-                      </button>
-                    </div>
-                    <input
-                      type="text"
-                      value={editForm.tags}
-                      onChange={(e) => setEditForm({...editForm, tags: e.target.value})}
-                      placeholder="ex: tecnologia, inovação, shorts"
-                      className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none"
-                    />
-                  </div>
-                  <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <label className="block text-xs text-gray-400 flex items-center gap-1">
-                        <Hash size={12} /> Hashtags (separadas por vírgula)
-                      </label>
-                      <button 
-                        onClick={() => handleGenerateAI('hashtags')}
-                        disabled={!!generatingField}
-                        className="text-xs flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
-                      >
-                        {generatingField === 'hashtags' ? <RefreshCw size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                        Gerar IA
-                      </button>
-                    </div>
-                    <input
-                      type="text"
-                      value={editForm.hashtags}
-                      onChange={(e) => setEditForm({...editForm, hashtags: e.target.value})}
-                      placeholder="ex: #tech, #viral"
-                      className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none"
-                    />
-                  </div>
+                  
+                  {/* Inputs com Autocomplete */}
+                  {renderInputWithAutocomplete('tags', 'Tags (separadas por vírgula)', <Tag size={12} />, 'ex: tecnologia, inovação, shorts')}
+                  {renderInputWithAutocomplete('hashtags', 'Hashtags (separadas por espaço)', <Hash size={12} />, 'ex: #tech #viral')}
+
                 </div>
               ) : (
                 <div className="space-y-4 flex-grow">
-                  <div>
-                    <h3 className="font-bold text-xl leading-tight">{selectedVideo.title || 'Sem título'}</h3>
-                  </div>
-                  
+                  <div><h3 className="font-bold text-xl leading-tight">{selectedVideo.title || 'Sem título'}</h3></div>
                   <div className="flex flex-wrap gap-2">
-                    <div className="flex items-center gap-2 text-sm text-brand-300 bg-brand-500/20 rounded-md px-3 py-1.5">
-                      <Sparkles size={16} />
-                      <span className="font-medium">Criado em {new Date(selectedVideo.created_at).toLocaleDateString('pt-BR')}</span>
-                    </div>
-                    {selectedVideo.channel && (
-                      <div className="flex items-center gap-2 text-sm text-blue-300 bg-blue-500/20 rounded-md px-3 py-1.5">
-                        <Tv size={16} />
-                        <span className="font-medium">{selectedVideo.channel}</span>
-                      </div>
-                    )}
+                    <div className="flex items-center gap-2 text-sm text-brand-300 bg-brand-500/20 rounded-md px-3 py-1.5"><Sparkles size={16} /><span className="font-medium">Criado em {new Date(selectedVideo.created_at).toLocaleDateString('pt-BR')}</span></div>
+                    {selectedVideo.channel && <div className="flex items-center gap-2 text-sm text-blue-300 bg-blue-500/20 rounded-md px-3 py-1.5"><Tv size={16} /><span className="font-medium">{selectedVideo.channel}</span></div>}
                   </div>
-
-                  <div className="bg-gray-700/50 rounded-lg p-3 max-h-32 overflow-y-auto">
-                    <p className="text-gray-300 text-sm whitespace-pre-wrap">
-                      {selectedVideo.description || 'Sem descrição.'}
-                    </p>
-                  </div>
-
-                  {/* Exibição de Tags e Hashtags */}
+                  <div className="bg-gray-700/50 rounded-lg p-3 max-h-32 overflow-y-auto custom-scrollbar"><p className="text-gray-300 text-sm whitespace-pre-wrap">{selectedVideo.description || 'Sem descrição.'}</p></div>
                   {(selectedVideo.tags?.length > 0 || selectedVideo.hashtags?.length > 0) && (
                     <div className="space-y-2">
-                      {selectedVideo.tags?.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          {selectedVideo.tags.map((tag, i) => (
-                            <span key={i} className="text-xs bg-gray-700 text-gray-300 px-2 py-1 rounded-full flex items-center gap-1">
-                              <Tag size={10} /> {tag}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      {selectedVideo.hashtags?.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          {selectedVideo.hashtags.map((hash, i) => (
-                            <span key={i} className="text-xs bg-brand-900/50 text-brand-300 px-2 py-1 rounded-full flex items-center gap-1">
-                              <Hash size={10} /> {hash.replace('#', '')}
-                            </span>
-                          ))}
-                        </div>
-                      )}
+                      {selectedVideo.tags?.length > 0 && <div className="flex flex-wrap gap-1">{selectedVideo.tags.map((tag, i) => <span key={i} className="text-xs bg-gray-700 text-gray-300 px-2 py-1 rounded-full flex items-center gap-1"><Tag size={10} /> {tag}</span>)}</div>}
+                      {selectedVideo.hashtags?.length > 0 && <div className="flex flex-wrap gap-1">{selectedVideo.hashtags.map((hash, i) => <span key={i} className="text-xs bg-brand-900/50 text-brand-300 px-2 py-1 rounded-full flex items-center gap-1"><Hash size={10} /> {hash.replace('#', '')}</span>)}</div>}
                     </div>
                   )}
                 </div>
               )}
               
               <div className="flex flex-col gap-3 w-full mt-6 pt-4 border-t border-gray-700">
-                <button
-                  onClick={(e) => {
-                    setSelectedVideo(null); // Fecha preview
-                    openPostModal(selectedVideo, e); // Abre modal de agendamento
-                  }}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-brand-600 hover:bg-brand-700 rounded-lg transition-colors font-semibold shadow-lg shadow-brand-900/20"
-                >
-                  <Calendar size={18} />
-                  <span>Agendar Publicação</span>
-                </button>
-                <button
-                  onClick={(e) => handleDownload(selectedVideo.link_s3, selectedVideo.title || 'video', e)}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors font-medium text-sm"
-                >
-                  <Download size={18} />
-                  <span>Baixar Vídeo</span>
-                </button>
+                <button onClick={(e) => { setSelectedVideo(null); openPostModal(selectedVideo, e); }} className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-brand-600 hover:bg-brand-700 rounded-lg transition-colors font-semibold shadow-lg shadow-brand-900/20"><Calendar size={18} /><span>Agendar Publicação</span></button>
+                <button onClick={(e) => handleDownload(selectedVideo.link_s3, selectedVideo.title || 'video', e)} className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors font-medium text-sm"><Download size={18} /><span>Baixar Vídeo</span></button>
               </div>
             </div>
-
-            <button 
-              onClick={() => setSelectedVideo(null)}
-              className="absolute top-3 right-3 text-white/60 hover:text-white bg-black/30 hover:bg-black/50 rounded-full p-1.5 transition-colors z-10"
-            >
-              <X size={24} />
-            </button>
+            <button onClick={() => setSelectedVideo(null)} className="absolute top-3 right-3 text-white/60 hover:text-white bg-black/30 hover:bg-black/50 rounded-full p-1.5 transition-colors z-10"><X size={24} /></button>
           </div>
         </div>
       )}
 
-      {/* Modal de Agendamento UNIFICADO */}
-      {videoToPost && (
-        <PostModal 
-          video={videoToPost}
-          onClose={() => {
-            setIsPostModalOpen(false);
-            setVideoToPost(null);
-          }}
-          onPost={handlePost}
-          isPosting={isPosting}
-        />
-      )}
+      {videoToPost && <PostModal video={videoToPost} onClose={() => { setIsPostModalOpen(false); setVideoToPost(null); }} onPost={handlePost} isPosting={isPosting} />}
     </div>
   );
 };
