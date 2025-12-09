@@ -69,6 +69,11 @@ const generateGroq = async (apiKey: string, prompt: string, type: GenerationType
 
 // --- Implementação Ollama (Via Biblioteca Oficial) ---
 const generateOllama = async (url: string, apiKey: string | undefined, prompt: string, type: GenerationType, modelId: string = 'llama3') => {
+  // Validação de URL
+  if (url.includes('ollama.com')) {
+    throw new Error("URL inválida: 'ollama.com' não é uma API. Use seu servidor local (http://localhost:11434) ou IP próprio.");
+  }
+
   // Configuração conforme documentação da lib ollama
   const config: { host: string; headers?: Record<string, string> } = {
     host: url
@@ -95,11 +100,13 @@ const generateOllama = async (url: string, apiKey: string | undefined, prompt: s
 
     return response.message.content;
   } catch (error: any) {
-    // Melhor tratamento de erro para feedback visual
     console.error("Erro Ollama Lib:", error);
+    
+    // Tratamento específico para erros comuns
     if (error.message?.includes('Failed to fetch')) {
-      throw new Error(`Falha de conexão com ${url}. Verifique CORS e se o servidor está acessível.`);
+      throw new Error(`Falha de conexão com ${url}. Verifique se o servidor está rodando e se o CORS está configurado (OLLAMA_ORIGINS="*").`);
     }
+    
     throw error;
   }
 };
