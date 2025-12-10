@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { toast } from 'sonner';
 import { Sparkles, Tv } from 'lucide-react';
+import { useNotifications } from '../contexts/NotificationContext';
 
 // Som real (Short Ping)
 const PLAY_SOUND = () => {
@@ -33,6 +34,9 @@ const PLAY_SOUND = () => {
 const NotificationManager: React.FC = () => {
   // Armazena IDs que JÁ geraram alerta para evitar spam
   const alertedIds = useRef<Set<string>>(new Set());
+  
+  // Hook do contexto para incrementar o contador
+  const { increment } = useNotifications();
 
   useEffect(() => {
     // Solicitar permissão para notificações do sistema ao montar
@@ -44,7 +48,7 @@ const NotificationManager: React.FC = () => {
 
     // Configurar o canal do Realtime
     const channel = supabase
-      .channel('shorts-alerts-v2') // Nome do canal alterado para evitar conflitos de cache
+      .channel('shorts-alerts-v2')
       .on(
         'postgres_changes',
         {
@@ -55,17 +59,15 @@ const NotificationManager: React.FC = () => {
         (payload) => {
           const newVideo = payload.new as any;
           
-          // Se não houver dados novos (ex: DELETE), ignora
           if (!newVideo || !newVideo.id) return;
 
-          // LOGICA CORRIGIDA:
           // 1. Verifica se o vídeo está PRONTO (Created) e NÃO publicado
           const isReady = newVideo.status === 'Created' && !newVideo.publish_at;
 
           if (isReady) {
             // 2. Verifica se já alertamos sobre este ID específico
             if (alertedIds.current.has(newVideo.id)) {
-              return; // Já avisamos, ignora
+              return;
             }
 
             // 3. Se passou pelos filtros, dispara o alerta e marca como alertado
@@ -73,7 +75,7 @@ const NotificationManager: React.FC = () => {
             triggerAlert(newVideo);
             alertedIds.current.add(newVideo.id);
 
-            // Limpeza de memória (mantém apenas os últimos 100)
+            // Limpeza de memória
             if (alertedIds.current.size > 100) {
               const iterator = alertedIds.current.values();
               alertedIds.current.delete(iterator.next().value);
@@ -88,9 +90,12 @@ const NotificationManager: React.FC = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [increment]); // Adicionado increment como dependência
 
   const triggerAlert = (video: any) => {
+    // 0. Incrementar contador global
+    increment();
+
     // 1. Tocar Som
     PLAY_SOUND();
 
@@ -100,7 +105,6 @@ const NotificationManager: React.FC = () => {
         className="bg-white dark:bg-gray-800 border border-brand-200 dark:border-brand-800 rounded-xl shadow-2xl p-4 flex items-start gap-4 w-full max-w-md animate-slide-up pointer-events-auto cursor-pointer hover:bg-gray-50 transition-colors"
         onClick={() => {
           toast.dismiss(t);
-          // Opcional: Focar na janela ou navegar
           window.focus();
         }}
       >
@@ -135,11 +139,11 @@ const NotificationManager: React.FC = () => {
         </button>
       </div>
     ), {
-      duration: 8000, // Fica na tela por 8 segundos
+      duration: 8000,
       position: 'top-right',
     });
 
-    // 3. Notificação do Sistema (Nativa do OS)
+    // 3. Notificação do Sistema
     if ('Notification' in window && Notification.permission === 'granted') {
       if (document.visibilityState === 'hidden') {
         try {

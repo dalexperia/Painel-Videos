@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from './lib/supabaseClient';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { NotificationProvider, useNotifications } from './contexts/NotificationContext'; // Importar Contexto
 import ErrorBoundary from './components/ErrorBoundary';
 import Login from './components/Login';
 import ReprovedVideos from './components/ReprovedVideos';
@@ -9,8 +10,8 @@ import ScheduledVideos from './components/ScheduledVideos';
 import RecentVideos from './components/RecentVideos';
 import Dashboard from './components/Dashboard';
 import Settings from './components/Settings';
-import NotificationManager from './components/NotificationManager'; // Importar o Manager
-import { Toaster } from 'sonner'; // Importar o Toaster UI
+import NotificationManager from './components/NotificationManager';
+import { Toaster } from 'sonner';
 import { 
   Clapperboard, 
   Trash2, 
@@ -23,7 +24,8 @@ import {
   X,
   LogOut,
   User,
-  Shield
+  Shield,
+  Bell // Importar ícone de sino
 } from 'lucide-react';
 
 type View = 'dashboard' | 'recent' | 'reproved' | 'posted' | 'scheduled' | 'settings';
@@ -71,15 +73,21 @@ const NavButton = ({
   );
 };
 
-// Componente interno para usar o hook useAuth
+// Componente interno para usar o hook useAuth e useNotifications
 const AppContent = () => {
   const { session, loading, profile, isAdmin } = useAuth();
+  const { unreadCount, clear } = useNotifications(); // Hook de notificações
   const [view, setView] = useState<View>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const handleNavClick = (targetView: View) => {
     setView(targetView);
     setIsMobileMenuOpen(false);
+  };
+
+  const handleNotificationClick = () => {
+    setView('recent'); // Leva para a tela de recentes
+    clear(); // Limpa o contador
   };
 
   const handleLogout = async () => {
@@ -148,9 +156,25 @@ const AppContent = () => {
               ))}
             </nav>
 
-            {/* Perfil e Logout (Desktop) */}
-            <div className="hidden md:flex items-center gap-3 pl-4 border-l border-gray-200 ml-2">
-              <div className="flex items-center gap-2">
+            {/* Ações do Lado Direito (Notificações, Perfil, Logout) */}
+            <div className="flex items-center gap-2 md:gap-3 pl-2 md:pl-4 md:border-l border-gray-200 md:ml-2">
+              
+              {/* Botão de Notificações (Novo) */}
+              <button
+                onClick={handleNotificationClick}
+                className="relative p-2 text-gray-500 hover:text-brand-600 hover:bg-brand-50 rounded-full transition-all duration-200 group"
+                title="Notificações"
+              >
+                <Bell size={20} className={unreadCount > 0 ? 'animate-tada' : ''} />
+                {unreadCount > 0 && (
+                  <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white ring-2 ring-white animate-scale-in">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {/* Perfil (Desktop) */}
+              <div className="hidden md:flex items-center gap-2">
                 {session.user.user_metadata.avatar_url ? (
                   <img 
                     src={session.user.user_metadata.avatar_url} 
@@ -163,23 +187,25 @@ const AppContent = () => {
                   </div>
                 )}
               </div>
+
+              {/* Logout (Desktop) */}
               <button
                 onClick={handleLogout}
-                className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                className="hidden md:block p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
                 title="Sair"
               >
                 <LogOut size={20} />
               </button>
-            </div>
 
-            {/* Botão Menu Mobile */}
-            <button
-              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="md:hidden p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-              aria-label="Menu"
-            >
-              {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
-            </button>
+              {/* Botão Menu Mobile */}
+              <button
+                onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+                className="md:hidden p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                aria-label="Menu"
+              >
+                {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -259,7 +285,10 @@ function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <AppContent />
+        {/* Envolvendo a aplicação com o NotificationProvider */}
+        <NotificationProvider>
+          <AppContent />
+        </NotificationProvider>
       </AuthProvider>
     </ErrorBoundary>
   );
