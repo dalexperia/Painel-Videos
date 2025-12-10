@@ -216,7 +216,11 @@ const Dashboard: React.FC = () => {
         channels[channelName].posted++;
         categorized = true;
       } else if (item.status === 'Created') {
-        if (!item.publish_at || item.publish_at.trim() === '') {
+        // LÓGICA CORRIGIDA: Para ser "Recente", não pode ter data de publicação E NÃO PODE ter youtube_id
+        const hasNoPublishDate = !item.publish_at || item.publish_at.trim() === '';
+        const hasNoYoutubeId = !item.youtube_id || item.youtube_id.trim() === '';
+
+        if (hasNoPublishDate && hasNoYoutubeId) {
           channels[channelName].recent++;
           categorized = true;
         }
