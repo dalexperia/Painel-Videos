@@ -25,46 +25,17 @@ interface Video {
 
 type ViewMode = 'grid' | 'list' | 'calendar';
 
-// Cores consistentes para os canais
-const getChannelColor = (channel?: string) => {
-  if (!channel) return 'bg-gray-400 text-gray-800';
-  const colors = [
-    'bg-red-100 text-red-700 border-red-200', 
-    'bg-orange-100 text-orange-700 border-orange-200', 
-    'bg-amber-100 text-amber-700 border-amber-200', 
-    'bg-green-100 text-green-700 border-green-200', 
-    'bg-emerald-100 text-emerald-700 border-emerald-200', 
-    'bg-teal-100 text-teal-700 border-teal-200', 
-    'bg-cyan-100 text-cyan-700 border-cyan-200', 
-    'bg-blue-100 text-blue-700 border-blue-200', 
-    'bg-indigo-100 text-indigo-700 border-indigo-200', 
-    'bg-violet-100 text-violet-700 border-violet-200', 
-    'bg-purple-100 text-purple-700 border-purple-200', 
-    'bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200', 
-    'bg-pink-100 text-pink-700 border-pink-200', 
-    'bg-rose-100 text-rose-700 border-rose-200'
-  ];
-  let hash = 0;
-  for (let i = 0; i < channel.length; i++) {
-    hash = channel.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return colors[Math.abs(hash) % colors.length];
-};
-
-// Ponto colorido apenas (para o bullet point)
-const getChannelDotColor = (channel?: string) => {
-  if (!channel) return 'bg-gray-400';
-  const colors = [
-    'bg-red-500', 'bg-orange-500', 'bg-amber-500', 'bg-green-500', 
-    'bg-emerald-500', 'bg-teal-500', 'bg-cyan-500', 'bg-blue-500', 
-    'bg-indigo-500', 'bg-violet-500', 'bg-purple-500', 'bg-fuchsia-500', 'bg-pink-500', 'bg-rose-500'
-  ];
-  let hash = 0;
-  for (let i = 0; i < channel.length; i++) {
-    hash = channel.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return colors[Math.abs(hash) % colors.length];
-};
+// Paleta de cores idêntica ao Dashboard
+const DASHBOARD_COLORS = [
+  '#6366f1', // Indigo
+  '#ec4899', // Pink
+  '#10b981', // Emerald
+  '#f59e0b', // Amber
+  '#3b82f6', // Blue
+  '#8b5cf6', // Violet
+  '#f43f5e', // Rose
+  '#06b6d4', // Cyan
+];
 
 const ScheduledVideos: React.FC = () => {
   const [videos, setVideos] = useState<Video[]>([]);
@@ -142,10 +113,19 @@ const ScheduledVideos: React.FC = () => {
     });
   }, [videos, searchTerm, selectedChannel, dateStart, dateEnd, viewMode]);
 
+  // Lista única de canais ordenada alfabeticamente para consistência de cores
   const uniqueChannels = useMemo(() => {
-    const channels = videos.map(v => v.channel).filter(Boolean);
+    const channels = videos.map(v => v.channel).filter(Boolean) as string[];
     return Array.from(new Set(channels)).sort();
   }, [videos]);
+
+  // Função para pegar a cor baseada no índice do canal na lista ordenada
+  const getChannelColorHex = (channel?: string) => {
+    if (!channel) return '#9ca3af'; // Gray default
+    const index = uniqueChannels.indexOf(channel);
+    if (index === -1) return '#9ca3af';
+    return DASHBOARD_COLORS[index % DASHBOARD_COLORS.length];
+  };
 
   const clearFilters = () => {
     setSearchTerm('');
@@ -339,8 +319,8 @@ const ScheduledVideos: React.FC = () => {
                     </span>
                   </div>
 
-                  {/* Lista de Vídeos (Expansível) */}
-                  <div className="flex flex-col gap-1.5">
+                  {/* Lista de Vídeos (Estilo Linha Única) */}
+                  <div className="flex flex-col gap-0.5">
                     {dayVideos.map((video) => (
                       <div 
                         key={video.id}
@@ -348,23 +328,24 @@ const ScheduledVideos: React.FC = () => {
                           e.stopPropagation();
                           setSelectedVideo(video);
                         }}
-                        className={`
-                          group flex items-center gap-2 p-1.5 rounded-md border text-xs cursor-pointer transition-all shadow-sm hover:shadow-md hover:scale-[1.02]
-                          ${getChannelColor(video.channel)} bg-opacity-10 border-opacity-20 hover:bg-opacity-20
-                        `}
+                        className="flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-gray-100 cursor-pointer transition-colors group"
+                        title={`${video.title || 'Sem título'} - ${video.channel}`}
                       >
-                        {/* Dot Colorido */}
-                        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${getChannelDotColor(video.channel)}`} />
+                        {/* Bolinha Colorida */}
+                        <div 
+                          className="w-2 h-2 rounded-full flex-shrink-0" 
+                          style={{ backgroundColor: getChannelColorHex(video.channel) }}
+                        />
                         
-                        {/* Conteúdo */}
-                        <div className="min-w-0 flex-1">
-                          <div className="font-bold leading-tight truncate">
-                            {video.publish_at ? format(parseISO(video.publish_at), 'HH:mm') : ''}
-                          </div>
-                          <div className="truncate opacity-90 font-medium" title={video.title}>
-                            {video.title || 'Sem título'}
-                          </div>
-                        </div>
+                        {/* Hora */}
+                        <span className="text-[11px] font-medium text-gray-500 flex-shrink-0">
+                          {video.publish_at ? format(parseISO(video.publish_at), 'HH:mm') : '--:--'}
+                        </span>
+
+                        {/* Nome do Canal */}
+                        <span className="text-[11px] font-semibold text-gray-700 truncate">
+                          {video.channel || 'Sem canal'}
+                        </span>
                       </div>
                     ))}
                   </div>
