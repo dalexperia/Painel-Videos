@@ -3,7 +3,8 @@ import { supabase } from '../lib/supabaseClient';
 import { 
   Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, 
   Download, X, Calendar as CalendarIcon, Tv, Edit2, Save, Search, 
-  Filter, CheckCircle2, Clock, ChevronLeft, ChevronRight, RotateCcw 
+  Filter, CheckCircle2, Clock, ChevronLeft, ChevronRight, RotateCcw,
+  MoreHorizontal, XCircle
 } from 'lucide-react';
 import { 
   format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, 
@@ -25,6 +26,21 @@ interface Video {
 
 type ViewMode = 'grid' | 'list' | 'calendar';
 
+// Cores consistentes para os canais (hash simples)
+const getChannelColor = (channel?: string) => {
+  if (!channel) return 'bg-gray-400';
+  const colors = [
+    'bg-red-500', 'bg-orange-500', 'bg-amber-500', 'bg-green-500', 
+    'bg-emerald-500', 'bg-teal-500', 'bg-cyan-500', 'bg-blue-500', 
+    'bg-indigo-500', 'bg-violet-500', 'bg-purple-500', 'bg-fuchsia-500', 'bg-pink-500', 'bg-rose-500'
+  ];
+  let hash = 0;
+  for (let i = 0; i < channel.length; i++) {
+    hash = channel.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return colors[Math.abs(hash) % colors.length];
+};
+
 const ScheduledVideos: React.FC = () => {
   const [videos, setVideos] = useState<Video[]>([]);
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
@@ -35,6 +51,7 @@ const ScheduledVideos: React.FC = () => {
 
   // Estados para o Calendário
   const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null); // Data selecionada para o painel lateral
 
   // Estados para edição de data
   const [editingDateId, setEditingDateId] = useState<string | null>(null);
@@ -135,14 +152,12 @@ const ScheduledVideos: React.FC = () => {
     if (!window.confirm('Deseja cancelar o agendamento e mover para "Recentes"?')) return;
 
     try {
-      // Atualiza status para 'Created', remove publish_at E LIMPA youtube_id
-      // Isso garante que o vídeo volte "limpo" para a lista de Recentes
       const { error } = await supabase
         .from('shorts_youtube')
         .update({ 
           publish_at: null,
           status: 'Created',
-          youtube_id: null // CRÍTICO: Limpa o ID para permitir re-agendamento limpo
+          youtube_id: null 
         })
         .eq('id', id);
 
@@ -225,7 +240,22 @@ const ScheduledVideos: React.FC = () => {
 
   const nextMonth = () => setCurrentMonth(addMonths(currentMonth, 1));
   const prevMonth = () => setCurrentMonth(subMonths(currentMonth, 1));
-  const goToToday = () => setCurrentMonth(new Date());
+  const goToToday = () => {
+    const today = new Date();
+    setCurrentMonth(today);
+    setSelectedDate(today); // Também seleciona o dia de hoje
+  };
+
+  // Vídeos do dia selecionado (para o painel lateral)
+  const selectedDateVideos = useMemo(() => {
+    if (!selectedDate) return [];
+    return filteredVideos.filter(video => 
+      video.publish_at && isSameDay(parseISO(video.publish_at), selectedDate)
+    ).sort((a, b) => {
+      if (!a.publish_at || !b.publish_at) return 0;
+      return new Date(a.publish_at).getTime() - new Date(b.publish_at).getTime();
+    });
+  }, [selectedDate, filteredVideos]);
 
   const renderCalendar = () => {
     const monthStart = startOfMonth(currentMonth);
@@ -237,116 +267,231 @@ const ScheduledVideos: React.FC = () => {
     const weekDays = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
     return (
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden animate-fade-in">
-        {/* Calendar Header */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-gray-50">
-          <div className="flex items-center gap-4">
-            <h2 className="text-lg font-bold text-gray-900 capitalize">
-              {format(currentMonth, 'MMMM yyyy', { locale: ptBR })}
-            </h2>
-            <div className="flex items-center bg-white rounded-md border border-gray-300 shadow-sm">
-              <button onClick={prevMonth} className="p-1.5 hover:bg-gray-100 text-gray-600 rounded-l-md border-r border-gray-200">
-                <ChevronLeft size={18} />
-              </button>
-              <button onClick={goToToday} className="px-3 py-1.5 text-sm font-medium hover:bg-gray-100 text-gray-700">
-                Hoje
-              </button>
-              <button onClick={nextMonth} className="p-1.5 hover:bg-gray-100 text-gray-600 rounded-r-md border-l border-gray-200">
-                <ChevronRight size={18} />
-              </button>
+      <div className="flex flex-col lg:flex-row gap-6 h-full">
+        {/* Calendário Grid */}
+        <div className="flex-1 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden animate-fade-in flex flex-col">
+          {/* Calendar Header */}
+          <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-gray-50">
+            <div className="flex items-center gap-4">
+              <h2 className="text-lg font-bold text-gray-900 capitalize">
+                {format(currentMonth, 'MMMM yyyy', { locale: ptBR })}
+              </h2>
+              <div className="flex items-center bg-white rounded-md border border-gray-300 shadow-sm">
+                <button onClick={prevMonth} className="p-1.5 hover:bg-gray-100 text-gray-600 rounded-l-md border-r border-gray-200">
+                  <ChevronLeft size={18} />
+                </button>
+                <button onClick={goToToday} className="px-3 py-1.5 text-sm font-medium hover:bg-gray-100 text-gray-700">
+                  Hoje
+                </button>
+                <button onClick={nextMonth} className="p-1.5 hover:bg-gray-100 text-gray-600 rounded-r-md border-l border-gray-200">
+                  <ChevronRight size={18} />
+                </button>
+              </div>
             </div>
           </div>
-          <div className="text-sm text-gray-500 hidden sm:block">
-            {filteredVideos.length} agendamentos encontrados
+
+          {/* Week Days Header */}
+          <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
+            {weekDays.map(day => (
+              <div key={day} className="py-2 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                {day}
+              </div>
+            ))}
+          </div>
+
+          {/* Calendar Grid */}
+          <div className="grid grid-cols-7 auto-rows-fr bg-gray-200 gap-px border-b border-gray-200 flex-1">
+            {calendarDays.map((day, dayIdx) => {
+              const isSelectedMonth = isSameMonth(day, monthStart);
+              const isTodayDate = isToday(day);
+              const isSelected = selectedDate && isSameDay(day, selectedDate);
+              
+              const dayVideos = filteredVideos.filter(video => 
+                video.publish_at && isSameDay(parseISO(video.publish_at), day)
+              );
+
+              return (
+                <div 
+                  key={day.toString()} 
+                  onClick={() => setSelectedDate(day)}
+                  className={`
+                    min-h-[100px] p-2 flex flex-col gap-1 transition-all cursor-pointer relative group
+                    ${!isSelectedMonth ? 'bg-gray-50/50 text-gray-400' : 'bg-white'}
+                    ${isSelected ? 'ring-2 ring-inset ring-purple-500 z-10' : 'hover:bg-purple-50/50'}
+                  `}
+                >
+                  {/* Header do Dia */}
+                  <div className="flex justify-between items-start">
+                    <span className={`
+                      text-sm font-medium w-7 h-7 flex items-center justify-center rounded-full transition-colors
+                      ${isTodayDate ? 'bg-purple-600 text-white shadow-sm' : ''}
+                      ${isSelected && !isTodayDate ? 'bg-purple-100 text-purple-700' : ''}
+                      ${!isSelectedMonth && !isTodayDate ? 'text-gray-400' : 'text-gray-700'}
+                    `}>
+                      {format(day, 'd')}
+                    </span>
+                    {dayVideos.length > 0 && (
+                      <span className="text-[10px] font-bold text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded-full border border-purple-100">
+                        {dayVideos.length}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Indicadores Visuais (Dots) */}
+                  <div className="flex-1 flex content-end flex-wrap gap-1 mt-1">
+                    {dayVideos.slice(0, 12).map((video, idx) => (
+                      <div 
+                        key={video.id}
+                        className={`w-2 h-2 rounded-full ${getChannelColor(video.channel)}`}
+                        title={`${video.channel}: ${video.title}`}
+                      />
+                    ))}
+                    {dayVideos.length > 12 && (
+                      <div className="w-2 h-2 rounded-full bg-gray-300 flex items-center justify-center text-[6px] text-gray-600 font-bold">
+                        +
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Hover Effect: "Expandir" hint */}
+                  <div className="absolute inset-0 bg-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+                </div>
+              );
+            })}
           </div>
         </div>
 
-        {/* Wrapper com scroll horizontal para mobile */}
-        <div className="overflow-x-auto">
-          <div className="min-w-[800px]">
-            {/* Week Days Header */}
-            <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
-              {weekDays.map(day => (
-                <div key={day} className="py-2 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  {day}
+        {/* Painel Lateral de Detalhes (Side Panel) */}
+        <div className={`
+          fixed inset-y-0 right-0 w-full sm:w-[400px] bg-white shadow-2xl transform transition-transform duration-300 ease-in-out z-40 border-l border-gray-200 flex flex-col
+          ${selectedDate ? 'translate-x-0' : 'translate-x-full'}
+        `}>
+          {selectedDate && (
+            <>
+              {/* Header do Painel */}
+              <div className="p-4 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">
+                    {format(selectedDate, "d 'de' MMMM", { locale: ptBR })}
+                  </h3>
+                  <p className="text-sm text-gray-500">
+                    {format(selectedDate, "EEEE", { locale: ptBR })} • {selectedDateVideos.length} agendamentos
+                  </p>
                 </div>
-              ))}
-            </div>
+                <button 
+                  onClick={() => setSelectedDate(null)}
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded-full transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
 
-            {/* Calendar Grid */}
-            <div className="grid grid-cols-7 auto-rows-fr bg-gray-200 gap-px border-b border-gray-200">
-              {calendarDays.map((day, dayIdx) => {
-                const isSelectedMonth = isSameMonth(day, monthStart);
-                const isTodayDate = isToday(day);
-                
-                const dayVideos = filteredVideos.filter(video => 
-                  video.publish_at && isSameDay(parseISO(video.publish_at), day)
-                );
+              {/* Lista de Vídeos do Dia */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/30">
+                {selectedDateVideos.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-64 text-gray-400 text-center">
+                    <CalendarIcon size={48} className="mb-3 opacity-20" />
+                    <p>Nenhum vídeo agendado para este dia.</p>
+                  </div>
+                ) : (
+                  selectedDateVideos.map(video => {
+                    const isEditing = editingDateId === video.id;
+                    const hasYoutubeId = !!video.youtube_id;
 
-                dayVideos.sort((a, b) => {
-                  if (!a.publish_at || !b.publish_at) return 0;
-                  return new Date(a.publish_at).getTime() - new Date(b.publish_at).getTime();
-                });
-
-                return (
-                  <div 
-                    key={day.toString()} 
-                    className={`min-h-[120px] bg-white p-2 flex flex-col gap-1 transition-colors hover:bg-gray-50
-                      ${!isSelectedMonth ? 'bg-gray-50/50 text-gray-400' : ''}
-                      ${isTodayDate ? 'bg-blue-50/30' : ''}
-                    `}
-                  >
-                    <div className="flex justify-between items-start">
-                      <span className={`
-                        text-sm font-medium w-7 h-7 flex items-center justify-center rounded-full
-                        ${isTodayDate ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-700'}
-                        ${!isSelectedMonth ? 'text-gray-400' : ''}
-                      `}>
-                        {format(day, 'd')}
-                      </span>
-                      {dayVideos.length > 0 && (
-                        <span className="text-[10px] font-medium text-gray-400 bg-gray-100 px-1.5 rounded-full">
-                          {dayVideos.length}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex-1 flex flex-col gap-1 mt-1 overflow-y-auto max-h-[150px] custom-scrollbar">
-                      {dayVideos.map(video => (
+                    return (
+                      <div key={video.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden group hover:shadow-md transition-shadow">
+                        {/* Thumbnail Header */}
                         <div 
-                          key={video.id}
+                          className="relative h-32 bg-gray-900 cursor-pointer"
                           onClick={() => setSelectedVideo(video)}
-                          className="group relative bg-white border border-purple-100 hover:border-purple-300 rounded p-1.5 shadow-sm cursor-pointer hover:shadow-md transition-all text-left"
                         >
-                          <div className="flex items-center gap-2">
-                            <div className="w-1 h-8 bg-purple-500 rounded-full flex-shrink-0"></div>
-                            <div className="min-w-0 flex-1">
-                              {/* Exibindo Canal em vez de Título */}
-                              <p className="text-xs font-semibold text-gray-800 truncate leading-tight">
-                                {video.channel || 'Sem canal'}
-                              </p>
-                              <div className="flex items-center gap-1 mt-0.5">
-                                <Clock size={10} className="text-gray-400" />
-                                <span className="text-[10px] text-gray-500">
-                                  {video.publish_at ? format(parseISO(video.publish_at), 'HH:mm') : '--:--'}
-                                </span>
-                              </div>
-                            </div>
+                          <video src={video.link_s3} className="w-full h-full object-cover opacity-80" muted preload="metadata" />
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors">
+                            <PlayCircle size={32} className="text-white opacity-80 group-hover:opacity-100 group-hover:scale-110 transition-all" />
                           </div>
-                          {/* Tooltip com título completo */}
-                          <div className="hidden group-hover:block absolute z-10 bottom-full left-0 w-48 bg-gray-900 text-white text-xs p-2 rounded shadow-lg mb-1 pointer-events-none">
-                            <div className="font-bold mb-1">{video.channel}</div>
-                            <div className="line-clamp-2">{video.title}</div>
+                          <div className={`absolute top-2 left-2 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 text-white ${hasYoutubeId ? 'bg-green-500' : 'bg-yellow-500'}`}>
+                            {hasYoutubeId ? <CheckCircle2 size={10} /> : <Clock size={10} />}
+                            {hasYoutubeId ? 'Sincronizado' : 'Aguardando'}
+                          </div>
+                          {video.channel && (
+                            <div className="absolute bottom-2 left-2 bg-black/60 backdrop-blur-sm text-white text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1">
+                              <Tv size={10} />
+                              {video.channel}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Body */}
+                        <div className="p-3">
+                          <h4 className="font-semibold text-gray-800 text-sm line-clamp-2 mb-2" title={video.title}>
+                            {video.title || 'Sem título'}
+                          </h4>
+
+                          {/* Data Editor */}
+                          <div className="mb-3">
+                            {isEditing ? (
+                              <div className="flex items-center gap-1 animate-fade-in bg-purple-50 p-1.5 rounded-lg border border-purple-100">
+                                <input 
+                                  type="datetime-local" 
+                                  value={newDateValue}
+                                  onChange={(e) => setNewDateValue(e.target.value)}
+                                  className="w-full text-xs p-1 border border-purple-200 rounded bg-white"
+                                />
+                                <button onClick={(e) => saveDate(video.id, e)} className="text-purple-600 hover:bg-purple-100 p-1 rounded"><Save size={14}/></button>
+                                <button onClick={cancelEditing} className="text-gray-500 hover:bg-gray-100 p-1 rounded"><X size={14}/></button>
+                              </div>
+                            ) : (
+                              <div 
+                                className="flex items-center gap-2 text-xs text-gray-500 hover:text-purple-600 cursor-pointer transition-colors w-fit p-1 hover:bg-purple-50 rounded"
+                                onClick={(e) => startEditingDate(video, e)}
+                              >
+                                <Clock size={12} />
+                                <span>{video.publish_at ? format(parseISO(video.publish_at), 'HH:mm') : '--:--'}</span>
+                                <Edit2 size={10} className="opacity-50" />
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Actions Footer */}
+                          <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
+                            <button
+                              onClick={(e) => handleDownload(video.link_s3, video.title || 'video', e)}
+                              className="flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded transition-colors"
+                            >
+                              <Download size={14} /> Baixar
+                            </button>
+                            <button
+                              onClick={(e) => handleRevertToRecent(video.id, e)}
+                              className="p-1.5 text-gray-400 hover:text-orange-500 hover:bg-orange-50 rounded transition-colors"
+                              title="Reverter"
+                            >
+                              <RotateCcw size={16} />
+                            </button>
+                            <button
+                              onClick={(e) => handleReprove(video.id, e)}
+                              className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                              title="Reprovar"
+                            >
+                              <Trash2 size={16} />
+                            </button>
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </>
+          )}
         </div>
+
+        {/* Overlay para fechar o painel ao clicar fora (Mobile/Desktop) */}
+        {selectedDate && (
+          <div 
+            className="fixed inset-0 bg-black/20 backdrop-blur-[1px] z-30 lg:hidden"
+            onClick={() => setSelectedDate(null)}
+          />
+        )}
       </div>
     );
   };
@@ -587,8 +732,8 @@ const ScheduledVideos: React.FC = () => {
   };
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-7xl">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 border-b pb-4 border-gray-200">
+    <div className="container mx-auto px-4 py-8 max-w-7xl h-[calc(100vh-100px)] flex flex-col">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 border-b pb-4 border-gray-200 flex-shrink-0">
         <h1 className="text-3xl sm:text-4xl font-extrabold text-gray-900 tracking-tight">Vídeos Agendados</h1>
         <div className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto justify-end">
           <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg">
@@ -629,7 +774,7 @@ const ScheduledVideos: React.FC = () => {
       </div>
 
       {/* Barra de Filtros */}
-      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6 flex flex-col md:flex-row gap-4 items-center">
+      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6 flex flex-col md:flex-row gap-4 items-center flex-shrink-0">
         <div className="flex items-center gap-2 text-gray-500 w-full md:w-auto">
           <Filter size={18} />
           <span className="text-sm font-medium">Filtros:</span>
@@ -701,7 +846,9 @@ const ScheduledVideos: React.FC = () => {
         )}
       </div>
 
-      {renderContent()}
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        {renderContent()}
+      </div>
 
       {selectedVideo && (
         <div 
