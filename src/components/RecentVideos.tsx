@@ -41,8 +41,35 @@ const RecentVideos: React.FC = () => {
   const suggestionsRef = useRef<HTMLDivElement>(null);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // --- EFEITO PRINCIPAL: Busca Inicial + Realtime ---
   useEffect(() => {
+    // 1. Busca inicial
     fetchRecentVideos();
+
+    // 2. Configura Realtime para atualizar a lista automaticamente
+    const channel = supabase
+      .channel('recent-videos-list-updates')
+      .on(
+        'postgres_changes',
+        {
+          event: '*', // Escuta INSERT, UPDATE e DELETE
+          schema: 'public',
+          table: 'shorts_youtube',
+        },
+        (payload) => {
+          // Quando houver qualquer mudança na tabela, recarregamos a lista
+          // para garantir que a ordenação e os filtros (status='Created') estejam corretos.
+          // Isso é mais seguro do que tentar manipular o array localmente com lógica complexa.
+          console.log('Alteração detectada no banco, atualizando lista...', payload);
+          fetchRecentVideos(true); // true = silent update (sem loading spinner tela toda)
+        }
+      )
+      .subscribe();
+
+    // Cleanup ao desmontar
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   // Resetar formulário de edição quando um vídeo é selecionado
@@ -71,8 +98,8 @@ const RecentVideos: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const fetchRecentVideos = async () => {
-    setLoading(true);
+  const fetchRecentVideos = async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const { data, error } = await supabase
@@ -108,9 +135,9 @@ const RecentVideos: React.FC = () => {
 
     } catch (err: any) {
       console.error('Erro ao buscar vídeos:', err);
-      setError('Não foi possível carregar os vídeos recentes.');
+      if (!silent) setError('Não foi possível carregar os vídeos recentes.');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -226,6 +253,8 @@ const RecentVideos: React.FC = () => {
         .eq('id', id);
 
       if (error) throw error;
+      // A atualização via Realtime vai cuidar de remover da lista, 
+      // mas podemos remover localmente para feedback instantâneo
       setVideos(videos.filter((video) => video.id !== id));
       if (selectedVideo?.id === id) setSelectedVideo(null);
     } catch (err) {
@@ -262,6 +291,7 @@ const RecentVideos: React.FC = () => {
       };
       
       setSelectedVideo(updatedVideo);
+      // Atualiza lista localmente também
       setVideos(videos.map(v => v.id === selectedVideo.id ? updatedVideo : v));
       setIsEditing(false);
       
@@ -379,7 +409,7 @@ const RecentVideos: React.FC = () => {
       
       if (isScheduled) {
         await supabase.from('shorts_youtube').update({ publish_at: posting_date }).eq('id', video.id);
-        setVideos(prev => prev.filter(v => v.id !== video.id));
+        // A atualização via Realtime vai remover da lista
         alert('Vídeo agendado com sucesso!');
       } else {
         alert('Solicitação de publicação enviada!');
@@ -539,7 +569,7 @@ const RecentVideos: React.FC = () => {
             <button onClick={() => setViewMode('grid')} className={`p-1.5 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-white text-brand-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}><LayoutGrid size={20} /></button>
             <button onClick={() => setViewMode('list')} className={`p-1.5 rounded-md transition-colors ${viewMode === 'list' ? 'bg-white text-brand-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}><List size={20} /></button>
           </div>
-          <button onClick={fetchRecentVideos} className="p-2 text-gray-500 hover:text-brand-600 hover:bg-brand-50 rounded-full transition-colors"><RefreshCw size={22} /></button>
+          <button onClick={() => fetchRecentVideos()} className="p-2 text-gray-500 hover:text-brand-600 hover:bg-brand-50 rounded-full transition-colors"><RefreshCw size={22} /></button>
           <div className="bg-brand-100 text-brand-800 text-center rounded-2xl px-5 py-2 shadow-sm">
             <div className="text-2xl font-bold leading-none">{videos.length}</div>
             <div className="text-xs leading-none tracking-tight mt-1">{videos.length === 1 ? 'Vídeo' : 'Vídeos'}</div>
