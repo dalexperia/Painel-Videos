@@ -3,13 +3,13 @@ import { supabase } from '../lib/supabaseClient';
 import { toast } from 'sonner';
 import { Sparkles, Tv } from 'lucide-react';
 
-// Som de notificação sutil (Glass Ping) em Base64 para evitar requisições de rede
-const NOTIFICATION_SOUND = 'data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YU'; // Placeholder curto, usaremos um real abaixo
-
 // Som real (Short Ping)
 const PLAY_SOUND = () => {
   try {
-    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContext) return;
+    
+    const audioContext = new AudioContext();
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
 
@@ -31,7 +31,8 @@ const PLAY_SOUND = () => {
 };
 
 const NotificationManager: React.FC = () => {
-  const processedIds = useRef<Set<string>>(new Set());
+  // Armazena IDs que JÁ geraram alerta para evitar spam
+  const alertedIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     // Solicitar permissão para notificações do sistema ao montar
@@ -39,36 +40,50 @@ const NotificationManager: React.FC = () => {
       Notification.requestPermission();
     }
 
+    console.log('🔔 NotificationManager: Iniciando monitoramento...');
+
     // Configurar o canal do Realtime
     const channel = supabase
-      .channel('shorts-alerts')
+      .channel('shorts-alerts-v2') // Nome do canal alterado para evitar conflitos de cache
       .on(
         'postgres_changes',
         {
-          event: 'INSERT',
+          event: '*', // Escuta TUDO (INSERT e UPDATE)
           schema: 'public',
           table: 'shorts_youtube',
         },
         (payload) => {
-          const newVideo = payload.new;
+          const newVideo = payload.new as any;
+          
+          // Se não houver dados novos (ex: DELETE), ignora
+          if (!newVideo || !newVideo.id) return;
 
-          // Evitar duplicatas (caso o realtime dispare duas vezes)
-          if (processedIds.current.has(newVideo.id)) return;
-          processedIds.current.add(newVideo.id);
+          // LOGICA CORRIGIDA:
+          // 1. Verifica se o vídeo está PRONTO (Created) e NÃO publicado
+          const isReady = newVideo.status === 'Created' && !newVideo.publish_at;
 
-          // Limpar cache de IDs antigos para não estourar memória
-          if (processedIds.current.size > 100) {
-            const iterator = processedIds.current.values();
-            processedIds.current.delete(iterator.next().value);
-          }
+          if (isReady) {
+            // 2. Verifica se já alertamos sobre este ID específico
+            if (alertedIds.current.has(newVideo.id)) {
+              return; // Já avisamos, ignora
+            }
 
-          // Verificar se é um vídeo "Recente" (Status Created e sem data de publicação)
-          if (newVideo.status === 'Created' && !newVideo.publish_at) {
+            // 3. Se passou pelos filtros, dispara o alerta e marca como alertado
+            console.log('✨ Novo vídeo detectado:', newVideo.title);
             triggerAlert(newVideo);
+            alertedIds.current.add(newVideo.id);
+
+            // Limpeza de memória (mantém apenas os últimos 100)
+            if (alertedIds.current.size > 100) {
+              const iterator = alertedIds.current.values();
+              alertedIds.current.delete(iterator.next().value);
+            }
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log('🔔 Status da conexão Realtime:', status);
+      });
 
     return () => {
       supabase.removeChannel(channel);
@@ -81,15 +96,22 @@ const NotificationManager: React.FC = () => {
 
     // 2. Mostrar Toast na UI (Sonner)
     toast.custom((t) => (
-      <div className="bg-white dark:bg-gray-800 border border-brand-200 dark:border-brand-800 rounded-xl shadow-2xl p-4 flex items-start gap-4 w-full max-w-md animate-slide-up pointer-events-auto">
+      <div 
+        className="bg-white dark:bg-gray-800 border border-brand-200 dark:border-brand-800 rounded-xl shadow-2xl p-4 flex items-start gap-4 w-full max-w-md animate-slide-up pointer-events-auto cursor-pointer hover:bg-gray-50 transition-colors"
+        onClick={() => {
+          toast.dismiss(t);
+          // Opcional: Focar na janela ou navegar
+          window.focus();
+        }}
+      >
         <div className="bg-gradient-to-br from-brand-500 to-brand-600 p-2.5 rounded-lg shadow-lg shadow-brand-500/30 flex-shrink-0">
           <Sparkles className="text-white w-5 h-5" />
         </div>
         <div className="flex-1 min-w-0">
           <h4 className="text-sm font-bold text-gray-900 dark:text-white mb-0.5">
-            Novo Vídeo Detectado!
+            Novo Vídeo Criado!
           </h4>
-          <p className="text-sm text-gray-600 dark:text-gray-300 line-clamp-1 font-medium">
+          <p className="text-sm text-gray-600 dark:text-gray-300 line-clamp-2 font-medium">
             {video.title || 'Vídeo sem título'}
           </p>
           {video.channel && (
@@ -100,7 +122,10 @@ const NotificationManager: React.FC = () => {
           )}
         </div>
         <button 
-          onClick={() => toast.dismiss(t)}
+          onClick={(e) => {
+            e.stopPropagation();
+            toast.dismiss(t);
+          }}
           className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
         >
           <span className="sr-only">Fechar</span>
@@ -116,18 +141,21 @@ const NotificationManager: React.FC = () => {
 
     // 3. Notificação do Sistema (Nativa do OS)
     if ('Notification' in window && Notification.permission === 'granted') {
-      // Verifica se a página está visível. Se estiver oculta, manda notificação do sistema.
       if (document.visibilityState === 'hidden') {
-        new Notification('Novo Vídeo Recebido', {
-          body: `${video.title || 'Sem título'} - ${video.channel || 'Canal desconhecido'}`,
-          icon: '/vite.svg', // Fallback icon
-          tag: video.id // Evita spam de notificações iguais
-        });
+        try {
+          new Notification('Novo Vídeo Recebido', {
+            body: `${video.title || 'Sem título'} - ${video.channel || 'Canal desconhecido'}`,
+            icon: '/vite.svg',
+            tag: video.id
+          });
+        } catch (e) {
+          console.error('Erro ao enviar notificação nativa:', e);
+        }
       }
     }
   };
 
-  return null; // Componente lógico, sem renderização direta
+  return null;
 };
 
 export default NotificationManager;
