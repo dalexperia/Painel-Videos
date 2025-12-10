@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabaseClient';
 import { 
   Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, 
   Download, X, Calendar as CalendarIcon, Tv, Edit2, Save, Search, 
-  Filter, CheckCircle2, Clock, ChevronLeft, ChevronRight 
+  Filter, CheckCircle2, Clock, ChevronLeft, ChevronRight, RotateCcw 
 } from 'lucide-react';
 import { 
   format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, 
@@ -11,6 +11,7 @@ import {
   isToday, parseISO 
 } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { toast } from 'sonner';
 
 interface Video {
   id: string;
@@ -123,14 +124,40 @@ const ScheduledVideos: React.FC = () => {
       if (error) throw error;
       setVideos(videos.filter((video) => video.id !== id));
       if (selectedVideo?.id === id) setSelectedVideo(null);
+      toast.success('Vídeo reprovado.');
     } catch (err) {
-      alert('Erro ao reprovar o vídeo.');
+      toast.error('Erro ao reprovar o vídeo.');
+    }
+  };
+
+  const handleRevertToRecent = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm('Deseja cancelar o agendamento e mover para "Recentes"?')) return;
+
+    try {
+      // Atualiza status para 'Created' e remove publish_at para voltar para a lista de Recentes
+      const { error } = await supabase
+        .from('shorts_youtube')
+        .update({ 
+          publish_at: null,
+          status: 'Created'
+        })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      setVideos(videos.filter((video) => video.id !== id));
+      if (selectedVideo?.id === id) setSelectedVideo(null);
+      toast.success('Vídeo movido para Recentes com sucesso!');
+    } catch (err) {
+      console.error(err);
+      toast.error('Erro ao reverter vídeo.');
     }
   };
 
   const handleDownload = async (url: string, title: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!url) return alert('URL inválida');
+    if (!url) return toast.error('URL inválida');
     try {
       document.body.style.cursor = 'wait';
       const response = await fetch(url);
@@ -171,8 +198,9 @@ const ScheduledVideos: React.FC = () => {
       if (error) throw error;
       setVideos(videos.map(v => v.id === id ? { ...v, publish_at: isoDateWithOffset } : v));
       setEditingDateId(null);
+      toast.success('Data atualizada!');
     } catch (err) {
-      alert("Erro ao salvar a nova data.");
+      toast.error("Erro ao salvar a nova data.");
     }
   };
 
@@ -437,13 +465,22 @@ const ScheduledVideos: React.FC = () => {
                     <button
                       onClick={(e) => handleDownload(video.link_s3, video.title || 'video', e)}
                       className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+                      title="Baixar Vídeo"
                     >
                       <Download size={16} />
-                      <span>Baixar</span>
+                      <span className="hidden xl:inline">Baixar</span>
+                    </button>
+                    <button
+                      onClick={(e) => handleRevertToRecent(video.id, e)}
+                      className="flex items-center justify-center p-2 text-gray-400 hover:text-orange-500 hover:bg-orange-50 rounded-lg transition-colors"
+                      title="Reverter para Recentes"
+                    >
+                      <RotateCcw size={18} />
                     </button>
                     <button
                       onClick={(e) => handleReprove(video.id, e)}
                       className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                      title="Reprovar Vídeo"
                     >
                       <Trash2 size={18} />
                     </button>
@@ -526,8 +563,16 @@ const ScheduledVideos: React.FC = () => {
                   <span className="hidden md:inline">Baixar</span>
                 </button>
                 <button
+                  onClick={(e) => handleRevertToRecent(video.id, e)}
+                  className="flex items-center justify-center p-2 text-gray-400 hover:text-orange-500 hover:bg-orange-50 rounded-lg transition-colors"
+                  title="Reverter para Recentes"
+                >
+                  <RotateCcw size={18} />
+                </button>
+                <button
                   onClick={(e) => handleReprove(video.id, e)}
                   className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                  title="Reprovar"
                 >
                   <Trash2 size={18} />
                 </button>
@@ -705,6 +750,13 @@ const ScheduledVideos: React.FC = () => {
                 >
                   <Download size={18} />
                   <span>Baixar</span>
+                </button>
+                <button
+                  onClick={(e) => handleRevertToRecent(selectedVideo.id, e)}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-orange-600 hover:bg-orange-700 rounded-lg transition-colors font-semibold"
+                >
+                  <RotateCcw size={18} />
+                  <span>Reverter</span>
                 </button>
               </div>
             </div>
