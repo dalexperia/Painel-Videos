@@ -9,6 +9,8 @@ import ScheduledVideos from './components/ScheduledVideos';
 import RecentVideos from './components/RecentVideos';
 import Dashboard from './components/Dashboard';
 import Settings from './components/Settings';
+import NotificationManager from './components/NotificationManager'; // Importar o Manager
+import { Toaster } from 'sonner'; // Importar o Toaster UI
 import { 
   Clapperboard, 
   Trash2, 
@@ -98,6 +100,10 @@ const AppContent = () => {
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col">
+      {/* Sistema de Notificações */}
+      <NotificationManager />
+      <Toaster position="top-right" expand={true} richColors closeButton />
+
       {/* Header Responsivo */}
       <header className="bg-white shadow-sm sticky top-0 z-40 border-b border-gray-200">
         <div className="container mx-auto px-4 max-w-7xl">
