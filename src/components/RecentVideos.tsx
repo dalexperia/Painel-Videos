@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabaseClient';
 import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, X, Calendar, Sparkles, Tv, Edit2, Save, XCircle, Hash, Tag, Search, Loader2 } from 'lucide-react';
 import PostModal, { Video as PostModalVideo } from './PostModal';
 import { generateContentAI } from '../lib/ai';
-import { toast } from 'sonner'; // Usando Sonner para feedback melhor
+import { toast } from 'sonner';
 
 // Reutiliza a interface do PostModal para consistência
 type Video = PostModalVideo;
@@ -42,8 +42,34 @@ const RecentVideos: React.FC = () => {
   const suggestionsRef = useRef<HTMLDivElement>(null);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // --- MONITORAMENTO REALTIME ---
   useEffect(() => {
+    // 1. Busca inicial
     fetchRecentVideos();
+
+    // 2. Configura Subscription do Supabase para monitorar mudanças
+    const channel = supabase
+      .channel('recent-videos-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*', // Escuta INSERT, UPDATE e DELETE
+          schema: 'public',
+          table: 'shorts_youtube',
+        },
+        (payload) => {
+          // Quando houver qualquer mudança na tabela, recarregamos a lista.
+          // Isso garante que se o Backend (n8n) atualizar o status, publish_at ou youtube_id,
+          // a lista será atualizada automaticamente.
+          fetchRecentVideos();
+        }
+      )
+      .subscribe();
+
+    // Cleanup ao desmontar
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   // Resetar formulário de edição quando um vídeo é selecionado
@@ -73,14 +99,18 @@ const RecentVideos: React.FC = () => {
   }, []);
 
   const fetchRecentVideos = async () => {
-    setLoading(true);
+    // Não setamos loading=true aqui para evitar "piscar" a tela em atualizações realtime
+    // Apenas na primeira carga ou erro
+    if (videos.length === 0 && !error) setLoading(true);
+    
     setError(null);
     try {
       const { data, error } = await supabase
         .from('shorts_youtube')
         .select('*')
         .eq('status', 'Created')
-        .is('publish_at', null)
+        .is('publish_at', null) // Só traz vídeos que NÃO têm data de publicação
+        .is('youtube_id', null) // CRÍTICO: Só traz vídeos que NÃO têm ID do YouTube (não postados)
         .eq('failed', false)
         .order('created_at', { ascending: false });
 
@@ -228,11 +258,9 @@ const RecentVideos: React.FC = () => {
 
       if (error) throw error;
       
-      // CORREÇÃO: Não removemos manualmente. Recarregamos do banco.
-      // setVideos(videos.filter((video) => video.id !== id)); 
-      
       toast.success('Vídeo reprovado com sucesso.');
-      await fetchRecentVideos(); // Atualiza a lista com a verdade do banco
+      // O Realtime irá atualizar a lista automaticamente, mas podemos forçar para feedback imediato
+      await fetchRecentVideos(); 
 
       if (selectedVideo?.id === id) setSelectedVideo(null);
     } catch (err) {
@@ -269,7 +297,7 @@ const RecentVideos: React.FC = () => {
       };
       
       setSelectedVideo(updatedVideo);
-      // Aqui podemos atualizar localmente pois é apenas edição de conteúdo, não mudança de status
+      // Atualiza localmente para feedback rápido, mas o realtime confirmará
       setVideos(videos.map(v => v.id === selectedVideo.id ? updatedVideo : v));
       setIsEditing(false);
       toast.success('Alterações salvas!');
@@ -384,25 +412,17 @@ const RecentVideos: React.FC = () => {
 
       if (!response.ok) throw new Error(`Erro no Webhook: ${response.status}`);
       
-      // 2. Se for agendamento, atualizamos o banco para refletir isso
+      // 2. Feedback ao usuário
       if (isScheduled) {
-        const { error } = await supabase
-          .from('shorts_youtube')
-          .update({ publish_at: posting_date })
-          .eq('id', video.id);
-          
-        if (error) throw error;
-        toast.success('Vídeo agendado com sucesso!');
+        toast.success('Solicitação de agendamento enviada! Aguardando processamento...');
       } else {
-        toast.success('Solicitação de publicação enviada!');
+        toast.success('Solicitação de publicação enviada! Aguardando processamento...');
       }
-      
-      // CORREÇÃO CRÍTICA:
-      // Não removemos o vídeo manualmente do estado.
-      // Recarregamos a lista do banco de dados para garantir que o status mudou lá.
-      // Se o webhook falhar, o vídeo continua na lista.
-      
-      await fetchRecentVideos();
+
+      // --- MUDANÇA CRÍTICA ---
+      // NÃO atualizamos o banco de dados aqui no Frontend.
+      // O Frontend é passivo. O Webhook (Backend) deve receber o payload e atualizar o Supabase.
+      // O Realtime (useEffect) detectará a mudança e atualizará a lista.
       
       setIsPostModalOpen(false);
       setVideoToPost(null);
@@ -411,7 +431,6 @@ const RecentVideos: React.FC = () => {
     } catch (error: any) {
       console.error('ERRO FATAL:', error);
       toast.error(`Erro: ${error.message}`);
-      // Não fechamos o modal nem removemos o vídeo em caso de erro
     } finally {
       setIsPosting(false);
     }

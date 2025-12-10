@@ -135,12 +135,14 @@ const ScheduledVideos: React.FC = () => {
     if (!window.confirm('Deseja cancelar o agendamento e mover para "Recentes"?')) return;
 
     try {
-      // Atualiza status para 'Created' e remove publish_at para voltar para a lista de Recentes
+      // Atualiza status para 'Created', remove publish_at E LIMPA youtube_id
+      // Isso garante que o vídeo volte "limpo" para a lista de Recentes
       const { error } = await supabase
         .from('shorts_youtube')
         .update({ 
           publish_at: null,
-          status: 'Created'
+          status: 'Created',
+          youtube_id: null // CRÍTICO: Limpa o ID para permitir re-agendamento limpo
         })
         .eq('id', id);
 
