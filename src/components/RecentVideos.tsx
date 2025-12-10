@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabaseClient';
 import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, X, Calendar, Sparkles, Tv, Edit2, Save, XCircle, Hash, Tag, Search, Loader2 } from 'lucide-react';
 import PostModal, { Video as PostModalVideo } from './PostModal';
 import { generateContentAI } from '../lib/ai';
+import { toast } from 'sonner'; // Usando Sonner para feedback melhor
 
 // Reutiliza a interface do PostModal para consistência
 type Video = PostModalVideo;
@@ -41,35 +42,8 @@ const RecentVideos: React.FC = () => {
   const suggestionsRef = useRef<HTMLDivElement>(null);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // --- EFEITO PRINCIPAL: Busca Inicial + Realtime ---
   useEffect(() => {
-    // 1. Busca inicial
     fetchRecentVideos();
-
-    // 2. Configura Realtime para atualizar a lista automaticamente
-    const channel = supabase
-      .channel('recent-videos-list-updates')
-      .on(
-        'postgres_changes',
-        {
-          event: '*', // Escuta INSERT, UPDATE e DELETE
-          schema: 'public',
-          table: 'shorts_youtube',
-        },
-        (payload) => {
-          // Quando houver qualquer mudança na tabela, recarregamos a lista
-          // para garantir que a ordenação e os filtros (status='Created') estejam corretos.
-          // Isso é mais seguro do que tentar manipular o array localmente com lógica complexa.
-          console.log('Alteração detectada no banco, atualizando lista...', payload);
-          fetchRecentVideos(true); // true = silent update (sem loading spinner tela toda)
-        }
-      )
-      .subscribe();
-
-    // Cleanup ao desmontar
-    return () => {
-      supabase.removeChannel(channel);
-    };
   }, []);
 
   // Resetar formulário de edição quando um vídeo é selecionado
@@ -98,8 +72,8 @@ const RecentVideos: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const fetchRecentVideos = async (silent = false) => {
-    if (!silent) setLoading(true);
+  const fetchRecentVideos = async () => {
+    setLoading(true);
     setError(null);
     try {
       const { data, error } = await supabase
@@ -135,9 +109,9 @@ const RecentVideos: React.FC = () => {
 
     } catch (err: any) {
       console.error('Erro ao buscar vídeos:', err);
-      if (!silent) setError('Não foi possível carregar os vídeos recentes.');
+      setError('Não foi possível carregar os vídeos recentes.');
     } finally {
-      if (!silent) setLoading(false);
+      setLoading(false);
     }
   };
 
@@ -253,13 +227,17 @@ const RecentVideos: React.FC = () => {
         .eq('id', id);
 
       if (error) throw error;
-      // A atualização via Realtime vai cuidar de remover da lista, 
-      // mas podemos remover localmente para feedback instantâneo
-      setVideos(videos.filter((video) => video.id !== id));
+      
+      // CORREÇÃO: Não removemos manualmente. Recarregamos do banco.
+      // setVideos(videos.filter((video) => video.id !== id)); 
+      
+      toast.success('Vídeo reprovado com sucesso.');
+      await fetchRecentVideos(); // Atualiza a lista com a verdade do banco
+
       if (selectedVideo?.id === id) setSelectedVideo(null);
     } catch (err) {
       console.error("Erro ao reprovar o vídeo:", err);
-      alert('Erro ao reprovar o vídeo.');
+      toast.error('Erro ao reprovar o vídeo. Tente novamente.');
     }
   };
 
@@ -291,13 +269,14 @@ const RecentVideos: React.FC = () => {
       };
       
       setSelectedVideo(updatedVideo);
-      // Atualiza lista localmente também
+      // Aqui podemos atualizar localmente pois é apenas edição de conteúdo, não mudança de status
       setVideos(videos.map(v => v.id === selectedVideo.id ? updatedVideo : v));
       setIsEditing(false);
+      toast.success('Alterações salvas!');
       
     } catch (err) {
       console.error('Erro ao salvar alterações:', err);
-      alert('Erro ao salvar as alterações.');
+      toast.error('Erro ao salvar as alterações.');
     } finally {
       setIsSaving(false);
     }
@@ -305,7 +284,7 @@ const RecentVideos: React.FC = () => {
 
   const handleGenerateAI = async (field: 'title' | 'description' | 'tags' | 'hashtags') => {
     if (!selectedVideo || !selectedVideo.channel) {
-      alert("Canal não identificado para este vídeo.");
+      toast.error("Canal não identificado para este vídeo.");
       return;
     }
 
@@ -324,23 +303,20 @@ const RecentVideos: React.FC = () => {
         else if (field === 'hashtags') finalValue = content.join(' ');
         else finalValue = content[0]; // Fallback
       } else {
-        // Caso a IA retorne string direta (não deveria com o novo parser, mas por segurança)
         finalValue = String(content);
       }
       
-      // Se a IA retornou múltiplas opções para título/descrição, pegamos a primeira ou abrimos modal (simplificado aqui para pegar primeira)
       if (field === 'title' || field === 'description') {
          if (Array.isArray(content) && content.length > 0) {
              setEditForm(prev => ({ ...prev, [field]: content[0] }));
          }
       } else {
-         // Para tags/hashtags, substituímos tudo
          setEditForm(prev => ({ ...prev, [field]: finalValue }));
       }
 
     } catch (err: any) {
       console.error("Erro ao gerar AI:", err);
-      alert(err.message || "Erro ao gerar conteúdo com IA.");
+      toast.error(err.message || "Erro ao gerar conteúdo com IA.");
     } finally {
       setGeneratingField(null);
     }
@@ -348,7 +324,7 @@ const RecentVideos: React.FC = () => {
 
   const handleDownload = async (url: string, title: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!url) { alert('URL inválida'); return; }
+    if (!url) { toast.error('URL inválida'); return; }
     try {
       document.body.style.cursor = 'wait';
       const response = await fetch(url);
@@ -399,6 +375,7 @@ const RecentVideos: React.FC = () => {
         posting_date: posting_date
       };
 
+      // 1. Envia para o Webhook (n8n ou similar)
       const response = await fetch(options.webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -407,13 +384,25 @@ const RecentVideos: React.FC = () => {
 
       if (!response.ok) throw new Error(`Erro no Webhook: ${response.status}`);
       
+      // 2. Se for agendamento, atualizamos o banco para refletir isso
       if (isScheduled) {
-        await supabase.from('shorts_youtube').update({ publish_at: posting_date }).eq('id', video.id);
-        // A atualização via Realtime vai remover da lista
-        alert('Vídeo agendado com sucesso!');
+        const { error } = await supabase
+          .from('shorts_youtube')
+          .update({ publish_at: posting_date })
+          .eq('id', video.id);
+          
+        if (error) throw error;
+        toast.success('Vídeo agendado com sucesso!');
       } else {
-        alert('Solicitação de publicação enviada!');
+        toast.success('Solicitação de publicação enviada!');
       }
+      
+      // CORREÇÃO CRÍTICA:
+      // Não removemos o vídeo manualmente do estado.
+      // Recarregamos a lista do banco de dados para garantir que o status mudou lá.
+      // Se o webhook falhar, o vídeo continua na lista.
+      
+      await fetchRecentVideos();
       
       setIsPostModalOpen(false);
       setVideoToPost(null);
@@ -421,7 +410,8 @@ const RecentVideos: React.FC = () => {
       
     } catch (error: any) {
       console.error('ERRO FATAL:', error);
-      alert(`Erro: ${error.message}`);
+      toast.error(`Erro: ${error.message}`);
+      // Não fechamos o modal nem removemos o vídeo em caso de erro
     } finally {
       setIsPosting(false);
     }
@@ -569,7 +559,7 @@ const RecentVideos: React.FC = () => {
             <button onClick={() => setViewMode('grid')} className={`p-1.5 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-white text-brand-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}><LayoutGrid size={20} /></button>
             <button onClick={() => setViewMode('list')} className={`p-1.5 rounded-md transition-colors ${viewMode === 'list' ? 'bg-white text-brand-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}><List size={20} /></button>
           </div>
-          <button onClick={() => fetchRecentVideos()} className="p-2 text-gray-500 hover:text-brand-600 hover:bg-brand-50 rounded-full transition-colors"><RefreshCw size={22} /></button>
+          <button onClick={fetchRecentVideos} className="p-2 text-gray-500 hover:text-brand-600 hover:bg-brand-50 rounded-full transition-colors"><RefreshCw size={22} /></button>
           <div className="bg-brand-100 text-brand-800 text-center rounded-2xl px-5 py-2 shadow-sm">
             <div className="text-2xl font-bold leading-none">{videos.length}</div>
             <div className="text-xs leading-none tracking-tight mt-1">{videos.length === 1 ? 'Vídeo' : 'Vídeos'}</div>
