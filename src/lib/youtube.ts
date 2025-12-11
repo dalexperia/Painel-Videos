@@ -19,6 +19,15 @@ export interface YouTubeVideoDetails {
   uploadStatus: string;
 }
 
+export interface ChannelStats {
+  id: string;
+  title: string;
+  subscriberCount: string;
+  viewCount: string; // Total do canal
+  videoCount: string;
+  avatarUrl: string;
+}
+
 /**
  * Converte duração ISO 8601 (PT1M30S) para formato legível (01:30)
  */
@@ -74,7 +83,7 @@ export const validateApiKey = async (apiKey: string): Promise<boolean> => {
 };
 
 /**
- * Busca estatísticas para uma lista de IDs usando uma API Key específica.
+ * Busca estatísticas para uma lista de IDs de VÍDEOS.
  */
 export const fetchYouTubeStats = async (videoIds: string[], apiKey: string): Promise<Record<string, YouTubeStats>> => {
   if (!apiKey || videoIds.length === 0) {
@@ -170,6 +179,41 @@ export const fetchVideoDetails = async (videoIds: string[], apiKey: string): Pro
   }
 
   return allDetails;
+};
+
+/**
+ * Busca estatísticas globais de um CANAL (Inscritos, Views Totais, Avatar).
+ */
+export const fetchChannelStats = async (channelId: string, apiKey: string): Promise<ChannelStats | null> => {
+  if (!apiKey || !channelId) return null;
+
+  try {
+    const url = `${BASE_URL}/channels?part=snippet,statistics&id=${channelId}&key=${apiKey}`;
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      console.error(`Erro ao buscar canal ${channelId}: ${response.statusText}`);
+      return null;
+    }
+
+    const data = await response.json();
+    
+    if (data.items && data.items.length > 0) {
+      const item = data.items[0];
+      return {
+        id: item.id,
+        title: item.snippet.title,
+        subscriberCount: item.statistics.subscriberCount,
+        viewCount: item.statistics.viewCount,
+        videoCount: item.statistics.videoCount,
+        avatarUrl: item.snippet.thumbnails?.default?.url || ''
+      };
+    }
+  } catch (error) {
+    console.error('Erro na requisição do canal:', error);
+  }
+  
+  return null;
 };
 
 export const formatNumber = (numStr: string | undefined): string => {

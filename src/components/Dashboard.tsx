@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { fetchYouTubeStats, formatNumber, YouTubeStats } from '../lib/youtube';
-import { AutomationMonitor } from './AutomationMonitor'; // Importando o novo componente
+import { fetchYouTubeStats, fetchChannelStats, formatNumber, YouTubeStats, ChannelStats } from '../lib/youtube';
+import { AutomationMonitor } from './AutomationMonitor';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   PieChart, Pie, Cell, Legend, BarChart, Bar
 } from 'recharts';
 import { 
   Youtube, Calendar, Sparkles, Trash2, AlertCircle, Loader2, 
-  TrendingUp, Activity, Layers, Zap, Eye, ThumbsUp, Trophy
+  TrendingUp, Activity, Layers, Zap, Eye, ThumbsUp, Trophy, Users, Video
 } from 'lucide-react';
 
 // --- Utilitários e Configurações ---
@@ -60,6 +60,40 @@ const StatCard: React.FC<{
   </div>
 );
 
+const ChannelCard: React.FC<{ stats: ChannelStats }> = ({ stats }) => (
+  <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4 hover:shadow-md transition-all">
+    <div className="relative">
+      {stats.avatarUrl ? (
+        <img src={stats.avatarUrl} alt={stats.title} className="w-14 h-14 rounded-full border-2 border-gray-100" />
+      ) : (
+        <div className="w-14 h-14 rounded-full bg-gray-200 flex items-center justify-center text-gray-400">
+          <Youtube size={24} />
+        </div>
+      )}
+      <div className="absolute -bottom-1 -right-1 bg-red-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full border-2 border-white">
+        YT
+      </div>
+    </div>
+    <div className="flex-grow min-w-0">
+      <h4 className="font-bold text-gray-900 truncate" title={stats.title}>{stats.title}</h4>
+      <div className="flex items-center gap-3 mt-1">
+        <div className="flex items-center gap-1 text-xs text-gray-500" title="Inscritos">
+          <Users size={12} />
+          <span className="font-semibold text-gray-700">{formatNumber(stats.subscriberCount)}</span>
+        </div>
+        <div className="flex items-center gap-1 text-xs text-gray-500" title="Total de Views">
+          <Eye size={12} />
+          <span className="font-semibold text-gray-700">{formatNumber(stats.viewCount)}</span>
+        </div>
+        <div className="flex items-center gap-1 text-xs text-gray-500" title="Total de Vídeos">
+          <Video size={12} />
+          <span className="font-semibold text-gray-700">{formatNumber(stats.videoCount)}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+);
+
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
     return (
@@ -91,6 +125,7 @@ const Dashboard: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [rawData, setRawData] = useState<any[]>([]);
   const [youtubeStats, setYoutubeStats] = useState<Record<string, YouTubeStats>>({});
+  const [channelRealStats, setChannelRealStats] = useState<ChannelStats[]>([]);
 
   // Carregamento Inicial (Banco de Dados)
   useEffect(() => {
@@ -110,7 +145,6 @@ const Dashboard: React.FC = () => {
 
       } catch (err: any) {
         console.error("Error fetching dashboard data:", err);
-        // Mostra a mensagem real do erro para facilitar o debug
         setError(err.message || "Não foi possível carregar os dados do dashboard.");
       } finally {
         setLoading(false);
@@ -120,25 +154,34 @@ const Dashboard: React.FC = () => {
     fetchData();
   }, []);
 
-  // Busca de Stats do YouTube (Separada para não bloquear a UI inicial)
+  // Busca de Stats do YouTube (Vídeos e Canais)
   const fetchStatsFromYouTube = async (videos: any[]) => {
     setLoadingStats(true);
     try {
-      // 1. Pegar configurações (API Keys)
+      // 1. Pegar configurações (API Keys e Channel IDs)
       const { data: settingsData } = await supabase
         .from('shorts_settings')
-        .select('channel, youtube_api_key');
+        .select('channel, youtube_api_key, youtube_channel_id');
       
       const channelKeys: Record<string, string> = {};
+      const channelIds: Record<string, string> = {}; // Mapeia API Key -> Channel ID para busca
+
       if (settingsData) {
         settingsData.forEach(s => {
-          if (s.channel && s.youtube_api_key) {
-            channelKeys[s.channel.trim().toLowerCase()] = s.youtube_api_key;
+          const normalizedName = s.channel.trim().toLowerCase();
+          if (s.youtube_api_key) {
+            channelKeys[normalizedName] = s.youtube_api_key;
+            
+            // Se tiver ID do canal configurado, vamos buscar stats dele
+            if (s.youtube_channel_id) {
+              // Armazena tupla [ID, Key]
+              channelIds[s.youtube_channel_id] = s.youtube_api_key;
+            }
           }
         });
       }
 
-      // 2. Agrupar IDs por API Key
+      // --- Busca Stats dos VÍDEOS ---
       const videosByChannel: Record<string, string[]> = {};
       videos.forEach(v => {
         if (v.youtube_id && v.channel) {
@@ -152,15 +195,23 @@ const Dashboard: React.FC = () => {
         }
       });
 
-      // 3. Buscar dados na API
-      const allStats: Record<string, YouTubeStats> = {};
-      const promises = Object.entries(videosByChannel).map(async ([apiKey, ids]) => {
+      const allVideoStats: Record<string, YouTubeStats> = {};
+      const videoPromises = Object.entries(videosByChannel).map(async ([apiKey, ids]) => {
         const stats = await fetchYouTubeStats(ids, apiKey);
-        Object.assign(allStats, stats);
+        Object.assign(allVideoStats, stats);
       });
 
-      await Promise.all(promises);
-      setYoutubeStats(allStats);
+      // --- Busca Stats dos CANAIS ---
+      const channelStatsList: ChannelStats[] = [];
+      const channelPromises = Object.entries(channelIds).map(async ([cId, apiKey]) => {
+        const cStats = await fetchChannelStats(cId, apiKey);
+        if (cStats) channelStatsList.push(cStats);
+      });
+
+      await Promise.all([...videoPromises, ...channelPromises]);
+      
+      setYoutubeStats(allVideoStats);
+      setChannelRealStats(channelStatsList.sort((a, b) => parseInt(b.subscriberCount) - parseInt(a.subscriberCount)));
 
     } catch (err) {
       console.error("Erro ao buscar stats do YouTube:", err);
@@ -198,7 +249,7 @@ const Dashboard: React.FC = () => {
         };
       }
 
-      // Stats do YouTube
+      // Stats do YouTube (Vídeos)
       if (item.youtube_id && youtubeStats[item.youtube_id]) {
         const stats = youtubeStats[item.youtube_id];
         channels[channelName].totalViews += parseInt(stats.viewCount || '0', 10);
@@ -217,7 +268,6 @@ const Dashboard: React.FC = () => {
         channels[channelName].posted++;
         categorized = true;
       } else if (item.status === 'Created') {
-        // LÓGICA CORRIGIDA: Para ser "Recente", não pode ter data de publicação E NÃO PODE ter youtube_id
         const hasNoPublishDate = !item.publish_at || item.publish_at.trim() === '';
         const hasNoYoutubeId = !item.youtube_id || item.youtube_id.trim() === '';
 
@@ -327,7 +377,7 @@ const Dashboard: React.FC = () => {
           <p className="text-gray-500 mt-1">Acompanhe a produção e a performance dos seus canais.</p>
         </div>
         <div className="flex items-center gap-3">
-          {/* Monitor de Automação (Novo) */}
+          {/* Monitor de Automação */}
           <AutomationMonitor />
 
           {loadingStats && (
@@ -374,7 +424,22 @@ const Dashboard: React.FC = () => {
         />
       </div>
 
-      {/* KPI Cards - Performance (Novos) */}
+      {/* Seção de Métricas Oficiais dos Canais (NOVO) */}
+      {channelRealStats.length > 0 && (
+        <div className="animate-fade-in">
+          <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2 mb-4">
+            <Users size={20} className="text-brand-500" />
+            Métricas Oficiais dos Canais
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {channelRealStats.map((stats) => (
+              <ChannelCard key={stats.id} stats={stats} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* KPI Cards - Performance (Vídeos) */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-gradient-to-br from-indigo-600 to-blue-700 rounded-2xl p-6 text-white shadow-lg relative overflow-hidden">
           <div className="absolute top-0 right-0 p-4 opacity-10">
@@ -383,12 +448,12 @@ const Dashboard: React.FC = () => {
           <div className="relative z-10">
             <div className="flex items-center gap-2 mb-2 opacity-90">
               <Eye size={20} />
-              <span className="font-medium">Total de Visualizações</span>
+              <span className="font-medium">Views em Vídeos Rastreados</span>
             </div>
             <div className="text-4xl font-bold mb-1">
               {loadingStats ? '...' : formatNumber(globalStats.views.toString())}
             </div>
-            <p className="text-sm opacity-75">Acumulado em todos os canais</p>
+            <p className="text-sm opacity-75">Soma dos vídeos no banco de dados</p>
           </div>
         </div>
 
