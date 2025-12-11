@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { 
-  Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, 
+  Trash2, AlertCircle, RefreshCw, LayoutGrid, List, 
   Download, X, Calendar as CalendarIcon, Tv, Edit2, Save, Search, 
-  Filter, CheckCircle2, Clock, ChevronLeft, ChevronRight, RotateCcw
+  Filter, CheckCircle2, Clock, ChevronLeft, ChevronRight, RotateCcw,
+  ChevronDown, ChevronUp
 } from 'lucide-react';
 import { 
   format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, 
@@ -26,16 +27,9 @@ interface Video {
 
 type ViewMode = 'grid' | 'list' | 'calendar';
 
-// Paleta de cores idêntica ao Dashboard
 const DASHBOARD_COLORS = [
-  '#6366f1', // Indigo
-  '#ec4899', // Pink
-  '#10b981', // Emerald
-  '#f59e0b', // Amber
-  '#3b82f6', // Blue
-  '#8b5cf6', // Violet
-  '#f43f5e', // Rose
-  '#06b6d4', // Cyan
+  '#6366f1', '#ec4899', '#10b981', '#f59e0b', 
+  '#3b82f6', '#8b5cf6', '#f43f5e', '#06b6d4',
 ];
 
 const ScheduledVideos: React.FC = () => {
@@ -54,6 +48,7 @@ const ScheduledVideos: React.FC = () => {
   const [newDateValue, setNewDateValue] = useState<string>('');
 
   // Estados de Filtro
+  const [showFilters, setShowFilters] = useState(false); // Começa fechado
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedChannel, setSelectedChannel] = useState('');
   const [dateStart, setDateStart] = useState('');
@@ -114,15 +109,13 @@ const ScheduledVideos: React.FC = () => {
     });
   }, [videos, searchTerm, selectedChannel, dateStart, dateEnd, viewMode]);
 
-  // Lista única de canais ordenada alfabeticamente para consistência de cores
   const uniqueChannels = useMemo(() => {
     const channels = videos.map(v => v.channel).filter(Boolean) as string[];
     return Array.from(new Set(channels)).sort();
   }, [videos]);
 
-  // Função para pegar a cor baseada no índice do canal na lista ordenada
   const getChannelColorHex = (channel?: string) => {
-    if (!channel) return '#9ca3af'; // Gray default
+    if (!channel) return '#9ca3af';
     const index = uniqueChannels.indexOf(channel);
     if (index === -1) return '#9ca3af';
     return DASHBOARD_COLORS[index % DASHBOARD_COLORS.length];
@@ -306,18 +299,28 @@ const ScheduledVideos: React.FC = () => {
                 <div 
                   key={day.toString()} 
                   className={`
-                    min-h-[80px] md:min-h-[140px] p-2 flex flex-col gap-1 transition-all relative
-                    ${!isSelectedMonth ? 'bg-gray-50/50 text-gray-400' : 'bg-white'}
-                    hover:bg-gray-50
+                    relative border-b border-gray-100 transition-all hover:bg-gray-50
+                    ${!isSelectedMonth ? 'bg-gray-50/30 text-gray-400' : 'bg-white'}
+                    
+                    /* Desktop Styles */
+                    md:min-h-[140px] md:p-2 md:flex-col md:gap-1 md:border-none
+                    
+                    /* Mobile Styles (Agenda View) */
+                    flex flex-row min-h-[auto] p-3 gap-3
                   `}
                 >
-                  {/* Header do Dia */}
-                  <div className="flex md:justify-center items-center justify-start gap-2 mb-1">
-                    {/* Nome do dia da semana (Apenas Mobile) */}
-                    <span className="md:hidden text-xs font-semibold uppercase text-gray-400 w-8">
-                      {format(day, 'EEE', { locale: ptBR })}
+                  {/* MOBILE: Coluna de Data (Esquerda) */}
+                  <div className="md:hidden flex flex-col items-center justify-center w-12 flex-shrink-0 border-r border-gray-100 pr-3">
+                    <span className="text-[10px] font-bold uppercase text-gray-400">
+                      {format(day, 'EEE', { locale: ptBR }).replace('.', '')}
                     </span>
+                    <span className={`text-xl font-bold ${isTodayDate ? 'text-purple-600' : 'text-gray-700'}`}>
+                      {format(day, 'd')}
+                    </span>
+                  </div>
 
+                  {/* DESKTOP: Header do Dia (Topo) */}
+                  <div className="hidden md:flex md:justify-center items-center justify-start gap-2 mb-1">
                     <span className={`
                       text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full
                       ${isTodayDate ? 'bg-purple-600 text-white shadow-sm' : 'text-gray-500'}
@@ -326,8 +329,8 @@ const ScheduledVideos: React.FC = () => {
                     </span>
                   </div>
 
-                  {/* Lista de Vídeos (Estilo Linha Única) */}
-                  <div className="flex flex-col gap-0.5">
+                  {/* Lista de Vídeos */}
+                  <div className="flex-1 flex flex-col gap-1.5 md:gap-0.5">
                     {dayVideos.map((video) => (
                       <div 
                         key={video.id}
@@ -335,7 +338,7 @@ const ScheduledVideos: React.FC = () => {
                           e.stopPropagation();
                           setSelectedVideo(video);
                         }}
-                        className="flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-gray-100 cursor-pointer transition-colors group"
+                        className="flex items-center gap-2 md:gap-1.5 px-2 py-1.5 md:px-1.5 md:py-1 rounded bg-gray-50 md:bg-transparent hover:bg-gray-100 cursor-pointer transition-colors group border border-gray-100 md:border-none"
                         title={`${video.title || 'Sem título'} - ${video.channel}`}
                       >
                         {/* Bolinha Colorida */}
@@ -345,16 +348,22 @@ const ScheduledVideos: React.FC = () => {
                         />
                         
                         {/* Hora */}
-                        <span className="text-[11px] font-medium text-gray-500 flex-shrink-0">
+                        <span className="text-xs md:text-[11px] font-medium text-gray-500 flex-shrink-0">
                           {video.publish_at ? format(parseISO(video.publish_at), 'HH:mm') : '--:--'}
                         </span>
 
                         {/* Nome do Canal */}
-                        <span className="text-[11px] font-semibold text-gray-700 truncate">
+                        <span className="text-xs md:text-[11px] font-semibold text-gray-700 truncate">
                           {video.channel || 'Sem canal'}
                         </span>
                       </div>
                     ))}
+                    {/* Espaço vazio no mobile se não houver vídeos, para manter altura mínima visual */}
+                    {dayVideos.length === 0 && (
+                      <div className="md:hidden h-full flex items-center text-xs text-gray-300 italic">
+                        Nada agendado
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -414,7 +423,6 @@ const ScheduledVideos: React.FC = () => {
                 key={video.id} 
                 className="group bg-white rounded-xl shadow-md hover:shadow-lg transition-all duration-300 border border-gray-100 overflow-hidden flex flex-col hover:-translate-y-1"
               >
-                {/* Substituído pelo VideoSmartPreview */}
                 <div onClick={() => setSelectedVideo(video)}>
                   <VideoSmartPreview src={video.link_s3} />
                   {video.channel && (
@@ -625,76 +633,93 @@ const ScheduledVideos: React.FC = () => {
         </div>
       </div>
 
-      {/* Barra de Filtros */}
-      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6 flex flex-col md:flex-row gap-4 items-center flex-shrink-0">
-        <div className="flex items-center gap-2 text-gray-500 w-full md:w-auto">
-          <Filter size={18} />
-          <span className="text-sm font-medium">Filtros:</span>
-        </div>
+      {/* Barra de Filtros (Accordion) */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 mb-6 flex-shrink-0 overflow-hidden">
+        <button 
+          onClick={() => setShowFilters(!showFilters)}
+          className="w-full flex items-center justify-between p-4 bg-gray-50/50 hover:bg-gray-50 transition-colors"
+        >
+          <div className="flex items-center gap-2 text-gray-700 font-medium">
+            <Filter size={18} className="text-purple-600" />
+            <span>Filtros e Busca</span>
+            {(searchTerm || selectedChannel || dateStart || dateEnd) && (
+              <span className="ml-2 text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
+                Ativos
+              </span>
+            )}
+          </div>
+          {showFilters ? <ChevronUp size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
+        </button>
         
-        <div className="flex-1 w-full grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-          {/* Busca */}
-          <div className="relative">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Buscar por título..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-            />
-          </div>
+        {showFilters && (
+          <div className="p-4 border-t border-gray-100 animate-slide-down">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+              {/* Busca */}
+              <div className="relative">
+                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Buscar por título..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                />
+              </div>
 
-          {/* Canal */}
-          <div className="relative">
-            <Tv size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <select
-              value={selectedChannel}
-              onChange={(e) => setSelectedChannel(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent appearance-none bg-white"
-            >
-              <option value="">Todos os Canais</option>
-              {uniqueChannels.map(channel => (
-                <option key={channel} value={channel}>{channel}</option>
-              ))}
-            </select>
-          </div>
+              {/* Canal */}
+              <div className="relative">
+                <Tv size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <select
+                  value={selectedChannel}
+                  onChange={(e) => setSelectedChannel(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent appearance-none bg-white"
+                >
+                  <option value="">Todos os Canais</option>
+                  {uniqueChannels.map(channel => (
+                    <option key={channel} value={channel}>{channel}</option>
+                  ))}
+                </select>
+              </div>
 
-          {/* Data Início */}
-          <div className={`relative ${viewMode === 'calendar' ? 'opacity-50 pointer-events-none' : ''}`}>
-            <CalendarIcon size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              type="date"
-              value={dateStart}
-              onChange={(e) => setDateStart(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-600"
-              placeholder="De"
-              disabled={viewMode === 'calendar'}
-            />
-          </div>
+              {/* Data Início */}
+              <div className={`relative ${viewMode === 'calendar' ? 'opacity-50 pointer-events-none' : ''}`}>
+                <CalendarIcon size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="date"
+                  value={dateStart}
+                  onChange={(e) => setDateStart(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-600"
+                  placeholder="De"
+                  disabled={viewMode === 'calendar'}
+                />
+              </div>
 
-          {/* Data Fim */}
-          <div className={`relative ${viewMode === 'calendar' ? 'opacity-50 pointer-events-none' : ''}`}>
-            <CalendarIcon size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              type="date"
-              value={dateEnd}
-              onChange={(e) => setDateEnd(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-600"
-              placeholder="Até"
-              disabled={viewMode === 'calendar'}
-            />
-          </div>
-        </div>
+              {/* Data Fim */}
+              <div className={`relative ${viewMode === 'calendar' ? 'opacity-50 pointer-events-none' : ''}`}>
+                <CalendarIcon size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="date"
+                  value={dateEnd}
+                  onChange={(e) => setDateEnd(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-600"
+                  placeholder="Até"
+                  disabled={viewMode === 'calendar'}
+                />
+              </div>
+            </div>
 
-        {(searchTerm || selectedChannel || dateStart || dateEnd) && (
-          <button
-            onClick={clearFilters}
-            className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-            title="Limpar Filtros"
-          >
-            <X size={20} />
-          </button>
+            {(searchTerm || selectedChannel || dateStart || dateEnd) && (
+              <div className="mt-3 flex justify-end">
+                <button
+                  onClick={clearFilters}
+                  className="flex items-center gap-1 text-sm text-red-500 hover:text-red-700 font-medium"
+                >
+                  <X size={16} />
+                  Limpar Filtros
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
