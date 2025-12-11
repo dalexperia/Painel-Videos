@@ -6,7 +6,8 @@ import { useAuth, UserRole } from '../contexts/AuthContext';
 import { 
   Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle, Key, 
   CheckCircle, Wifi, RefreshCw, Database, Users, Shield, Lock, User, Sparkles,
-  Cpu, Server, Zap, Globe, HelpCircle, ExternalLink, Info, Youtube, Fingerprint
+  Cpu, Server, Zap, Globe, HelpCircle, ExternalLink, Info, Youtube, Fingerprint,
+  Play, Activity, Clock
 } from 'lucide-react';
 
 interface Setting {
@@ -14,7 +15,7 @@ interface Setting {
   channel: string;
   webhook: string;
   youtube_api_key?: string;
-  youtube_channel_id?: string; // Novo campo
+  youtube_channel_id?: string;
   ai_provider: AIProvider;
   gemini_key?: string;
   groq_key?: string;
@@ -30,9 +31,15 @@ interface UserProfile {
   created_at: string;
 }
 
+// Interface para configurações globais (como o webhook de produção)
+interface GlobalConfig {
+  key: string;
+  value: string;
+}
+
 const Settings: React.FC = () => {
   const { isAdmin, user } = useAuth();
-  const [activeTab, setActiveTab] = useState<'channels' | 'users'>('channels');
+  const [activeTab, setActiveTab] = useState<'channels' | 'users' | 'automation'>('channels');
 
   // --- Estados de Canais ---
   const [settings, setSettings] = useState<Setting[]>([]);
@@ -47,7 +54,7 @@ const Settings: React.FC = () => {
   const [currentChannel, setCurrentChannel] = useState('');
   const [currentWebhook, setCurrentWebhook] = useState('');
   const [currentApiKey, setCurrentApiKey] = useState('');
-  const [currentChannelId, setCurrentChannelId] = useState(''); // Novo estado
+  const [currentChannelId, setCurrentChannelId] = useState('');
   
   // AI States
   const [aiProvider, setAiProvider] = useState<AIProvider>('gemini');
@@ -71,6 +78,12 @@ const Settings: React.FC = () => {
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [selectedRole, setSelectedRole] = useState<UserRole>('viewer');
+
+  // --- Estados de Automação ---
+  const [productionWebhook, setProductionWebhook] = useState('');
+  const [loadingAutomation, setLoadingAutomation] = useState(false);
+  const [triggeringWorkflow, setTriggeringWorkflow] = useState(false);
+  const [workflowResponse, setWorkflowResponse] = useState<{ success: boolean; message: string } | null>(null);
 
   // --- Fetch Data ---
 
@@ -112,11 +125,22 @@ const Settings: React.FC = () => {
     }
   };
 
+  // Carregar Webhook de Produção (usando localStorage por simplicidade ou tabela de config se existir)
+  // Idealmente, criaríamos uma tabela 'app_config', mas vamos usar localStorage para persistência local rápida
+  // ou salvar em um campo específico se houver tabela. Vamos usar localStorage para este exemplo rápido
+  // para não exigir migração de banco agora, mas o ideal é banco.
+  const fetchAutomationConfig = () => {
+    const savedWebhook = localStorage.getItem('n8n_production_webhook');
+    if (savedWebhook) setProductionWebhook(savedWebhook);
+  };
+
   useEffect(() => {
     if (activeTab === 'channels') {
       fetchSettings();
     } else if (activeTab === 'users' && isAdmin) {
       fetchUsers();
+    } else if (activeTab === 'automation') {
+      fetchAutomationConfig();
     }
   }, [activeTab, isAdmin]);
 
@@ -454,6 +478,60 @@ const Settings: React.FC = () => {
     } catch (err: any) {
       console.error("Error updating role:", err);
       setError("Erro ao atualizar permissão.");
+    }
+  };
+
+  // --- Handlers de Automação ---
+
+  const handleSaveAutomation = () => {
+    if (!productionWebhook) {
+      setError("Insira uma URL válida.");
+      return;
+    }
+    localStorage.setItem('n8n_production_webhook', productionWebhook);
+    setSuccessMessage("Webhook de produção salvo localmente!");
+    setTimeout(() => setSuccessMessage(null), 3000);
+  };
+
+  const handleTriggerWorkflow = async () => {
+    if (!productionWebhook) {
+      setError("Configure a URL do Webhook primeiro.");
+      return;
+    }
+
+    setTriggeringWorkflow(true);
+    setWorkflowResponse(null);
+
+    try {
+      // Dispara o webhook
+      const response = await fetch(productionWebhook, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          triggered_by: user?.email,
+          timestamp: new Date().toISOString(),
+          action: 'manual_trigger'
+        })
+      });
+
+      if (response.ok) {
+        setWorkflowResponse({
+          success: true,
+          message: "Fluxo disparado com sucesso! O n8n iniciou o processamento."
+        });
+      } else {
+        throw new Error(`Erro ${response.status}: ${response.statusText}`);
+      }
+    } catch (err: any) {
+      console.error("Workflow Trigger Error:", err);
+      setWorkflowResponse({
+        success: false,
+        message: `Falha ao disparar: ${err.message}. Verifique CORS ou a URL.`
+      });
+    } finally {
+      setTriggeringWorkflow(false);
     }
   };
 
@@ -1023,6 +1101,111 @@ const Settings: React.FC = () => {
     );
   };
 
+  const renderAutomation = () => {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+          <h3 className="font-bold text-gray-800 flex items-center gap-2">
+            <Activity size={20} className="text-brand-500" />
+            Automação e Produção
+          </h3>
+          <p className="text-sm text-gray-500">Controle manual dos fluxos de backend (n8n).</p>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Card de Configuração */}
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+            <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
+              <Wifi size={18} className="text-gray-500" />
+              Configuração do Webhook
+            </h4>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  URL do Webhook de Produção (n8n)
+                </label>
+                <input
+                  type="text"
+                  value={productionWebhook}
+                  onChange={(e) => setProductionWebhook(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 font-mono text-sm"
+                  placeholder="https://seu-n8n.com/webhook/iniciar-producao"
+                />
+                <p className="text-xs text-gray-500 mt-2">
+                  No n8n, use o nó <strong>Webhook</strong> com método <strong>POST</strong>.
+                  Isso substituirá ou complementará o nó "Schedule" (Cron) que costuma falhar.
+                </p>
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  onClick={handleSaveAutomation}
+                  className="flex items-center gap-2 bg-gray-800 text-white px-4 py-2 rounded-lg font-medium hover:bg-gray-900 transition-colors"
+                >
+                  <Save size={16} />
+                  Salvar URL
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Card de Ação Manual */}
+          <div className="bg-gradient-to-br from-brand-50 to-white p-6 rounded-xl shadow-sm border border-brand-100">
+            <h4 className="font-bold text-brand-800 mb-4 flex items-center gap-2">
+              <Play size={18} className="text-brand-600" />
+              Disparo Manual
+            </h4>
+            
+            <p className="text-sm text-gray-600 mb-6">
+              Se o fluxo automático (Cron) não rodou ou travou, use este botão para forçar o início da produção de Shorts imediatamente.
+            </p>
+
+            <div className="flex flex-col items-center justify-center p-6 bg-white rounded-xl border border-gray-200 border-dashed">
+              <button
+                onClick={handleTriggerWorkflow}
+                disabled={triggeringWorkflow || !productionWebhook}
+                className="w-full sm:w-auto flex items-center justify-center gap-3 px-8 py-4 bg-brand-600 text-white rounded-xl font-bold text-lg shadow-lg shadow-brand-500/30 hover:bg-brand-700 hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+              >
+                {triggeringWorkflow ? (
+                  <>
+                    <Loader2 size={24} className="animate-spin" />
+                    Iniciando...
+                  </>
+                ) : (
+                  <>
+                    <Zap size={24} />
+                    INICIAR PRODUÇÃO AGORA
+                  </>
+                )}
+              </button>
+              
+              {!productionWebhook && (
+                <p className="text-xs text-red-500 mt-3 font-medium">
+                  Configure a URL ao lado primeiro.
+                </p>
+              )}
+            </div>
+
+            {workflowResponse && (
+              <div className={`mt-4 p-4 rounded-lg border flex items-start gap-3 animate-fade-in ${
+                workflowResponse.success 
+                  ? 'bg-green-50 border-green-200 text-green-800' 
+                  : 'bg-red-50 border-red-200 text-red-800'
+              }`}>
+                {workflowResponse.success ? <CheckCircle size={20} className="mt-0.5" /> : <AlertCircle size={20} className="mt-0.5" />}
+                <div>
+                  <p className="font-bold">{workflowResponse.success ? 'Sucesso!' : 'Erro'}</p>
+                  <p className="text-sm mt-1">{workflowResponse.message}</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="container mx-auto px-4 py-8 max-w-5xl animate-fade-in">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
@@ -1033,10 +1216,10 @@ const Settings: React.FC = () => {
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-gray-200 mb-8">
+      <div className="flex border-b border-gray-200 mb-8 overflow-x-auto">
         <button
           onClick={() => setActiveTab('channels')}
-          className={`pb-4 px-6 font-medium text-sm transition-colors relative ${
+          className={`pb-4 px-6 font-medium text-sm transition-colors relative whitespace-nowrap ${
             activeTab === 'channels'
               ? 'text-brand-600'
               : 'text-gray-500 hover:text-gray-700'
@@ -1051,7 +1234,7 @@ const Settings: React.FC = () => {
         {isAdmin && (
           <button
             onClick={() => setActiveTab('users')}
-            className={`pb-4 px-6 font-medium text-sm transition-colors relative ${
+            className={`pb-4 px-6 font-medium text-sm transition-colors relative whitespace-nowrap ${
               activeTab === 'users'
                 ? 'text-brand-600'
                 : 'text-gray-500 hover:text-gray-700'
@@ -1059,6 +1242,22 @@ const Settings: React.FC = () => {
           >
             Usuários e Permissões
             {activeTab === 'users' && (
+              <div className="absolute bottom-0 left-0 w-full h-0.5 bg-brand-600 rounded-t-full" />
+            )}
+          </button>
+        )}
+
+        {isAdmin && (
+          <button
+            onClick={() => setActiveTab('automation')}
+            className={`pb-4 px-6 font-medium text-sm transition-colors relative whitespace-nowrap ${
+              activeTab === 'automation'
+                ? 'text-brand-600'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Automação (n8n)
+            {activeTab === 'automation' && (
               <div className="absolute bottom-0 left-0 w-full h-0.5 bg-brand-600 rounded-t-full" />
             )}
           </button>
@@ -1081,7 +1280,9 @@ const Settings: React.FC = () => {
       )}
 
       {/* Conteúdo da Aba */}
-      {activeTab === 'channels' ? renderChannels() : (isAdmin ? renderUsers() : <div className="p-8 text-center text-gray-500"><Lock className="mx-auto mb-2" />Acesso restrito.</div>)}
+      {activeTab === 'channels' && renderChannels()}
+      {activeTab === 'users' && (isAdmin ? renderUsers() : <div className="p-8 text-center text-gray-500"><Lock className="mx-auto mb-2" />Acesso restrito.</div>)}
+      {activeTab === 'automation' && (isAdmin ? renderAutomation() : <div className="p-8 text-center text-gray-500"><Lock className="mx-auto mb-2" />Acesso restrito.</div>)}
     </div>
   );
 };
