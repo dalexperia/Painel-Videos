@@ -247,19 +247,24 @@ const RecentVideos: React.FC = () => {
 
   const handleReprove = async (id: string | number, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm('Tem certeza que deseja reprovar este vídeo? Ele será movido para a lista de reprovados.')) return;
+    if (!window.confirm('Tem certeza que deseja reprovar este vídeo? Ele será movido para a lista de reprovados e marcado para recriação.')) return;
 
     try {
       const { error } = await supabase
         .from('shorts_youtube')
-        .update({ failed: true })
+        .update({ 
+          failed: true,
+          status: null // Define status como NULL para trigger de recriação no backend
+        })
         .eq('id', id);
 
       if (error) throw error;
+      
       // A atualização via Realtime vai cuidar de remover da lista, 
-      // mas podemos remover localmente para feedback instantâneo
+      // mas removemos localmente para feedback instantâneo
       setVideos(videos.filter((video) => video.id !== id));
       if (selectedVideo?.id === id) setSelectedVideo(null);
+      
     } catch (err) {
       console.error("Erro ao reprovar o vídeo:", err);
       alert('Erro ao reprovar o vídeo.');
@@ -527,7 +532,7 @@ const RecentVideos: React.FC = () => {
                 <div className="flex items-center gap-2 text-sm text-gray-500 mb-4"><Sparkles size={14} className="text-brand-500" /><span>Criado em {new Date(video.created_at).toLocaleDateString('pt-BR')}</span></div>
                 <div className="mt-auto pt-4 flex items-center gap-2 border-t border-gray-100">
                   <button onClick={(e) => openPostModal(video, e)} className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-colors shadow-sm"><Calendar size={16} /><span>Agendar</span></button>
-                  <button onClick={(e) => handleReprove(video.id, e)} className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={18} /></button>
+                  <button onClick={(e) => handleReprove(video.id, e)} className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Reprovar e Recriar"><Trash2 size={18} /></button>
                 </div>
               </div>
             </div>
@@ -553,7 +558,7 @@ const RecentVideos: React.FC = () => {
             <div className="flex items-center gap-2 self-end sm:self-center">
               <button onClick={(e) => openPostModal(video, e)} className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-colors shadow-sm"><Calendar size={16} /><span className="hidden md:inline">Agendar</span></button>
               <button onClick={(e) => handleDownload(video.link_s3, video.title || 'video', e)} className="flex items-center justify-center p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"><Download size={18} /></button>
-              <button onClick={(e) => handleReprove(video.id, e)} className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={18} /></button>
+              <button onClick={(e) => handleReprove(video.id, e)} className="flex items-center justify-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Reprovar e Recriar"><Trash2 size={18} /></button>
             </div>
           </div>
         ))}
