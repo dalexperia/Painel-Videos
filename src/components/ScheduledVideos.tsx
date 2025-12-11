@@ -278,8 +278,8 @@ const ScheduledVideos: React.FC = () => {
           </div>
         </div>
 
-        {/* Week Days Header */}
-        <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50 flex-shrink-0">
+        {/* Week Days Header - ESCONDIDO NO MOBILE */}
+        <div className="hidden md:grid md:grid-cols-7 border-b border-gray-200 bg-gray-50 flex-shrink-0">
           {weekDays.map(day => (
             <div key={day} className="py-2 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">
               {day}
@@ -289,7 +289,8 @@ const ScheduledVideos: React.FC = () => {
 
         {/* Calendar Grid - Scrollable Area */}
         <div className="flex-1 overflow-y-auto custom-scrollbar">
-          <div className="grid grid-cols-7 bg-gray-200 gap-px border-b border-gray-200 min-h-full">
+          {/* MOBILE: grid-cols-1 (Lista) | DESKTOP: grid-cols-7 (Grade) */}
+          <div className="grid grid-cols-1 md:grid-cols-7 bg-gray-200 gap-px border-b border-gray-200 min-h-full">
             {calendarDays.map((day, dayIdx) => {
               const isSelectedMonth = isSameMonth(day, monthStart);
               const isTodayDate = isToday(day);
@@ -305,13 +306,18 @@ const ScheduledVideos: React.FC = () => {
                 <div 
                   key={day.toString()} 
                   className={`
-                    min-h-[140px] p-2 flex flex-col gap-1 transition-all relative
+                    min-h-[80px] md:min-h-[140px] p-2 flex flex-col gap-1 transition-all relative
                     ${!isSelectedMonth ? 'bg-gray-50/50 text-gray-400' : 'bg-white'}
                     hover:bg-gray-50
                   `}
                 >
                   {/* Header do Dia */}
-                  <div className="flex justify-center mb-1">
+                  <div className="flex md:justify-center items-center justify-start gap-2 mb-1">
+                    {/* Nome do dia da semana (Apenas Mobile) */}
+                    <span className="md:hidden text-xs font-semibold uppercase text-gray-400 w-8">
+                      {format(day, 'EEE', { locale: ptBR })}
+                    </span>
+
                     <span className={`
                       text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full
                       ${isTodayDate ? 'bg-purple-600 text-white shadow-sm' : 'text-gray-500'}
