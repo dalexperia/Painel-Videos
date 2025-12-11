@@ -7,7 +7,7 @@ import {
   Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle, Key, 
   CheckCircle, Wifi, RefreshCw, Database, Users, Shield, Lock, User, Sparkles,
   Cpu, Server, Zap, Globe, HelpCircle, ExternalLink, Info, Youtube, Fingerprint,
-  Play, Activity, Clock
+  Play, Activity, Clock, Copy
 } from 'lucide-react';
 
 interface Setting {
@@ -84,6 +84,7 @@ const Settings: React.FC = () => {
   const [loadingAutomation, setLoadingAutomation] = useState(false);
   const [triggeringWorkflow, setTriggeringWorkflow] = useState(false);
   const [workflowResponse, setWorkflowResponse] = useState<{ success: boolean; message: string } | null>(null);
+  const [currentOrigin, setCurrentOrigin] = useState('');
 
   // --- Fetch Data ---
 
@@ -132,6 +133,7 @@ const Settings: React.FC = () => {
   const fetchAutomationConfig = () => {
     const savedWebhook = localStorage.getItem('n8n_production_webhook');
     if (savedWebhook) setProductionWebhook(savedWebhook);
+    setCurrentOrigin(window.location.origin);
   };
 
   useEffect(() => {
@@ -528,11 +530,16 @@ const Settings: React.FC = () => {
       console.error("Workflow Trigger Error:", err);
       setWorkflowResponse({
         success: false,
-        message: `Falha ao disparar: ${err.message}. Verifique CORS ou a URL.`
+        message: `Falha ao disparar: ${err.message}. Verifique se a URL está correta e se o CORS no n8n permite a origem: ${window.location.origin}`
       });
     } finally {
       setTriggeringWorkflow(false);
     }
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    alert("Copiado para a área de transferência!");
   };
 
   // --- Render ---
@@ -1136,6 +1143,33 @@ const Settings: React.FC = () => {
                   No n8n, use o nó <strong>Webhook</strong> com método <strong>POST</strong>.
                   Isso substituirá ou complementará o nó "Schedule" (Cron) que costuma falhar.
                 </p>
+              </div>
+
+              {/* CORS Helper */}
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+                <div className="flex items-start gap-2">
+                  <Info size={16} className="mt-0.5 flex-shrink-0" />
+                  <div className="flex-grow">
+                    <p className="font-bold mb-1">Atenção ao CORS (Erro "Failed to fetch")</p>
+                    <p className="mb-2">
+                      Para que o botão funcione, você deve adicionar a URL abaixo no campo 
+                      <strong> "Allowed Origins (CORS)"</strong> nas opções do nó Webhook no n8n.
+                    </p>
+                    <div className="flex items-center gap-2 bg-white border border-amber-300 rounded px-2 py-1 font-mono text-xs">
+                      <span className="truncate">{currentOrigin}</span>
+                      <button 
+                        onClick={() => copyToClipboard(currentOrigin)}
+                        className="text-amber-600 hover:text-amber-800 p-1"
+                        title="Copiar URL"
+                      >
+                        <Copy size={14} />
+                      </button>
+                    </div>
+                    <p className="mt-2 text-xs opacity-80">
+                      Ou use <code>*</code> no n8n para permitir qualquer origem (apenas para testes).
+                    </p>
+                  </div>
+                </div>
               </div>
 
               <div className="flex justify-end">
