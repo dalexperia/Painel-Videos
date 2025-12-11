@@ -52,6 +52,28 @@ const parseISODuration = (isoDuration: string): string => {
 };
 
 /**
+ * Valida uma API Key fazendo uma requisição leve.
+ * Lança erro se a chave for inválida.
+ */
+export const validateApiKey = async (apiKey: string): Promise<boolean> => {
+  if (!apiKey) throw new Error("Chave vazia");
+
+  // Busca um vídeo público famoso do YouTube apenas para testar a chave (vídeo do YouTube Developers)
+  const testVideoId = 'Ks-_Mh1QhMc'; 
+  const url = `${BASE_URL}/videos?part=id&id=${testVideoId}&key=${apiKey}`;
+
+  const response = await fetch(url);
+  const data = await response.json();
+
+  if (!response.ok) {
+    const errorMessage = data.error?.message || `Erro ${response.status}`;
+    throw new Error(errorMessage);
+  }
+
+  return true;
+};
+
+/**
  * Busca estatísticas para uma lista de IDs usando uma API Key específica.
  */
 export const fetchYouTubeStats = async (videoIds: string[], apiKey: string): Promise<Record<string, YouTubeStats>> => {

@@ -4,13 +4,21 @@ import { toast } from 'sonner';
 import { Sparkles, Tv } from 'lucide-react';
 import { useNotifications } from '../contexts/NotificationContext';
 
-// Som real (Short Ping)
+// Som real (Short Ping) com tratamento de erro
 const PLAY_SOUND = () => {
   try {
     const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioContext) return;
     
     const audioContext = new AudioContext();
+    
+    // Verifica se o contexto está suspenso (comum em navegadores modernos)
+    if (audioContext.state === 'suspended') {
+      audioContext.resume().catch(() => {
+        // Se falhar o resume, ignoramos silenciosamente
+      });
+    }
+
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
 
@@ -27,7 +35,8 @@ const PLAY_SOUND = () => {
     oscillator.start();
     oscillator.stop(audioContext.currentTime + 0.5);
   } catch (e) {
-    console.error("Audio play failed", e);
+    // Ignora erros de áudio para não quebrar a aplicação
+    console.warn("Audio play prevented by browser policy or error", e);
   }
 };
 
@@ -62,6 +71,7 @@ const NotificationManager: React.FC = () => {
           if (!newVideo || !newVideo.id) return;
 
           // 1. Verifica se o vídeo está PRONTO (Created) e NÃO publicado
+          // Isso pega tanto INSERT direto quanto UPDATE (ex: status mudou de 'Processing' para 'Created')
           const isReady = newVideo.status === 'Created' && !newVideo.publish_at;
 
           if (isReady) {
@@ -71,7 +81,7 @@ const NotificationManager: React.FC = () => {
             }
 
             // 3. Se passou pelos filtros, dispara o alerta e marca como alertado
-            console.log('✨ Novo vídeo detectado:', newVideo.title);
+            console.log('✨ Novo vídeo detectado (Alerta):', newVideo.title);
             triggerAlert(newVideo);
             alertedIds.current.add(newVideo.id);
 
@@ -84,7 +94,7 @@ const NotificationManager: React.FC = () => {
         }
       )
       .subscribe((status) => {
-        console.log('🔔 Status da conexão Realtime:', status);
+        console.log('🔔 Status da conexão Realtime (Alertas):', status);
       });
 
     return () => {
@@ -96,7 +106,7 @@ const NotificationManager: React.FC = () => {
     // 0. Incrementar contador global
     increment();
 
-    // 1. Tocar Som
+    // 1. Tocar Som (Tentativa segura)
     PLAY_SOUND();
 
     // 2. Mostrar Toast na UI (Sonner)

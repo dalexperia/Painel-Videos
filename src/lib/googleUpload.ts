@@ -100,19 +100,21 @@ export const requestGoogleAuth = async (): Promise<string> => {
     };
 
     // Abre o popup de consentimento
-    // prompt: '' força o login se necessário, ou usa sessão ativa
-    // Se quiser forçar seleção de conta sempre: prompt: 'select_account'
     tokenClient.requestAccessToken({ prompt: '' });
   });
 };
 
-// Realiza o upload do vídeo
+/**
+ * Realiza o upload do vídeo usando o protocolo RESUMABLE UPLOAD.
+ * É mais robusto contra falhas de rede e CORS do que o multipart.
+ */
 export const uploadVideoToYouTube = async (
   videoBlob: Blob,
   accessToken: string,
   options: UploadOptions
 ): Promise<UploadResult> => {
   
+  // 1. Preparar Metadados
   const metadata = {
     snippet: {
       title: options.title,
@@ -127,20 +129,48 @@ export const uploadVideoToYouTube = async (
     },
   };
 
-  const formData = new FormData();
-  formData.append(
-    'snippet',
-    new Blob([JSON.stringify(metadata)], { type: 'application/json' })
-  );
-  formData.append('file', videoBlob);
+  console.log("Iniciando Resumable Upload...");
 
+  // 2. Passo 1: Iniciar Sessão de Upload (POST para obter URL de upload)
+  // Isso envia apenas os metadados primeiro.
+  const initResponse = await fetch(
+    'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'X-Upload-Content-Length': videoBlob.size.toString(),
+        'X-Upload-Content-Type': videoBlob.type || 'video/mp4'
+      },
+      body: JSON.stringify(metadata)
+    }
+  );
+
+  if (!initResponse.ok) {
+    const errorText = await initResponse.text();
+    console.error("Erro ao iniciar upload (Init Phase):", errorText);
+    
+    if (initResponse.status === 403 || errorText.includes('CORS')) {
+      throw new Error('Bloqueio de Origem (CORS) ou Permissão. Verifique se a URL exata do site está no Google Cloud Console e aguarde a propagação.');
+    }
+    throw new Error(`Erro na inicialização do upload: ${initResponse.statusText}`);
+  }
+
+  // O Google retorna a URL de upload no header 'Location'
+  const uploadUrl = initResponse.headers.get('Location');
+
+  if (!uploadUrl) {
+    throw new Error('Falha crítica: A API do Google não retornou a URL de upload (Header Location ausente).');
+  }
+
+  console.log("Sessão de upload criada. Enviando bytes...");
+
+  // 3. Passo 2: Enviar o arquivo binário (PUT na URL recebida)
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open(
-      'POST',
-      'https://www.googleapis.com/upload/youtube/v3/videos?part=snippet,status&uploadType=multipart'
-    );
-    xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
+    xhr.open('PUT', uploadUrl);
+    xhr.setRequestHeader('Content-Type', videoBlob.type || 'video/mp4');
 
     if (options.onProgress) {
       xhr.upload.onprogress = (e) => {
@@ -161,22 +191,19 @@ export const uploadVideoToYouTube = async (
       } else {
         try {
           const errorResp = JSON.parse(xhr.responseText);
-          console.error('Erro detalhado do YouTube:', errorResp);
-          reject(new Error(errorResp.error?.message || 'Erro no upload'));
+          console.error('Erro detalhado do YouTube (Upload Phase):', errorResp);
+          reject(new Error(errorResp.error?.message || 'Erro no envio do arquivo'));
         } catch {
-          reject(new Error(`Erro HTTP ${xhr.status}`));
+          reject(new Error(`Erro HTTP ${xhr.status} durante o envio do arquivo`));
         }
       }
     };
 
-    // Tratamento específico para erro de CORS/Rede
     xhr.onerror = () => {
-      console.error('Erro de rede/CORS no XHR:', xhr);
-      reject(new Error(
-        'Bloqueio de segurança (CORS). O domínio atual não está autorizado no Google Cloud Console. Adicione esta URL nas "Origens JavaScript Autorizadas" do seu ID de Cliente.'
-      ));
+      console.error('Erro de rede durante o envio do arquivo (PUT).');
+      reject(new Error('Falha na conexão durante o envio do vídeo.'));
     };
 
-    xhr.send(formData);
+    xhr.send(videoBlob);
   });
 };

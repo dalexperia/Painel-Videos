@@ -42,8 +42,34 @@ const RecentVideos: React.FC = () => {
   const suggestionsRef = useRef<HTMLDivElement>(null);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // --- EFEITO DE CARREGAMENTO E REALTIME ---
   useEffect(() => {
+    // 1. Busca inicial
     fetchRecentVideos();
+
+    // 2. Configura o Listener (Ouvido) do Supabase
+    const channel = supabase
+      .channel('recent-videos-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*', // Escuta TUDO: INSERT, UPDATE, DELETE
+          schema: 'public',
+          table: 'shorts_youtube',
+        },
+        (payload) => {
+          console.log('🔄 Alteração detectada na tabela, atualizando lista...', payload.eventType);
+          // Ao detectar qualquer mudança, recarrega a lista para garantir consistência
+          // (Poderíamos atualizar o estado localmente, mas refetch é mais seguro para garantir filtros)
+          fetchRecentVideos();
+        }
+      )
+      .subscribe();
+
+    // Limpeza ao desmontar
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   // Resetar formulário de edição quando um vídeo é selecionado
@@ -73,7 +99,10 @@ const RecentVideos: React.FC = () => {
   }, []);
 
   const fetchRecentVideos = async () => {
-    setLoading(true);
+    // Não ativamos setLoading(true) aqui para evitar "piscar" a tela em atualizações automáticas
+    // Apenas na primeira carga ou erro
+    if (videos.length === 0) setLoading(true);
+    
     setError(null);
     try {
       const { data, error } = await supabase
@@ -227,6 +256,8 @@ const RecentVideos: React.FC = () => {
         .eq('id', id);
 
       if (error) throw error;
+      // A atualização via Realtime vai cuidar de remover da lista, 
+      // mas podemos remover localmente para feedback instantâneo
       setVideos(videos.filter((video) => video.id !== id));
       if (selectedVideo?.id === id) setSelectedVideo(null);
     } catch (err) {
@@ -263,6 +294,7 @@ const RecentVideos: React.FC = () => {
       };
       
       setSelectedVideo(updatedVideo);
+      // Atualização local otimista (o realtime confirmará depois)
       setVideos(videos.map(v => v.id === selectedVideo.id ? updatedVideo : v));
       setIsEditing(false);
       
@@ -380,6 +412,7 @@ const RecentVideos: React.FC = () => {
       
       if (isScheduled) {
         await supabase.from('shorts_youtube').update({ publish_at: posting_date }).eq('id', video.id);
+        // O Realtime vai atualizar a lista, mas removemos localmente para feedback imediato
         setVideos(prev => prev.filter(v => v.id !== video.id));
         alert('Vídeo agendado com sucesso!');
       } else {

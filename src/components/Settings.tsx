@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { fetchVideoDetails } from '../lib/youtube';
+import { fetchVideoDetails, validateApiKey } from '../lib/youtube';
 import { generateContentAI, AIProvider } from '../lib/ai';
 import { useAuth, UserRole } from '../contexts/AuthContext';
 import { 
@@ -189,14 +189,25 @@ const Settings: React.FC = () => {
     setTestResult(null);
 
     try {
-      const testVideoId = 'Ks-_Mh1QhMc'; 
-      await fetchVideoDetails([testVideoId], currentApiKey);
+      // Agora usamos a função dedicada de validação que lança erro se falhar
+      await validateApiKey(currentApiKey);
       setTestResult({ success: true, message: "Chave válida! Conexão com YouTube estabelecida." });
     } catch (err: any) {
       console.error("API Key Test Error:", err);
+      
+      let msg = "Chave inválida ou erro de conexão.";
+      // Tenta extrair mensagem mais amigável do erro do Google
+      if (err.message.includes('API key not valid')) {
+        msg = "A chave informada não é válida.";
+      } else if (err.message.includes('quota')) {
+        msg = "Cota da API excedida.";
+      } else if (err.message) {
+        msg = `Erro: ${err.message}`;
+      }
+
       setTestResult({ 
         success: false, 
-        message: "Chave inválida ou erro de conexão. Verifique se a YouTube Data API v3 está ativada." 
+        message: msg
       });
     } finally {
       setIsTestingKey(false);
@@ -544,6 +555,9 @@ const Settings: React.FC = () => {
                       {isTestingKey ? <Loader2 size={16} className="animate-spin" /> : 'Testar'}
                     </button>
                   </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Usada apenas para o botão "Sincronizar Dados" (buscar títulos/durações). Não é necessária para upload.
+                  </p>
                   {testResult && (
                     <p className={`text-xs mt-2 flex items-center gap-1 ${testResult.success ? 'text-green-600' : 'text-red-600'}`}>
                       {testResult.success ? <CheckCircle size={12} /> : <AlertCircle size={12} />}
