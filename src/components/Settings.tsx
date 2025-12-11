@@ -7,7 +7,7 @@ import {
   Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle, Key, 
   CheckCircle, Wifi, RefreshCw, Database, Users, Shield, Lock, User, Sparkles,
   Cpu, Server, Zap, Globe, HelpCircle, ExternalLink, Info, Youtube, Fingerprint,
-  Play, Activity, Clock, Copy, Settings as SettingsIcon
+  Play, Activity, Clock, Copy, Settings as SettingsIcon, Radio
 } from 'lucide-react';
 
 interface Setting {
@@ -482,7 +482,7 @@ const Settings: React.FC = () => {
     setTimeout(() => setSuccessMessage(null), 3000);
   };
 
-  const handleTriggerWorkflow = async () => {
+  const handleTriggerWorkflow = async (method: 'POST' | 'GET' = 'POST') => {
     if (!productionWebhook) {
       setError("Configure a URL do Webhook primeiro.");
       return;
@@ -502,22 +502,32 @@ const Settings: React.FC = () => {
 
       let response;
 
-      if (useNoCors) {
+      if (method === 'GET') {
+        // Teste de Conectividade Simples
+        response = await fetch(url, {
+          method: 'GET',
+          mode: 'no-cors' // GET geralmente não precisa de body, mas no-cors ajuda se for só ping
+        });
+        
+        setWorkflowResponse({
+          success: true,
+          message: "Ping enviado! Se o workflow aceita GET, ele deve ter iniciado. Verifique o n8n."
+        });
+
+      } else if (useNoCors) {
         // Modo No-CORS: Envia como text/plain para evitar Preflight
-        // O navegador não permite ler a resposta (opaque), mas a requisição é enviada.
         await fetch(url, {
           method: 'POST',
           mode: 'no-cors',
           headers: {
-            'Content-Type': 'text/plain' // Importante: não usar application/json
+            'Content-Type': 'text/plain' 
           },
           body: JSON.stringify(payload)
         });
 
-        // Assumimos sucesso pois não podemos ler o status
         setWorkflowResponse({
           success: true,
-          message: "Disparo enviado em modo de compatibilidade! Verifique no n8n se o fluxo iniciou."
+          message: "Disparo enviado (Modo Compatibilidade). Se der erro 500, verifique se o n8n está ATIVO."
         });
 
       } else {
@@ -1216,23 +1226,34 @@ const Settings: React.FC = () => {
             </p>
 
             <div className="flex flex-col items-center justify-center p-6 bg-white rounded-xl border border-gray-200 border-dashed">
-              <button
-                onClick={handleTriggerWorkflow}
-                disabled={triggeringWorkflow || !productionWebhook}
-                className="w-full sm:w-auto flex items-center justify-center gap-3 px-8 py-4 bg-brand-600 text-white rounded-xl font-bold text-lg shadow-lg shadow-brand-500/30 hover:bg-brand-700 hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
-              >
-                {triggeringWorkflow ? (
-                  <>
-                    <Loader2 size={24} className="animate-spin" />
-                    Iniciando...
-                  </>
-                ) : (
-                  <>
-                    <Zap size={24} />
-                    INICIAR PRODUÇÃO AGORA
-                  </>
-                )}
-              </button>
+              <div className="flex gap-2 w-full mb-4">
+                <button
+                  onClick={() => handleTriggerWorkflow('POST')}
+                  disabled={triggeringWorkflow || !productionWebhook}
+                  className="flex-1 flex items-center justify-center gap-3 px-4 py-4 bg-brand-600 text-white rounded-xl font-bold text-lg shadow-lg shadow-brand-500/30 hover:bg-brand-700 hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                >
+                  {triggeringWorkflow ? (
+                    <>
+                      <Loader2 size={24} className="animate-spin" />
+                      Iniciando...
+                    </>
+                  ) : (
+                    <>
+                      <Zap size={24} />
+                      INICIAR (POST)
+                    </>
+                  )}
+                </button>
+                
+                <button
+                  onClick={() => handleTriggerWorkflow('GET')}
+                  disabled={triggeringWorkflow || !productionWebhook}
+                  className="flex-none flex items-center justify-center px-4 py-4 bg-gray-100 text-gray-600 rounded-xl font-bold hover:bg-gray-200 transition-all disabled:opacity-50"
+                  title="Testar Conectividade (Ping GET)"
+                >
+                  <Wifi size={24} />
+                </button>
+              </div>
               
               {!productionWebhook && (
                 <p className="text-xs text-red-500 mt-3 font-medium">
@@ -1266,6 +1287,11 @@ const Settings: React.FC = () => {
                 <div>
                   <p className="font-bold">{workflowResponse.success ? 'Sucesso!' : 'Erro'}</p>
                   <p className="text-sm mt-1">{workflowResponse.message}</p>
+                  {!workflowResponse.success && workflowResponse.message.includes('500') && (
+                     <p className="text-xs mt-2 font-semibold bg-red-100 p-1 rounded">
+                       DICA: Verifique se o workflow está ATIVO no n8n (canto superior direito).
+                     </p>
+                  )}
                 </div>
               </div>
             )}
