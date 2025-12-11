@@ -12,6 +12,7 @@ import {
 } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
+import VideoSmartPreview from './VideoSmartPreview';
 
 interface Video {
   id: string;
@@ -407,30 +408,16 @@ const ScheduledVideos: React.FC = () => {
                 key={video.id} 
                 className="group bg-white rounded-xl shadow-md hover:shadow-lg transition-all duration-300 border border-gray-100 overflow-hidden flex flex-col hover:-translate-y-1"
               >
-                <div 
-                  className="relative aspect-video bg-gray-900 cursor-pointer overflow-hidden"
-                  onClick={() => setSelectedVideo(video)}
-                >
-                  <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-800 to-gray-900">
-                    <video 
-                      src={video.link_s3}
-                      className="w-full h-full object-cover opacity-60 group-hover:opacity-40 transition-opacity"
-                      muted
-                      preload="metadata"
-                    />
-                  </div>
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors duration-300">
-                    <div className="bg-white/20 backdrop-blur-sm p-3 rounded-full opacity-0 group-hover:opacity-100 scale-75 group-hover:scale-100 transition-all duration-300">
-                      <PlayCircle size={32} className="text-white fill-white/20" />
-                    </div>
-                  </div>
+                {/* Substituído pelo VideoSmartPreview */}
+                <div onClick={() => setSelectedVideo(video)}>
+                  <VideoSmartPreview src={video.link_s3} />
                   {video.channel && (
-                    <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-md text-white text-xs px-2 py-1 rounded-md flex items-center gap-1">
+                    <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-md text-white text-xs px-2 py-1 rounded-md flex items-center gap-1 pointer-events-none z-10">
                       <Tv size={10} />
                       <span className="truncate max-w-[100px]">{video.channel}</span>
                     </div>
                   )}
-                  <div className={`absolute top-2 left-2 backdrop-blur-md text-white text-[10px] px-2 py-1 rounded-md flex items-center gap-1 ${hasYoutubeId ? 'bg-green-600/80' : 'bg-yellow-600/80'}`}>
+                  <div className={`absolute top-2 left-2 backdrop-blur-md text-white text-[10px] px-2 py-1 rounded-md flex items-center gap-1 z-10 ${hasYoutubeId ? 'bg-green-600/80' : 'bg-yellow-600/80'}`}>
                     {hasYoutubeId ? <CheckCircle2 size={10} /> : <Clock size={10} />}
                     <span>{hasYoutubeId ? 'Sincronizado' : 'Aguardando ID'}</span>
                   </div>
@@ -515,14 +502,11 @@ const ScheduledVideos: React.FC = () => {
               className="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 border border-gray-100 flex flex-col sm:flex-row items-start sm:items-center p-3 gap-4"
             >
               <div
-                className="relative w-full sm:w-32 h-20 bg-gray-900 rounded-md overflow-hidden cursor-pointer flex-shrink-0 group"
+                className="relative w-full sm:w-32 h-20 rounded-md overflow-hidden cursor-pointer flex-shrink-0 group"
                 onClick={() => setSelectedVideo(video)}
               >
-                <video src={video.link_s3} className="w-full h-full object-cover" muted preload="metadata" />
-                <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <PlayCircle size={24} className="text-white" />
-                </div>
-                <div className={`absolute top-1 left-1 text-white text-[8px] px-1.5 py-0.5 rounded flex items-center gap-1 ${hasYoutubeId ? 'bg-green-600/80' : 'bg-yellow-600/80'}`}>
+                <VideoSmartPreview src={video.link_s3} className="h-full" />
+                <div className={`absolute top-1 left-1 text-white text-[8px] px-1.5 py-0.5 rounded flex items-center gap-1 z-10 ${hasYoutubeId ? 'bg-green-600/80' : 'bg-yellow-600/80'}`}>
                   {hasYoutubeId ? <CheckCircle2 size={8} /> : <Clock size={8} />}
                 </div>
               </div>

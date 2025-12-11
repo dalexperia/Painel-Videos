@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { Trash2, PlayCircle, AlertCircle, RefreshCw, LayoutGrid, List, Download, X, Calendar, Sparkles, Tv, Edit2, Save, XCircle, Hash, Tag, Search, Loader2 } from 'lucide-react';
+import { Trash2, AlertCircle, RefreshCw, LayoutGrid, List, Download, X, Calendar, Sparkles, Tv, Edit2, Save, XCircle, Hash, Tag, Search, Loader2 } from 'lucide-react';
 import PostModal, { Video as PostModalVideo } from './PostModal';
 import { generateContentAI } from '../lib/ai';
-import { toast } from 'sonner';
+import VideoSmartPreview from './VideoSmartPreview';
 
 // Reutiliza a interface do PostModal para consistência
 type Video = PostModalVideo;
@@ -42,34 +42,8 @@ const RecentVideos: React.FC = () => {
   const suggestionsRef = useRef<HTMLDivElement>(null);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // --- MONITORAMENTO REALTIME ---
   useEffect(() => {
-    // 1. Busca inicial
     fetchRecentVideos();
-
-    // 2. Configura Subscription do Supabase para monitorar mudanças
-    const channel = supabase
-      .channel('recent-videos-changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*', // Escuta INSERT, UPDATE e DELETE
-          schema: 'public',
-          table: 'shorts_youtube',
-        },
-        (payload) => {
-          // Quando houver qualquer mudança na tabela, recarregamos a lista.
-          // Isso garante que se o Backend (n8n) atualizar o status, publish_at ou youtube_id,
-          // a lista será atualizada automaticamente.
-          fetchRecentVideos();
-        }
-      )
-      .subscribe();
-
-    // Cleanup ao desmontar
-    return () => {
-      supabase.removeChannel(channel);
-    };
   }, []);
 
   // Resetar formulário de edição quando um vídeo é selecionado
@@ -99,18 +73,14 @@ const RecentVideos: React.FC = () => {
   }, []);
 
   const fetchRecentVideos = async () => {
-    // Não setamos loading=true aqui para evitar "piscar" a tela em atualizações realtime
-    // Apenas na primeira carga ou erro
-    if (videos.length === 0 && !error) setLoading(true);
-    
+    setLoading(true);
     setError(null);
     try {
       const { data, error } = await supabase
         .from('shorts_youtube')
         .select('*')
         .eq('status', 'Created')
-        .is('publish_at', null) // Só traz vídeos que NÃO têm data de publicação
-        .is('youtube_id', null) // CRÍTICO: Só traz vídeos que NÃO têm ID do YouTube (não postados)
+        .is('publish_at', null)
         .eq('failed', false)
         .order('created_at', { ascending: false });
 
@@ -257,15 +227,11 @@ const RecentVideos: React.FC = () => {
         .eq('id', id);
 
       if (error) throw error;
-      
-      toast.success('Vídeo reprovado com sucesso.');
-      // O Realtime irá atualizar a lista automaticamente, mas podemos forçar para feedback imediato
-      await fetchRecentVideos(); 
-
+      setVideos(videos.filter((video) => video.id !== id));
       if (selectedVideo?.id === id) setSelectedVideo(null);
     } catch (err) {
       console.error("Erro ao reprovar o vídeo:", err);
-      toast.error('Erro ao reprovar o vídeo. Tente novamente.');
+      alert('Erro ao reprovar o vídeo.');
     }
   };
 
@@ -297,14 +263,12 @@ const RecentVideos: React.FC = () => {
       };
       
       setSelectedVideo(updatedVideo);
-      // Atualiza localmente para feedback rápido, mas o realtime confirmará
       setVideos(videos.map(v => v.id === selectedVideo.id ? updatedVideo : v));
       setIsEditing(false);
-      toast.success('Alterações salvas!');
       
     } catch (err) {
       console.error('Erro ao salvar alterações:', err);
-      toast.error('Erro ao salvar as alterações.');
+      alert('Erro ao salvar as alterações.');
     } finally {
       setIsSaving(false);
     }
@@ -312,7 +276,7 @@ const RecentVideos: React.FC = () => {
 
   const handleGenerateAI = async (field: 'title' | 'description' | 'tags' | 'hashtags') => {
     if (!selectedVideo || !selectedVideo.channel) {
-      toast.error("Canal não identificado para este vídeo.");
+      alert("Canal não identificado para este vídeo.");
       return;
     }
 
@@ -331,20 +295,23 @@ const RecentVideos: React.FC = () => {
         else if (field === 'hashtags') finalValue = content.join(' ');
         else finalValue = content[0]; // Fallback
       } else {
+        // Caso a IA retorne string direta (não deveria com o novo parser, mas por segurança)
         finalValue = String(content);
       }
       
+      // Se a IA retornou múltiplas opções para título/descrição, pegamos a primeira ou abrimos modal (simplificado aqui para pegar primeira)
       if (field === 'title' || field === 'description') {
          if (Array.isArray(content) && content.length > 0) {
              setEditForm(prev => ({ ...prev, [field]: content[0] }));
          }
       } else {
+         // Para tags/hashtags, substituímos tudo
          setEditForm(prev => ({ ...prev, [field]: finalValue }));
       }
 
     } catch (err: any) {
       console.error("Erro ao gerar AI:", err);
-      toast.error(err.message || "Erro ao gerar conteúdo com IA.");
+      alert(err.message || "Erro ao gerar conteúdo com IA.");
     } finally {
       setGeneratingField(null);
     }
@@ -352,7 +319,7 @@ const RecentVideos: React.FC = () => {
 
   const handleDownload = async (url: string, title: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!url) { toast.error('URL inválida'); return; }
+    if (!url) { alert('URL inválida'); return; }
     try {
       document.body.style.cursor = 'wait';
       const response = await fetch(url);
@@ -403,7 +370,6 @@ const RecentVideos: React.FC = () => {
         posting_date: posting_date
       };
 
-      // 1. Envia para o Webhook (n8n ou similar)
       const response = await fetch(options.webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -412,17 +378,13 @@ const RecentVideos: React.FC = () => {
 
       if (!response.ok) throw new Error(`Erro no Webhook: ${response.status}`);
       
-      // 2. Feedback ao usuário
       if (isScheduled) {
-        toast.success('Solicitação de agendamento enviada! Aguardando processamento...');
+        await supabase.from('shorts_youtube').update({ publish_at: posting_date }).eq('id', video.id);
+        setVideos(prev => prev.filter(v => v.id !== video.id));
+        alert('Vídeo agendado com sucesso!');
       } else {
-        toast.success('Solicitação de publicação enviada! Aguardando processamento...');
+        alert('Solicitação de publicação enviada!');
       }
-
-      // --- MUDANÇA CRÍTICA ---
-      // NÃO atualizamos o banco de dados aqui no Frontend.
-      // O Frontend é passivo. O Webhook (Backend) deve receber o payload e atualizar o Supabase.
-      // O Realtime (useEffect) detectará a mudança e atualizará a lista.
       
       setIsPostModalOpen(false);
       setVideoToPost(null);
@@ -430,7 +392,7 @@ const RecentVideos: React.FC = () => {
       
     } catch (error: any) {
       console.error('ERRO FATAL:', error);
-      toast.error(`Erro: ${error.message}`);
+      alert(`Erro: ${error.message}`);
     } finally {
       setIsPosting(false);
     }
@@ -515,17 +477,18 @@ const RecentVideos: React.FC = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {videos.map((video) => (
             <div key={video.id} className="group bg-white rounded-xl shadow-md hover:shadow-lg transition-all duration-300 border border-gray-100 overflow-hidden flex flex-col hover:-translate-y-1">
-              <div className="relative aspect-video bg-gray-900 cursor-pointer overflow-hidden" onClick={() => setSelectedVideo(video)}>
-                <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-800 to-gray-900">
-                  <video src={video.link_s3} className="w-full h-full object-cover opacity-60 group-hover:opacity-40 transition-opacity" muted preload="metadata" />
-                </div>
-                <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors duration-300">
-                  <div className="bg-white/20 backdrop-blur-sm p-3 rounded-full opacity-0 group-hover:opacity-100 scale-75 group-hover:scale-100 transition-all duration-300">
-                    <PlayCircle size={32} className="text-white fill-white/20" />
+              
+              {/* Substituído pelo VideoSmartPreview */}
+              <div onClick={() => setSelectedVideo(video)}>
+                <VideoSmartPreview src={video.link_s3} />
+                {video.channel && (
+                  <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-md text-white text-xs px-2 py-1 rounded-md flex items-center gap-1 pointer-events-none z-10">
+                    <Tv size={10} />
+                    <span className="truncate max-w-[100px]">{video.channel}</span>
                   </div>
-                </div>
-                {video.channel && <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-md text-white text-xs px-2 py-1 rounded-md flex items-center gap-1"><Tv size={10} /><span className="truncate max-w-[100px]">{video.channel}</span></div>}
+                )}
               </div>
+
               <div className="p-4 flex flex-col flex-grow">
                 <h3 className="font-semibold text-gray-800 mb-1 line-clamp-2 min-h-[3rem]" title={video.title}>{video.title || 'Vídeo sem título'}</h3>
                 <div className="flex items-center gap-2 text-sm text-gray-500 mb-4"><Sparkles size={14} className="text-brand-500" /><span>Criado em {new Date(video.created_at).toLocaleDateString('pt-BR')}</span></div>
@@ -544,9 +507,8 @@ const RecentVideos: React.FC = () => {
       <div className="space-y-3">
         {videos.map((video) => (
           <div key={video.id} className="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 border border-gray-100 flex flex-col sm:flex-row items-start sm:items-center p-3 gap-4">
-            <div className="relative w-full sm:w-32 h-20 bg-gray-900 rounded-md overflow-hidden cursor-pointer flex-shrink-0 group" onClick={() => setSelectedVideo(video)}>
-              <video src={video.link_s3} className="w-full h-full object-cover" muted preload="metadata" />
-              <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity"><PlayCircle size={24} className="text-white" /></div>
+            <div className="relative w-full sm:w-32 h-20 rounded-md overflow-hidden cursor-pointer flex-shrink-0 group" onClick={() => setSelectedVideo(video)}>
+              <VideoSmartPreview src={video.link_s3} className="h-full" />
             </div>
             <div className="flex-grow min-w-0">
               <h3 className="font-semibold text-gray-800 truncate" title={video.title}>{video.title || 'Vídeo sem título'}</h3>

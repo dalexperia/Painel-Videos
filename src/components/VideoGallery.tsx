@@ -3,6 +3,7 @@ import { Play, Clock, MoreVertical, Calendar as CalendarIcon, CheckCircle2, XCir
 import { supabase } from '../lib/supabaseClient';
 import { formatDuration } from '../utils/format';
 import ScheduleModal from './ScheduleModal';
+import VideoSmartPreview from './VideoSmartPreview';
 
 interface Video {
   id: string;
@@ -249,35 +250,25 @@ const VideoGallery = () => {
           {filteredVideos.map((video) => (
             <div key={video.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow duration-200 group flex flex-col">
               {/* Thumbnail / Video Preview */}
-              <div className="relative aspect-video bg-gray-900 group-hover:bg-gray-800 transition-colors">
+              <div className="relative aspect-video">
                 {video.link_s3 ? (
-                  <video 
-                    src={video.link_s3}
-                    className="w-full h-full object-cover opacity-80 group-hover:opacity-60 transition-opacity"
-                    muted
-                    preload="metadata"
-                    onMouseOver={(e) => e.currentTarget.play().catch(() => {})}
-                    onMouseOut={(e) => {
-                      e.currentTarget.pause();
-                      e.currentTarget.currentTime = 0;
-                    }}
-                  />
+                  <VideoSmartPreview src={video.link_s3} />
                 ) : (
-                  <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
                     <Play className="text-gray-600" size={48} />
                   </div>
                 )}
 
-                <div className="absolute bottom-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded font-mono backdrop-blur-sm z-10">
+                <div className="absolute bottom-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded font-mono backdrop-blur-sm z-10 pointer-events-none">
                   {formatDuration(video.duration)}
                 </div>
                 
                 {/* Ações Rápidas (Overlay) */}
-                <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3 backdrop-blur-[1px] z-20">
+                <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3 backdrop-blur-[1px] z-20 pointer-events-none">
                   {!video.failed && video.dbStatus !== 'Posted' && (
                     <button 
-                      onClick={() => handleScheduleClick(video)}
-                      className="bg-white text-gray-900 p-2 rounded-full hover:bg-brand-50 transition-colors transform hover:scale-105 shadow-lg"
+                      onClick={(e) => { e.stopPropagation(); handleScheduleClick(video); }}
+                      className="bg-white text-gray-900 p-2 rounded-full hover:bg-brand-50 transition-colors transform hover:scale-105 shadow-lg pointer-events-auto"
                       title="Agendar Publicação"
                     >
                       <CalendarIcon size={20} />
@@ -288,7 +279,8 @@ const VideoGallery = () => {
                       href={video.link_s3} 
                       target="_blank" 
                       rel="noopener noreferrer"
-                      className="bg-white text-gray-900 p-2 rounded-full hover:bg-brand-50 transition-colors transform hover:scale-105 shadow-lg"
+                      className="bg-white text-gray-900 p-2 rounded-full hover:bg-brand-50 transition-colors transform hover:scale-105 shadow-lg pointer-events-auto"
+                      onClick={(e) => e.stopPropagation()}
                     >
                       <Play size={20} fill="currentColor" />
                     </a>
