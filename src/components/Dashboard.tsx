@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { fetchYouTubeStats, formatNumber, YouTubeStats } from '../lib/youtube';
+import { AutomationMonitor } from './AutomationMonitor'; // Importando o novo componente
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   PieChart, Pie, Cell, Legend, BarChart, Bar
@@ -325,11 +326,14 @@ const Dashboard: React.FC = () => {
           <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Visão Geral</h1>
           <p className="text-gray-500 mt-1">Acompanhe a produção e a performance dos seus canais.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          {/* Monitor de Automação (Novo) */}
+          <AutomationMonitor />
+
           {loadingStats && (
             <span className="flex items-center text-xs text-blue-600 bg-blue-50 px-3 py-1 rounded-full animate-pulse">
               <Loader2 size={12} className="mr-1 animate-spin" />
-              Atualizando métricas do YouTube...
+              Atualizando métricas...
             </span>
           )}
           <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg p-1 shadow-sm">
