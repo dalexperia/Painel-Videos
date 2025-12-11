@@ -3,6 +3,7 @@ import { X, Upload, Calendar, Globe, Lock, Eye, AlertCircle, CheckCircle2, Loade
 import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
 import { supabase } from '../lib/supabaseClient';
+import { ptBR } from 'date-fns/locale'; // Importando locale para garantir formato correto se necessário
 
 export interface Video {
   id: string | number;
@@ -20,7 +21,7 @@ export interface Video {
 interface PostModalProps {
   video: Video;
   onClose: () => void;
-  onPost: (video: Video, options: { scheduleDate?: string; webhookUrl: string }) => void;
+  onPost: (video: Video, options: { scheduleDate?: string; webhookUrl: string; privacyStatus?: string }) => void;
   isPosting: boolean;
 }
 
@@ -34,12 +35,18 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isGapiLoaded, setIsGapiLoaded] = useState(false);
 
+  // Forçar "Privado" quando agendamento é selecionado
+  useEffect(() => {
+    if (scheduleDate) {
+      setPrivacy('private');
+    }
+  }, [scheduleDate]);
+
   // Monitorar carregamento da API do Google
   useEffect(() => {
     const savedUrl = localStorage.getItem('n8n_webhook_url');
     if (savedUrl) setWebhookUrl(savedUrl);
     
-    // Função para verificar se a API carregou
     const checkGapi = () => {
       if (window.google && window.google.accounts) {
         setIsGapiLoaded(true);
@@ -48,17 +55,14 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
       return false;
     };
 
-    // Verifica imediatamente
     if (checkGapi()) return;
 
-    // Se não carregou, verifica a cada 500ms por 5 segundos
     const intervalId = setInterval(() => {
       if (checkGapi()) {
         clearInterval(intervalId);
       }
     }, 500);
 
-    // Limpa o intervalo após 5 segundos para não ficar rodando para sempre
     const timeoutId = setTimeout(() => {
       clearInterval(intervalId);
     }, 5000);
@@ -75,9 +79,14 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
       return;
     }
     localStorage.setItem('n8n_webhook_url', webhookUrl);
+    
+    // Garante que se tiver data, vai como privado
+    const finalPrivacy = scheduleDate ? 'private' : privacy;
+
     onPost(video, {
       scheduleDate: scheduleDate ? scheduleDate.toISOString() : undefined,
-      webhookUrl
+      webhookUrl,
+      privacyStatus: finalPrivacy
     });
   };
 
@@ -102,7 +111,6 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
         },
       });
       
-      // Força o prompt de seleção de conta para evitar login automático na conta errada
       tokenClient.requestAccessToken({ prompt: 'select_account' });
     });
   };
@@ -130,7 +138,7 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
       const accessToken = await getAccessToken();
       console.log('Token obtido.');
 
-      // 2. VALIDAÇÃO DE SEGURANÇA: Verificar se o usuário logado é o dono do canal correto
+      // 2. VALIDAÇÃO DE SEGURANÇA
       console.log('Verificando identidade do canal...');
       const channelResponse = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', {
         headers: {
@@ -155,7 +163,6 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
           throw new Error(`SEGURANÇA: Você logou na conta errada!\n\nConta Logada: ${loggedChannel.snippet.title}\nConta Esperada: ${video.channel}\n\nPor favor, troque de conta.`);
         }
       } else {
-        // Se não tiver ID configurado, avisa mas permite (ou pede confirmação)
         const confirmMsg = `ATENÇÃO: O sistema não tem um ID de canal salvo para "${video.channel}".\n\nVocê está prestes a postar no canal: "${loggedChannel.snippet.title}".\n\nIsso está correto?`;
         if (!window.confirm(confirmMsg)) {
           setUploadStatus('idle');
@@ -171,6 +178,9 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
       const videoSize = videoBlob.size;
       console.log(`Vídeo baixado. Tamanho: ${(videoSize / 1024 / 1024).toFixed(2)} MB`);
 
+      // Garante privacidade correta para agendamento
+      const finalPrivacy = scheduleDate ? 'private' : privacy;
+
       const metadata = {
         snippet: {
           title: video.title.substring(0, 100),
@@ -179,7 +189,7 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
           categoryId: '22',
         },
         status: {
-          privacyStatus: privacy,
+          privacyStatus: finalPrivacy,
           selfDeclaredMadeForKids: false,
           publishAt: scheduleDate ? scheduleDate.toISOString() : undefined
         }
@@ -362,20 +372,27 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
                     { id: 'public', label: 'Público', icon: Globe },
                     { id: 'unlisted', label: 'Não Listado', icon: Eye },
                     { id: 'private', label: 'Privado', icon: Lock }
-                  ].map((opt) => (
-                    <button
-                      key={opt.id}
-                      onClick={() => setPrivacy(opt.id as any)}
-                      className={`flex flex-col items-center justify-center p-3 rounded-lg border transition-all ${
-                        privacy === opt.id
-                          ? 'bg-brand-50 dark:bg-brand-900/30 border-brand-200 dark:border-brand-700 text-brand-700 dark:text-brand-300 ring-1 ring-brand-500'
-                          : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
-                      }`}
-                    >
-                      <opt.icon size={20} className="mb-1" />
-                      <span className="text-xs font-medium">{opt.label}</span>
-                    </button>
-                  ))}
+                  ].map((opt) => {
+                    const isDisabled = !!scheduleDate && opt.id !== 'private';
+                    return (
+                      <button
+                        key={opt.id}
+                        onClick={() => !isDisabled && setPrivacy(opt.id as any)}
+                        disabled={isDisabled}
+                        className={`flex flex-col items-center justify-center p-3 rounded-lg border transition-all ${
+                          privacy === opt.id
+                            ? 'bg-brand-50 dark:bg-brand-900/30 border-brand-200 dark:border-brand-700 text-brand-700 dark:text-brand-300 ring-1 ring-brand-500'
+                            : isDisabled
+                              ? 'bg-gray-50 dark:bg-gray-800/50 border-gray-100 dark:border-gray-800 text-gray-300 dark:text-gray-600 cursor-not-allowed'
+                              : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+                        }`}
+                      >
+                        <opt.icon size={20} className="mb-1" />
+                        <span className="text-xs font-medium">{opt.label}</span>
+                        {isDisabled && <span className="text-[10px] text-gray-400">(Bloqueado)</span>}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -402,12 +419,16 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
                   selected={scheduleDate}
                   onChange={(date) => setScheduleDate(date)}
                   showTimeSelect
-                  dateFormat="Pp"
+                  timeFormat="HH:mm"
+                  timeIntervals={15}
+                  dateFormat="dd/MM/yyyy HH:mm"
+                  timeCaption="Hora"
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-brand-500 dark:bg-gray-700 dark:text-white"
                   minDate={new Date()}
                 />
-                <p className="text-xs text-gray-500 mt-1">
-                  O vídeo será enviado como "Privado" e agendado no YouTube.
+                <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+                  <Lock size={12} />
+                  O vídeo será enviado como <strong>Privado</strong> e agendado no YouTube.
                 </p>
               </div>
             )}
