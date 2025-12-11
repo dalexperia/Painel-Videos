@@ -7,7 +7,7 @@ import {
   Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle, Key, 
   CheckCircle, Wifi, RefreshCw, Database, Users, Shield, Lock, User, Sparkles,
   Cpu, Server, Zap, Globe, HelpCircle, ExternalLink, Info, Youtube, Fingerprint,
-  Play, Activity, Clock, Copy
+  Play, Activity, Clock, Copy, Settings as SettingsIcon
 } from 'lucide-react';
 
 interface Setting {
@@ -29,12 +29,6 @@ interface UserProfile {
   email: string;
   role: UserRole;
   created_at: string;
-}
-
-// Interface para configurações globais (como o webhook de produção)
-interface GlobalConfig {
-  key: string;
-  value: string;
 }
 
 const Settings: React.FC = () => {
@@ -81,10 +75,10 @@ const Settings: React.FC = () => {
 
   // --- Estados de Automação ---
   const [productionWebhook, setProductionWebhook] = useState('');
-  const [loadingAutomation, setLoadingAutomation] = useState(false);
   const [triggeringWorkflow, setTriggeringWorkflow] = useState(false);
   const [workflowResponse, setWorkflowResponse] = useState<{ success: boolean; message: string } | null>(null);
   const [currentOrigin, setCurrentOrigin] = useState('');
+  const [useNoCors, setUseNoCors] = useState(false);
 
   // --- Fetch Data ---
 
@@ -126,10 +120,6 @@ const Settings: React.FC = () => {
     }
   };
 
-  // Carregar Webhook de Produção (usando localStorage por simplicidade ou tabela de config se existir)
-  // Idealmente, criaríamos uma tabela 'app_config', mas vamos usar localStorage para persistência local rápida
-  // ou salvar em um campo específico se houver tabela. Vamos usar localStorage para este exemplo rápido
-  // para não exigir migração de banco agora, mas o ideal é banco.
   const fetchAutomationConfig = () => {
     const savedWebhook = localStorage.getItem('n8n_production_webhook');
     if (savedWebhook) setProductionWebhook(savedWebhook);
@@ -210,7 +200,6 @@ const Settings: React.FC = () => {
     }
   };
 
-  // Função para detectar o ID do canal logado
   const handleDetectChannelId = async () => {
     setIsDetectingChannel(true);
     try {
@@ -218,7 +207,6 @@ const Settings: React.FC = () => {
         throw new Error("API do Google não carregada. Recarregue a página.");
       }
 
-      // 1. Solicitar Token
       const accessToken = await new Promise<string>((resolve, reject) => {
         const tokenClient = window.google.accounts.oauth2.initTokenClient({
           client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID || '441621535337-k4fcqj90ovvfp1d9sj6hugj4bqavhhlv.apps.googleusercontent.com',
@@ -228,10 +216,9 @@ const Settings: React.FC = () => {
             else resolve(response.access_token);
           },
         });
-        tokenClient.requestAccessToken({ prompt: 'select_account' }); // Força seleção de conta
+        tokenClient.requestAccessToken({ prompt: 'select_account' });
       });
 
-      // 2. Buscar info do canal ("mine")
       const response = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', {
         headers: { Authorization: `Bearer ${accessToken}` }
       });
@@ -504,33 +491,66 @@ const Settings: React.FC = () => {
     setTriggeringWorkflow(true);
     setWorkflowResponse(null);
 
-    try {
-      // Dispara o webhook
-      const response = await fetch(productionWebhook, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          triggered_by: user?.email,
-          timestamp: new Date().toISOString(),
-          action: 'manual_trigger'
-        })
-      });
+    const url = productionWebhook.trim();
 
-      if (response.ok) {
+    try {
+      const payload = {
+        triggered_by: user?.email,
+        timestamp: new Date().toISOString(),
+        action: 'manual_trigger'
+      };
+
+      let response;
+
+      if (useNoCors) {
+        // Modo No-CORS: Envia como text/plain para evitar Preflight
+        // O navegador não permite ler a resposta (opaque), mas a requisição é enviada.
+        await fetch(url, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: {
+            'Content-Type': 'text/plain' // Importante: não usar application/json
+          },
+          body: JSON.stringify(payload)
+        });
+
+        // Assumimos sucesso pois não podemos ler o status
         setWorkflowResponse({
           success: true,
-          message: "Fluxo disparado com sucesso! O n8n iniciou o processamento."
+          message: "Disparo enviado em modo de compatibilidade! Verifique no n8n se o fluxo iniciou."
         });
+
       } else {
-        throw new Error(`Erro ${response.status}: ${response.statusText}`);
+        // Modo Padrão (Requer CORS configurado no n8n)
+        response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (response.ok) {
+          setWorkflowResponse({
+            success: true,
+            message: "Fluxo disparado com sucesso! O n8n iniciou o processamento."
+          });
+        } else {
+          throw new Error(`Erro ${response.status}: ${response.statusText}`);
+        }
       }
+
     } catch (err: any) {
       console.error("Workflow Trigger Error:", err);
+      
+      let msg = `Falha ao disparar: ${err.message}.`;
+      if (err.message.includes('Failed to fetch')) {
+        msg = "Erro de CORS ou Rede. Tente ativar o 'Modo de Compatibilidade' abaixo.";
+      }
+
       setWorkflowResponse({
         success: false,
-        message: `Falha ao disparar: ${err.message}. Verifique se a URL está correta e se o CORS no n8n permite a origem: ${window.location.origin}`
+        message: msg
       });
     } finally {
       setTriggeringWorkflow(false);
@@ -1152,8 +1172,8 @@ const Settings: React.FC = () => {
                   <div className="flex-grow">
                     <p className="font-bold mb-1">Atenção ao CORS (Erro "Failed to fetch")</p>
                     <p className="mb-2">
-                      Para que o botão funcione, você deve adicionar a URL abaixo no campo 
-                      <strong> "Allowed Origins (CORS)"</strong> nas opções do nó Webhook no n8n.
+                      O CORS é configurado <strong>individualmente para cada nó de Webhook</strong> no n8n.
+                      O fato de o "Agendar" funcionar não garante que este webhook funcione, pois são nós diferentes.
                     </p>
                     <div className="flex items-center gap-2 bg-white border border-amber-300 rounded px-2 py-1 font-mono text-xs">
                       <span className="truncate">{currentOrigin}</span>
@@ -1166,7 +1186,7 @@ const Settings: React.FC = () => {
                       </button>
                     </div>
                     <p className="mt-2 text-xs opacity-80">
-                      Ou use <code>*</code> no n8n para permitir qualquer origem (apenas para testes).
+                      Adicione esta origem nas opções do nó Webhook específico deste fluxo.
                     </p>
                   </div>
                 </div>
@@ -1219,6 +1239,21 @@ const Settings: React.FC = () => {
                   Configure a URL ao lado primeiro.
                 </p>
               )}
+
+              {/* Checkbox No-CORS */}
+              <div className="mt-4 flex items-center gap-2">
+                <input 
+                  type="checkbox" 
+                  id="useNoCors" 
+                  checked={useNoCors} 
+                  onChange={(e) => setUseNoCors(e.target.checked)}
+                  className="rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+                />
+                <label htmlFor="useNoCors" className="text-xs text-gray-600 cursor-pointer select-none flex items-center gap-1">
+                  Modo de Compatibilidade (Ignorar CORS)
+                  <span className="text-gray-400" title="Envia a requisição sem esperar resposta JSON. Útil se o n8n estiver bloqueando a origem.">(?)</span>
+                </label>
+              </div>
             </div>
 
             {workflowResponse && (
