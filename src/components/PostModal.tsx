@@ -25,7 +25,7 @@ interface PostModalProps {
 }
 
 const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting }) => {
-  const [activeTab, setActiveTab] = useState<'webhook' | 'direct'>('direct'); // Padrão para Direct para testar
+  const [activeTab, setActiveTab] = useState<'webhook' | 'direct'>('direct');
   const [scheduleDate, setScheduleDate] = useState<Date | null>(null);
   const [privacy, setPrivacy] = useState<'public' | 'private' | 'unlisted'>('private');
   const [webhookUrl, setWebhookUrl] = useState('');
@@ -34,15 +34,39 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isGapiLoaded, setIsGapiLoaded] = useState(false);
 
-  // Carregar URL do webhook salva
+  // Monitorar carregamento da API do Google
   useEffect(() => {
     const savedUrl = localStorage.getItem('n8n_webhook_url');
     if (savedUrl) setWebhookUrl(savedUrl);
     
-    // Verificar se o GAPI está carregado
-    if (window.gapi && window.google) {
-      setIsGapiLoaded(true);
-    }
+    // Função para verificar se a API carregou
+    const checkGapi = () => {
+      if (window.google && window.google.accounts) {
+        setIsGapiLoaded(true);
+        return true;
+      }
+      return false;
+    };
+
+    // Verifica imediatamente
+    if (checkGapi()) return;
+
+    // Se não carregou, verifica a cada 500ms por 5 segundos
+    const intervalId = setInterval(() => {
+      if (checkGapi()) {
+        clearInterval(intervalId);
+      }
+    }, 500);
+
+    // Limpa o intervalo após 5 segundos para não ficar rodando para sempre
+    const timeoutId = setTimeout(() => {
+      clearInterval(intervalId);
+    }, 5000);
+
+    return () => {
+      clearInterval(intervalId);
+      clearTimeout(timeoutId);
+    };
   }, []);
 
   const handleWebhookSubmit = () => {
@@ -57,12 +81,17 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
     });
   };
 
-  // --- LÓGICA DE UPLOAD DIRETO (CORRIGIDA) ---
+  // --- LÓGICA DE UPLOAD DIRETO ---
 
   const getAccessToken = async () => {
     return new Promise<string>((resolve, reject) => {
+      if (!window.google || !window.google.accounts) {
+        reject(new Error('API do Google não carregada. Recarregue a página.'));
+        return;
+      }
+
       const tokenClient = window.google.accounts.oauth2.initTokenClient({
-        client_id: '441621535337-k4fcqj90ovvfp1d9sj6hugj4bqavhhlv.apps.googleusercontent.com',
+        client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID || '441621535337-k4fcqj90ovvfp1d9sj6hugj4bqavhhlv.apps.googleusercontent.com',
         scope: 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.force-ssl',
         callback: (response: any) => {
           if (response.error) {
@@ -72,7 +101,7 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
           }
         },
       });
-      // Força o prompt se necessário, ou tenta silencioso se já autorizado
+      
       tokenClient.requestAccessToken({ prompt: '' });
     });
   };
@@ -83,12 +112,10 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
     setErrorMessage(null);
 
     try {
-      // 1. Obter Token de Acesso
       console.log('Solicitando token de acesso...');
       const accessToken = await getAccessToken();
       console.log('Token obtido.');
 
-      // 2. Baixar o vídeo do S3/Supabase para um Blob local
       console.log('Baixando vídeo do servidor...', video.link_s3);
       const videoResponse = await fetch(video.link_s3);
       if (!videoResponse.ok) throw new Error('Falha ao baixar o arquivo de vídeo original.');
@@ -96,13 +123,12 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
       const videoSize = videoBlob.size;
       console.log(`Vídeo baixado. Tamanho: ${(videoSize / 1024 / 1024).toFixed(2)} MB`);
 
-      // 3. Preparar Metadados
       const metadata = {
         snippet: {
-          title: video.title.substring(0, 100), // Limite do YT
+          title: video.title.substring(0, 100),
           description: `${video.description || ''}\n\n${(video.hashtags || []).join(' ')}`,
           tags: video.tags || [],
-          categoryId: '22', // People & Blogs (padrão seguro)
+          categoryId: '22',
         },
         status: {
           privacyStatus: privacy,
@@ -111,8 +137,6 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
         }
       };
 
-      // 4. Iniciar Upload Resumível (Passo 1: Obter URL de Sessão)
-      // IMPORTANTE: Usamos fetch com headers manuais para evitar problemas da lib client
       console.log('Iniciando sessão de upload...');
       
       const initResponse = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status,contentDetails', {
@@ -132,7 +156,6 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
         throw new Error(`Google recusou a inicialização: ${initResponse.status} - Verifique se a URL do Vercel está autorizada no Google Cloud Console.`);
       }
 
-      // O URL de upload vem no header 'Location'
       const uploadUrl = initResponse.headers.get('Location');
       if (!uploadUrl) {
         throw new Error('Google não retornou a URL de upload (Header Location ausente). Problema de CORS ou permissão.');
@@ -140,8 +163,6 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
 
       console.log('Sessão criada. Enviando bytes para:', uploadUrl);
 
-      // 5. Enviar o arquivo (PUT no uploadUrl)
-      // Usamos XMLHttpRequest para ter progresso real (fetch não tem progresso de upload nativo fácil)
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open('PUT', uploadUrl);
@@ -159,7 +180,6 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
             const response = JSON.parse(xhr.responseText);
             console.log('Upload concluído com sucesso!', response);
             
-            // Atualizar status no banco
             await supabase.from('shorts_youtube').update({
               status: 'Posted',
               publish_at: scheduleDate ? scheduleDate.toISOString() : new Date().toISOString()
@@ -270,22 +290,21 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
             </div>
           ) : (
             <div className="space-y-4 animate-fade-in">
-              {!isGapiLoaded && (
-                <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-3 rounded-lg flex gap-2 text-sm text-yellow-800 dark:text-yellow-200">
-                  <AlertCircle size={16} className="shrink-0 mt-0.5" />
-                  <p>A API do Google não foi carregada corretamente. Tente recarregar a página.</p>
+              {!isGapiLoaded ? (
+                <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-3 rounded-lg flex gap-2 text-sm text-yellow-800 dark:text-yellow-200 items-center">
+                  <Loader2 size={16} className="animate-spin shrink-0" />
+                  <p>Carregando API do Google...</p>
+                </div>
+              ) : (
+                <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 p-4 rounded-lg">
+                  <h4 className="text-sm font-semibold text-blue-800 dark:text-blue-200 mb-2 flex items-center gap-2">
+                    <CheckCircle2 size={16} /> Upload direto via navegador habilitado
+                  </h4>
+                  <p className="text-xs text-blue-600 dark:text-blue-300 leading-relaxed">
+                    Nota: O upload direto exige que a URL atual ({window.location.origin}) esteja autorizada no Google Cloud Console.
+                  </p>
                 </div>
               )}
-              
-              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 p-4 rounded-lg">
-                <h4 className="text-sm font-semibold text-blue-800 dark:text-blue-200 mb-2 flex items-center gap-2">
-                  <CheckCircle2 size={16} /> Upload direto via navegador habilitado
-                </h4>
-                <p className="text-xs text-blue-600 dark:text-blue-300 leading-relaxed">
-                  Nota: O upload direto exige que a URL atual ({window.location.origin}) esteja autorizada no Google Cloud Console.
-                  Se falhar com erro de CORS, verifique as "Origens JavaScript Autorizadas".
-                </p>
-              </div>
 
               {/* Privacy Selector */}
               <div>
@@ -410,7 +429,7 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
           ) : (
             <button
               onClick={handleDirectUpload}
-              disabled={uploadStatus === 'uploading' || uploadStatus === 'success'}
+              disabled={!isGapiLoaded || uploadStatus === 'uploading' || uploadStatus === 'success'}
               className={`flex items-center gap-2 px-6 py-2 text-sm font-medium text-white rounded-lg shadow-lg transition-all disabled:opacity-70 disabled:cursor-not-allowed ${
                 uploadStatus === 'success' ? 'bg-green-600' : 'bg-red-600 hover:bg-red-700 shadow-red-500/30'
               }`}
