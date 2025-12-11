@@ -6,7 +6,7 @@ import { useAuth, UserRole } from '../contexts/AuthContext';
 import { 
   Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle, Key, 
   CheckCircle, Wifi, RefreshCw, Database, Users, Shield, Lock, User, Sparkles,
-  Cpu, Server, Zap, Globe, HelpCircle, ExternalLink, Info
+  Cpu, Server, Zap, Globe, HelpCircle, ExternalLink, Info, Youtube, Fingerprint
 } from 'lucide-react';
 
 interface Setting {
@@ -14,6 +14,7 @@ interface Setting {
   channel: string;
   webhook: string;
   youtube_api_key?: string;
+  youtube_channel_id?: string; // Novo campo
   ai_provider: AIProvider;
   gemini_key?: string;
   groq_key?: string;
@@ -46,6 +47,7 @@ const Settings: React.FC = () => {
   const [currentChannel, setCurrentChannel] = useState('');
   const [currentWebhook, setCurrentWebhook] = useState('');
   const [currentApiKey, setCurrentApiKey] = useState('');
+  const [currentChannelId, setCurrentChannelId] = useState(''); // Novo estado
   
   // AI States
   const [aiProvider, setAiProvider] = useState<AIProvider>('gemini');
@@ -59,6 +61,7 @@ const Settings: React.FC = () => {
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isTestingAI, setIsTestingAI] = useState(false);
   const [aiTestResult, setAiTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [isDetectingChannel, setIsDetectingChannel] = useState(false);
 
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<{ updated: number; total: number; message: string } | null>(null);
@@ -125,6 +128,7 @@ const Settings: React.FC = () => {
     setCurrentChannel('');
     setCurrentWebhook('');
     setCurrentApiKey('');
+    setCurrentChannelId('');
     
     setAiProvider('gemini');
     setCurrentGeminiKey('');
@@ -148,6 +152,7 @@ const Settings: React.FC = () => {
     setCurrentChannel(setting.channel);
     setCurrentWebhook(setting.webhook);
     setCurrentApiKey(setting.youtube_api_key || '');
+    setCurrentChannelId(setting.youtube_channel_id || '');
     
     setAiProvider(setting.ai_provider || 'gemini');
     setCurrentGeminiKey(setting.gemini_key || '');
@@ -179,6 +184,50 @@ const Settings: React.FC = () => {
     }
   };
 
+  // Função para detectar o ID do canal logado
+  const handleDetectChannelId = async () => {
+    setIsDetectingChannel(true);
+    try {
+      if (!window.google || !window.google.accounts) {
+        throw new Error("API do Google não carregada. Recarregue a página.");
+      }
+
+      // 1. Solicitar Token
+      const accessToken = await new Promise<string>((resolve, reject) => {
+        const tokenClient = window.google.accounts.oauth2.initTokenClient({
+          client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID || '441621535337-k4fcqj90ovvfp1d9sj6hugj4bqavhhlv.apps.googleusercontent.com',
+          scope: 'https://www.googleapis.com/auth/youtube.readonly',
+          callback: (response: any) => {
+            if (response.error) reject(response);
+            else resolve(response.access_token);
+          },
+        });
+        tokenClient.requestAccessToken({ prompt: 'select_account' }); // Força seleção de conta
+      });
+
+      // 2. Buscar info do canal ("mine")
+      const response = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      
+      const data = await response.json();
+      
+      if (data.items && data.items.length > 0) {
+        const channel = data.items[0];
+        setCurrentChannelId(channel.id);
+        alert(`Canal Detectado: ${channel.snippet.title}\nID: ${channel.id}\n\nO ID foi preenchido no formulário.`);
+      } else {
+        throw new Error("Nenhum canal do YouTube encontrado nesta conta.");
+      }
+
+    } catch (err: any) {
+      console.error("Erro ao detectar canal:", err);
+      alert(`Erro: ${err.message || 'Falha ao detectar canal'}`);
+    } finally {
+      setIsDetectingChannel(false);
+    }
+  };
+
   const handleTestApiKey = async () => {
     if (!currentApiKey) {
       setTestResult({ success: false, message: "Insira uma chave para testar." });
@@ -189,26 +238,16 @@ const Settings: React.FC = () => {
     setTestResult(null);
 
     try {
-      // Agora usamos a função dedicada de validação que lança erro se falhar
       await validateApiKey(currentApiKey);
       setTestResult({ success: true, message: "Chave válida! Conexão com YouTube estabelecida." });
     } catch (err: any) {
       console.error("API Key Test Error:", err);
-      
       let msg = "Chave inválida ou erro de conexão.";
-      // Tenta extrair mensagem mais amigável do erro do Google
-      if (err.message.includes('API key not valid')) {
-        msg = "A chave informada não é válida.";
-      } else if (err.message.includes('quota')) {
-        msg = "Cota da API excedida.";
-      } else if (err.message) {
-        msg = `Erro: ${err.message}`;
-      }
+      if (err.message.includes('API key not valid')) msg = "A chave informada não é válida.";
+      else if (err.message.includes('quota')) msg = "Cota da API excedida.";
+      else if (err.message) msg = `Erro: ${err.message}`;
 
-      setTestResult({ 
-        success: false, 
-        message: msg
-      });
+      setTestResult({ success: false, message: msg });
     } finally {
       setIsTestingKey(false);
     }
@@ -235,8 +274,6 @@ const Settings: React.FC = () => {
         throw new Error("Chave de API necessária.");
       }
 
-      // Para teste, usamos um prompt simples e pedimos apenas 1 variação (ou ignoramos o array)
-      // A função generateContentAI agora retorna string[], pegamos o primeiro
       const results = await generateContentAI(config, "Olá, teste de conexão.", 'title');
       
       if (results && results.length > 0) {
@@ -247,7 +284,6 @@ const Settings: React.FC = () => {
     } catch (err: any) {
       console.error("AI Test Error:", err);
       let msg = "Erro de conexão.";
-      
       if (aiProvider === 'ollama') {
         if (err.message.includes('Failed to fetch') || err.message.includes('CORS')) {
           msg = "Bloqueio de CORS detectado. O servidor não permitiu a conexão.";
@@ -257,11 +293,7 @@ const Settings: React.FC = () => {
       } else {
         msg = `Erro: ${err.message}`;
       }
-      
-      setAiTestResult({
-        success: false,
-        message: msg
-      });
+      setAiTestResult({ success: false, message: msg });
     } finally {
       setIsTestingAI(false);
     }
@@ -282,6 +314,7 @@ const Settings: React.FC = () => {
         channel: currentChannel, 
         webhook: currentWebhook,
         youtube_api_key: currentApiKey || null,
+        youtube_channel_id: currentChannelId || null,
         ai_provider: aiProvider,
         gemini_key: currentGeminiKey || null,
         groq_key: currentGroqKey || null,
@@ -524,46 +557,88 @@ const Settings: React.FC = () => {
                   </div>
                 </div>
 
-                {/* YouTube API */}
-                <div>
-                  <label htmlFor="apiKey" className="block text-sm font-medium text-gray-700 mb-1">
-                    YouTube Data API Key <span className="text-gray-400 font-normal">(Opcional)</span>
-                  </label>
-                  <div className="flex gap-2">
-                    <div className="relative flex-grow">
-                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <Key size={16} className="text-gray-400" />
+                {/* YouTube Security & API */}
+                <div className="border-t border-gray-100 pt-6">
+                  <h3 className="text-md font-bold text-gray-800 mb-4 flex items-center gap-2">
+                    <Youtube size={18} className="text-red-600" />
+                    Segurança e API do YouTube
+                  </h3>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Channel ID Lock */}
+                    <div>
+                      <label htmlFor="channelId" className="block text-sm font-medium text-gray-700 mb-1">
+                        ID do Canal (Trava de Segurança)
+                      </label>
+                      <div className="flex gap-2">
+                        <div className="relative flex-grow">
+                          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <Fingerprint size={16} className="text-gray-400" />
+                          </div>
+                          <input
+                            type="text"
+                            id="channelId"
+                            value={currentChannelId}
+                            onChange={(e) => setCurrentChannelId(e.target.value)}
+                            className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition-all font-mono text-sm"
+                            placeholder="UC..."
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleDetectChannelId}
+                          disabled={isDetectingChannel}
+                          className="px-3 py-2 bg-red-50 text-red-700 border border-red-100 rounded-lg hover:bg-red-100 transition-colors disabled:opacity-50 text-sm font-medium flex items-center gap-2"
+                          title="Logar com Google para detectar ID"
+                        >
+                          {isDetectingChannel ? <Loader2 size={16} className="animate-spin" /> : <Youtube size={16} />}
+                          Detectar
+                        </button>
                       </div>
-                      <input
-                        type="password"
-                        id="apiKey"
-                        value={currentApiKey}
-                        onChange={(e) => {
-                          setCurrentApiKey(e.target.value);
-                          setTestResult(null);
-                        }}
-                        className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition-all font-mono text-sm"
-                        placeholder="AIzaSy..."
-                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Se preenchido, o sistema só permitirá uploads se o usuário logado tiver este ID exato.
+                      </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={handleTestApiKey}
-                      disabled={!currentApiKey || isTestingKey}
-                      className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 text-sm font-medium"
-                    >
-                      {isTestingKey ? <Loader2 size={16} className="animate-spin" /> : 'Testar'}
-                    </button>
+
+                    {/* API Key */}
+                    <div>
+                      <label htmlFor="apiKey" className="block text-sm font-medium text-gray-700 mb-1">
+                        YouTube Data API Key <span className="text-gray-400 font-normal">(Opcional)</span>
+                      </label>
+                      <div className="flex gap-2">
+                        <div className="relative flex-grow">
+                          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <Key size={16} className="text-gray-400" />
+                          </div>
+                          <input
+                            type="password"
+                            id="apiKey"
+                            value={currentApiKey}
+                            onChange={(e) => {
+                              setCurrentApiKey(e.target.value);
+                              setTestResult(null);
+                            }}
+                            className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition-all font-mono text-sm"
+                            placeholder="AIzaSy..."
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleTestApiKey}
+                          disabled={!currentApiKey || isTestingKey}
+                          className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 text-sm font-medium"
+                        >
+                          {isTestingKey ? <Loader2 size={16} className="animate-spin" /> : 'Testar'}
+                        </button>
+                      </div>
+                      {testResult && (
+                        <p className={`text-xs mt-2 flex items-center gap-1 ${testResult.success ? 'text-green-600' : 'text-red-600'}`}>
+                          {testResult.success ? <CheckCircle size={12} /> : <AlertCircle size={12} />}
+                          {testResult.message}
+                        </p>
+                      )}
+                    </div>
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Usada apenas para o botão "Sincronizar Dados" (buscar títulos/durações). Não é necessária para upload.
-                  </p>
-                  {testResult && (
-                    <p className={`text-xs mt-2 flex items-center gap-1 ${testResult.success ? 'text-green-600' : 'text-red-600'}`}>
-                      {testResult.success ? <CheckCircle size={12} /> : <AlertCircle size={12} />}
-                      {testResult.message}
-                    </p>
-                  )}
                 </div>
 
                 {/* Configuração de IA */}
@@ -773,20 +848,27 @@ const Settings: React.FC = () => {
                   <div className="flex items-center gap-3 mb-1">
                     <h4 className="font-bold text-gray-800 text-lg">{setting.channel}</h4>
                     <div className="flex gap-2">
-                      {/* Badge YouTube */}
-                      {setting.youtube_api_key ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800" title="YouTube API Ativa">
-                          <Key size={10} className="mr-1" /> YT
+                      {/* Badge YouTube Lock */}
+                      {setting.youtube_channel_id ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800" title="Canal Travado (Seguro)">
+                          <Lock size={10} className="mr-1" /> Seguro
                         </span>
                       ) : (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600" title="Sem YouTube API">
-                          Sem YT
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800" title="Sem trava de segurança">
+                          <AlertCircle size={10} className="mr-1" /> Aberto
                         </span>
                       )}
+
+                      {/* Badge YouTube API */}
+                      {setting.youtube_api_key ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800" title="YouTube API Ativa">
+                          <Key size={10} className="mr-1" /> API
+                        </span>
+                      ) : null}
                       
                       {/* Badge IA */}
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium capitalize
-                        ${setting.ai_provider === 'gemini' ? 'bg-blue-100 text-blue-800' : 
+                        ${setting.ai_provider === 'gemini' ? 'bg-purple-100 text-purple-800' : 
                           setting.ai_provider === 'groq' ? 'bg-orange-100 text-orange-800' : 
                           'bg-gray-100 text-gray-800'}`}
                       >

@@ -92,7 +92,7 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
 
       const tokenClient = window.google.accounts.oauth2.initTokenClient({
         client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID || '441621535337-k4fcqj90ovvfp1d9sj6hugj4bqavhhlv.apps.googleusercontent.com',
-        scope: 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.force-ssl',
+        scope: 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/youtube.force-ssl',
         callback: (response: any) => {
           if (response.error) {
             reject(response);
@@ -102,7 +102,8 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
         },
       });
       
-      tokenClient.requestAccessToken({ prompt: '' });
+      // Força o prompt de seleção de conta para evitar login automático na conta errada
+      tokenClient.requestAccessToken({ prompt: 'select_account' });
     });
   };
 
@@ -112,10 +113,57 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
     setErrorMessage(null);
 
     try {
+      // 1. Buscar configurações do canal para validação
+      const { data: settingsData, error: settingsError } = await supabase
+        .from('shorts_settings')
+        .select('youtube_channel_id')
+        .eq('channel', video.channel)
+        .single();
+
+      if (settingsError && settingsError.code !== 'PGRST116') {
+        console.error("Erro ao buscar config:", settingsError);
+      }
+
+      const requiredChannelId = settingsData?.youtube_channel_id;
+
       console.log('Solicitando token de acesso...');
       const accessToken = await getAccessToken();
       console.log('Token obtido.');
 
+      // 2. VALIDAÇÃO DE SEGURANÇA: Verificar se o usuário logado é o dono do canal correto
+      console.log('Verificando identidade do canal...');
+      const channelResponse = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`
+        }
+      });
+      
+      if (!channelResponse.ok) {
+        throw new Error('Falha ao verificar identidade do canal no YouTube.');
+      }
+
+      const channelData = await channelResponse.json();
+      if (!channelData.items || channelData.items.length === 0) {
+        throw new Error('A conta Google logada não possui um canal no YouTube.');
+      }
+
+      const loggedChannel = channelData.items[0];
+      console.log(`Logado como: ${loggedChannel.snippet.title} (${loggedChannel.id})`);
+
+      if (requiredChannelId) {
+        if (loggedChannel.id !== requiredChannelId) {
+          throw new Error(`SEGURANÇA: Você logou na conta errada!\n\nConta Logada: ${loggedChannel.snippet.title}\nConta Esperada: ${video.channel}\n\nPor favor, troque de conta.`);
+        }
+      } else {
+        // Se não tiver ID configurado, avisa mas permite (ou pede confirmação)
+        const confirmMsg = `ATENÇÃO: O sistema não tem um ID de canal salvo para "${video.channel}".\n\nVocê está prestes a postar no canal: "${loggedChannel.snippet.title}".\n\nIsso está correto?`;
+        if (!window.confirm(confirmMsg)) {
+          setUploadStatus('idle');
+          return;
+        }
+      }
+
+      // 3. Download do Vídeo
       console.log('Baixando vídeo do servidor...', video.link_s3);
       const videoResponse = await fetch(video.link_s3);
       if (!videoResponse.ok) throw new Error('Falha ao baixar o arquivo de vídeo original.');
@@ -369,7 +417,7 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
           {errorMessage && (
             <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-start gap-2 text-sm text-red-700 dark:text-red-200 animate-shake">
               <AlertCircle size={16} className="shrink-0 mt-0.5" />
-              <span>{errorMessage}</span>
+              <span className="whitespace-pre-line">{errorMessage}</span>
             </div>
           )}
 
