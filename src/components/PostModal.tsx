@@ -1,596 +1,439 @@
 import React, { useState, useEffect } from 'react';
-import { Send, Calendar as CalendarIcon, X, Clock, CheckCircle2, AlertTriangle, Zap, Wifi, WifiOff, RefreshCw, Globe, Server, Info } from 'lucide-react';
-import { supabase } from '../lib/supabaseClient';
-import DatePicker, { registerLocale } from 'react-datepicker';
+import { X, Upload, Calendar, Globe, Lock, Eye, AlertCircle, CheckCircle2, Loader2, Youtube } from 'lucide-react';
+import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
-import { ptBR } from 'date-fns/locale';
-import { initializeGoogleApi, requestGoogleAuth, uploadVideoToYouTube } from '../lib/googleUpload';
-
-// Tenta registrar o locale com segurança
-try {
-  registerLocale('pt-BR', ptBR);
-} catch (e) {
-  console.error("Erro ao registrar locale pt-BR:", e);
-}
+import { supabase } from '../lib/supabaseClient';
 
 export interface Video {
-  id: number | string;
-  baserow_id?: number;
+  id: string | number;
   title: string;
   description?: string;
   link_s3: string;
   link_drive?: string;
   channel?: string;
-  hashtags?: string[] | string;
-  tags?: string[] | string;
-  duration: number;
-  thumbnail?: string;
-  status: string;
-  created_at: string;
-  failed?: boolean;
-  publish_at?: string;
-  url?: string;
+  hashtags?: string[];
+  tags?: string[];
+  baserow_id?: number;
+  duration?: number;
 }
 
 interface PostModalProps {
-  video: Video | null;
+  video: Video;
   onClose: () => void;
   onPost: (video: Video, options: { scheduleDate?: string; webhookUrl: string }) => void;
   isPosting: boolean;
 }
 
-type PostMode = 'now' | 'schedule';
-type UploadMethod = 'webhook' | 'direct';
-
 const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting }) => {
-  const [postMode, setPostMode] = useState<PostMode>('now');
-  const [uploadMethod, setUploadMethod] = useState<UploadMethod>('webhook');
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-  
-  // Webhook States
-  const [activeWebhook, setActiveWebhook] = useState<string | null>(null);
-  const [loadingWebhook, setLoadingWebhook] = useState(true);
-  const [webhookError, setWebhookError] = useState<string | null>(null);
-  
-  // Direct Upload States
-  const [googleClientId, setGoogleClientId] = useState<string | null>(import.meta.env.VITE_GOOGLE_CLIENT_ID || null);
-  const [uploadProgress, setUploadProgress] = useState<number>(0);
-  const [isDirectUploading, setIsDirectUploading] = useState(false);
-  const [directUploadStatus, setDirectUploadStatus] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<'webhook' | 'direct'>('direct'); // Padrão para Direct para testar
+  const [scheduleDate, setScheduleDate] = useState<Date | null>(null);
+  const [privacy, setPrivacy] = useState<'public' | 'private' | 'unlisted'>('private');
+  const [webhookUrl, setWebhookUrl] = useState('');
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isGapiLoaded, setIsGapiLoaded] = useState(false);
 
-  const [videoChannel, setVideoChannel] = useState<string | null>(null);
-  const [isRetrying, setIsRetrying] = useState(false);
-
+  // Carregar URL do webhook salva
   useEffect(() => {
-    if (video) {
-      console.log("Modal montado para vídeo:", video.title); // Debug
-      const now = new Date();
-      if (!selectedDate) {
-        const defaultTime = new Date(now.getTime() + 60 * 60000);
-        setSelectedDate(defaultTime);
-      }
-      fetchChannelAndWebhook();
-      
-      // Inicializa Google API se tiver Client ID
-      if (googleClientId) {
-        initializeGoogleApi(googleClientId).catch(console.error);
-      }
+    const savedUrl = localStorage.getItem('n8n_webhook_url');
+    if (savedUrl) setWebhookUrl(savedUrl);
+    
+    // Verificar se o GAPI está carregado
+    if (window.gapi && window.google) {
+      setIsGapiLoaded(true);
     }
-  }, [video]);
+  }, []);
 
-  const checkWebhookConnection = async (url: string): Promise<void> => {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
+  const handleWebhookSubmit = () => {
+    if (!webhookUrl) {
+      alert('Por favor, configure a URL do Webhook.');
+      return;
+    }
+    localStorage.setItem('n8n_webhook_url', webhookUrl);
+    onPost(video, {
+      scheduleDate: scheduleDate ? scheduleDate.toISOString() : undefined,
+      webhookUrl
+    });
+  };
 
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          health_check: true,
-          timestamp: new Date().toISOString() 
-        }),
-        signal: controller.signal
+  // --- LÓGICA DE UPLOAD DIRETO (CORRIGIDA) ---
+
+  const getAccessToken = async () => {
+    return new Promise<string>((resolve, reject) => {
+      const tokenClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: '441621535337-k4fcqj90ovvfp1d9sj6hugj4bqavhhlv.apps.googleusercontent.com',
+        scope: 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.force-ssl',
+        callback: (response: any) => {
+          if (response.error) {
+            reject(response);
+          } else {
+            resolve(response.access_token);
+          }
+        },
       });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok && response.status >= 500) {
-         throw new Error(`Erro do Servidor: ${response.status}`);
-      }
-    } catch (error: any) {
-      console.error("Webhook connection failed:", error);
-      if (error.name === 'AbortError') {
-        throw new Error("Timeout: O servidor demorou para responder.");
-      } else if (error.message.includes('Failed to fetch')) {
-        throw new Error("Falha na conexão (Network Error).");
-      }
-    }
-  };
-
-  const fetchChannelAndWebhook = async () => {
-    if (!video) return;
-
-    setLoadingWebhook(true);
-    setWebhookError(null);
-    setVideoChannel(null);
-
-    try {
-      let channel = video.channel;
-
-      if (!channel) {
-        const { data: videoData } = await supabase
-          .from('shorts_youtube')
-          .select('channel')
-          .eq('id', video.id)
-          .single();
-
-        if (videoData) {
-          channel = videoData.channel;
-        }
-      }
-
-      setVideoChannel(channel || null);
-
-      if (!channel) {
-        setWebhookError('Vídeo sem canal associado.');
-        return;
-      }
-
-      const cleanChannel = channel.trim();
-      const { data, error } = await supabase
-        .from('shorts_settings')
-        .select('webhook')
-        .eq('channel', cleanChannel)
-        .maybeSingle();
-
-      if (error) throw error;
-      
-      if (data && data.webhook) {
-        setActiveWebhook(data.webhook);
-        try {
-          await checkWebhookConnection(data.webhook);
-        } catch (connError: any) {
-          setWebhookError(connError.message);
-        }
-      } else {
-        setWebhookError(`Webhook não configurado para "${cleanChannel}".`);
-      }
-    } catch (err: any) {
-      console.error("Error:", err);
-      setWebhookError('Erro ao carregar configurações.');
-    } finally {
-      setLoadingWebhook(false);
-      setIsRetrying(false);
-    }
-  };
-
-  const handleRetryConnection = () => {
-    setIsRetrying(true);
-    fetchChannelAndWebhook();
+      // Força o prompt se necessário, ou tenta silencioso se já autorizado
+      tokenClient.requestAccessToken({ prompt: '' });
+    });
   };
 
   const handleDirectUpload = async () => {
-    if (!video || !googleClientId) return;
-    
-    setIsDirectUploading(true);
-    setDirectUploadStatus('Iniciando autenticação...');
-    
+    setUploadStatus('uploading');
+    setUploadProgress(0);
+    setErrorMessage(null);
+
     try {
-      // 1. Autenticação (Agora usa o novo fluxo GIS)
-      const accessToken = await requestGoogleAuth();
-      
-      // 2. Download do Vídeo (Blob)
-      setDirectUploadStatus('Baixando vídeo do servidor...');
-      
-      let videoBlob: Blob;
-      try {
-        // Verifica se é HTTPS misturado com HTTP
-        if (window.location.protocol === 'https:' && video.link_s3.startsWith('http:')) {
-          throw new Error('Conteúdo Misto: Não é possível baixar vídeo HTTP em site HTTPS.');
+      // 1. Obter Token de Acesso
+      console.log('Solicitando token de acesso...');
+      const accessToken = await getAccessToken();
+      console.log('Token obtido.');
+
+      // 2. Baixar o vídeo do S3/Supabase para um Blob local
+      console.log('Baixando vídeo do servidor...', video.link_s3);
+      const videoResponse = await fetch(video.link_s3);
+      if (!videoResponse.ok) throw new Error('Falha ao baixar o arquivo de vídeo original.');
+      const videoBlob = await videoResponse.blob();
+      const videoSize = videoBlob.size;
+      console.log(`Vídeo baixado. Tamanho: ${(videoSize / 1024 / 1024).toFixed(2)} MB`);
+
+      // 3. Preparar Metadados
+      const metadata = {
+        snippet: {
+          title: video.title.substring(0, 100), // Limite do YT
+          description: `${video.description || ''}\n\n${(video.hashtags || []).join(' ')}`,
+          tags: video.tags || [],
+          categoryId: '22', // People & Blogs (padrão seguro)
+        },
+        status: {
+          privacyStatus: privacy,
+          selfDeclaredMadeForKids: false,
+          publishAt: scheduleDate ? scheduleDate.toISOString() : undefined
         }
+      };
 
-        const videoResponse = await fetch(video.link_s3);
-        
-        if (!videoResponse.ok) {
-          throw new Error(`Erro HTTP ${videoResponse.status} ao baixar vídeo.`);
-        }
-        
-        videoBlob = await videoResponse.blob();
-      } catch (downloadError: any) {
-        console.error("Erro de download:", downloadError);
-        if (downloadError.message === 'Failed to fetch' || downloadError.message.includes('NetworkError')) {
-          throw new Error(
-            'Bloqueio de CORS detectado. O servidor onde o vídeo está hospedado (S3/Supabase) não permitiu o download por este domínio. Configure o CORS no seu bucket para permitir GET.'
-          );
-        }
-        throw downloadError;
-      }
-
-      // 3. Preparar Tags
-      let tags: string[] = [];
-      if (Array.isArray(video.tags)) tags = video.tags;
-      else if (typeof video.tags === 'string') tags = (video.tags as string).split(',').map(t => t.trim());
-
-      // 4. Upload para YouTube
-      setDirectUploadStatus('Enviando para o YouTube...');
+      // 4. Iniciar Upload Resumível (Passo 1: Obter URL de Sessão)
+      // IMPORTANTE: Usamos fetch com headers manuais para evitar problemas da lib client
+      console.log('Iniciando sessão de upload...');
       
-      // Ajuste de fuso horário para agendamento
-      let publishAtISO = undefined;
-      let privacyStatus: 'private' | 'public' | 'unlisted' = 'public';
-
-      if (postMode === 'schedule' && selectedDate) {
-        privacyStatus = 'private';
-        publishAtISO = selectedDate.toISOString();
-      }
-
-      const result = await uploadVideoToYouTube(videoBlob, accessToken, {
-        title: video.title,
-        description: video.description || '',
-        privacyStatus: privacyStatus,
-        publishAt: publishAtISO,
-        tags: tags,
-        onProgress: (progress) => setUploadProgress(progress)
+      const initResponse = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status,contentDetails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+          'X-Upload-Content-Length': videoSize.toString(),
+          'X-Upload-Content-Type': 'video/mp4',
+        },
+        body: JSON.stringify(metadata)
       });
 
-      setDirectUploadStatus('Finalizando...');
+      if (!initResponse.ok) {
+        const errorText = await initResponse.text();
+        console.error('Erro na inicialização do upload:', initResponse.status, errorText);
+        throw new Error(`Google recusou a inicialização: ${initResponse.status} - Verifique se a URL do Vercel está autorizada no Google Cloud Console.`);
+      }
 
-      // 5. Atualizar Banco de Dados (Supabase)
-      const { error } = await supabase
-        .from('shorts_youtube')
-        .update({
-          status: 'Posted', 
-          youtube_id: result.id,
-          publish_at: publishAtISO || new Date().toISOString(),
-          failed: false
-        })
-        .eq('id', video.id);
+      // O URL de upload vem no header 'Location'
+      const uploadUrl = initResponse.headers.get('Location');
+      if (!uploadUrl) {
+        throw new Error('Google não retornou a URL de upload (Header Location ausente). Problema de CORS ou permissão.');
+      }
 
-      if (error) throw error;
+      console.log('Sessão criada. Enviando bytes para:', uploadUrl);
 
-      alert('Upload realizado com sucesso!');
-      onClose();
-      window.location.reload(); 
+      // 5. Enviar o arquivo (PUT no uploadUrl)
+      // Usamos XMLHttpRequest para ter progresso real (fetch não tem progresso de upload nativo fácil)
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', uploadUrl);
+        xhr.setRequestHeader('Content-Type', 'video/mp4');
+        
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const percentComplete = Math.round((e.loaded / e.total) * 100);
+            setUploadProgress(percentComplete);
+          }
+        };
+
+        xhr.onload = async () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            const response = JSON.parse(xhr.responseText);
+            console.log('Upload concluído com sucesso!', response);
+            
+            // Atualizar status no banco
+            await supabase.from('shorts_youtube').update({
+              status: 'Posted',
+              publish_at: scheduleDate ? scheduleDate.toISOString() : new Date().toISOString()
+            }).eq('id', video.id);
+
+            resolve();
+          } else {
+            reject(new Error(`Falha no envio dos bytes: ${xhr.status} ${xhr.statusText}`));
+          }
+        };
+
+        xhr.onerror = () => reject(new Error('Erro de rede durante o upload.'));
+        xhr.send(videoBlob);
+      });
+
+      setUploadStatus('success');
+      setTimeout(() => {
+        onClose();
+      }, 2000);
 
     } catch (error: any) {
-      console.error('Erro no upload direto:', error);
-      // Tratamento de erro mais amigável para o usuário
-      let msg = error.message || 'Falha no upload.';
-      if (msg.includes('popup_closed_by_user')) {
-        msg = 'Login cancelado pelo usuário.';
-      } else if (msg.includes('access_denied')) {
-        msg = 'Acesso negado. Você precisa autorizar o app.';
-      }
-      alert(`Erro: ${msg}`);
-    } finally {
-      setIsDirectUploading(false);
-      setDirectUploadStatus('');
-      setUploadProgress(0);
+      console.error('Erro fatal no upload:', error);
+      setErrorMessage(error.message || 'Erro desconhecido no upload.');
+      setUploadStatus('error');
     }
   };
-
-  const handleConfirm = () => {
-    if (!video) return;
-
-    if (uploadMethod === 'direct') {
-      handleDirectUpload();
-      return;
-    }
-
-    // Webhook Logic
-    if (!activeWebhook) return;
-
-    if (postMode === 'schedule') {
-      if (!selectedDate) {
-        alert('Selecione uma data e hora.');
-        return;
-      }
-      const isoDate = selectedDate.toISOString();
-      onPost(video, { scheduleDate: isoDate, webhookUrl: activeWebhook });
-    } else {
-      onPost(video, { webhookUrl: activeWebhook });
-    }
-  };
-
-  if (!video) return null;
-
-  const isWebhookReady = !loadingWebhook && !webhookError && activeWebhook;
-  const isDirectReady = !!googleClientId;
-  
-  const canSubmit = uploadMethod === 'direct' 
-    ? isDirectReady && !isDirectUploading && (postMode === 'now' || (postMode === 'schedule' && selectedDate))
-    : isWebhookReady && !isPosting && (postMode === 'now' || (postMode === 'schedule' && selectedDate));
 
   return (
-    <div 
-      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in"
-      onClick={onClose}
-    >
-      <div 
-        className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
-        onClick={e => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
+      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        
         {/* Header */}
-        <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center bg-gray-50 dark:bg-gray-800/50">
           <div>
-            <h2 className="text-xl font-bold text-gray-800">Publicar Vídeo</h2>
-            <p className="text-xs text-gray-500 mt-0.5">Configure os detalhes do envio</p>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+              <Upload className="w-5 h-5 text-brand-600" />
+              Publicar Vídeo
+            </h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Configure os detalhes do envio</p>
           </div>
-          <button 
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full p-2 transition-colors"
-          >
-            <X size={20} />
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
+            <X size={24} />
           </button>
         </div>
 
-        <div className="p-6 overflow-y-auto custom-scrollbar">
-          {/* Video Info Card */}
-          <div className="flex gap-4 mb-6 bg-white border border-gray-100 rounded-xl p-3 shadow-sm">
-            <div className="w-16 h-24 bg-gray-900 rounded-lg flex-shrink-0 overflow-hidden relative">
-               {video.thumbnail ? (
-                 <img src={video.thumbnail} alt="" className="w-full h-full object-cover" />
-               ) : video.link_s3 || video.url ? (
-                 <video 
-                   src={video.link_s3 || video.url} 
-                   className="w-full h-full object-cover opacity-80"
-                   muted
-                   preload="metadata"
-                 />
-               ) : (
-                 <div className="absolute inset-0 flex items-center justify-center text-gray-400">
-                   <Zap size={24} />
-                 </div>
-               )}
+        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+          
+          {/* Video Preview Mini */}
+          <div className="flex gap-4 mb-6 bg-gray-50 dark:bg-gray-800 p-3 rounded-xl border border-gray-100 dark:border-gray-700">
+            <div className="w-24 h-16 bg-gray-200 dark:bg-gray-700 rounded-lg overflow-hidden flex-shrink-0">
+               <video src={video.link_s3} className="w-full h-full object-cover" />
             </div>
-            
-            <div className="flex-1 min-w-0 py-1">
-              <h3 className="font-semibold text-gray-800 line-clamp-2 text-sm mb-2" title={video.title}>
-                {video.title || 'Vídeo sem título'}
-              </h3>
-              <div className="flex flex-wrap gap-2">
-                {videoChannel && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100">
-                    {videoChannel}
-                  </span>
-                )}
-                {video.duration > 0 && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
-                    {Math.floor(video.duration / 60)}:{(video.duration % 60).toString().padStart(2, '0')}
-                  </span>
-                )}
+            <div className="min-w-0 flex-1">
+              <h3 className="font-semibold text-gray-900 dark:text-white truncate text-sm">{video.title}</h3>
+              <div className="flex flex-wrap gap-1 mt-1">
+                {video.channel && <span className="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-1.5 py-0.5 rounded">{video.channel}</span>}
+                <span className="text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-1.5 py-0.5 rounded">
+                  {(video.hashtags || []).length} hashtags
+                </span>
               </div>
             </div>
           </div>
 
-          {/* Método de Upload Toggle */}
-          <div className="flex bg-gray-100 p-1 rounded-lg mb-6">
+          {/* Tabs */}
+          <div className="flex gap-2 mb-6 bg-gray-100 dark:bg-gray-800 p-1 rounded-lg">
             <button
-              onClick={() => setUploadMethod('webhook')}
-              className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-all ${
-                uploadMethod === 'webhook' 
-                  ? 'bg-white text-gray-800 shadow-sm' 
-                  : 'text-gray-500 hover:text-gray-700'
+              onClick={() => setActiveTab('webhook')}
+              className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all ${
+                activeTab === 'webhook' 
+                  ? 'bg-white dark:bg-gray-700 text-brand-600 shadow-sm' 
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
               }`}
             >
-              <Server size={16} />
-              <span>Via Webhook</span>
+              <div className="flex items-center justify-center gap-2">
+                <Globe size={16} />
+                Via Webhook (n8n)
+              </div>
             </button>
             <button
-              onClick={() => setUploadMethod('direct')}
-              className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-all ${
-                uploadMethod === 'direct' 
-                  ? 'bg-white text-red-600 shadow-sm' 
-                  : 'text-gray-500 hover:text-gray-700'
+              onClick={() => setActiveTab('direct')}
+              className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all ${
+                activeTab === 'direct' 
+                  ? 'bg-white dark:bg-gray-700 text-red-600 shadow-sm' 
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
               }`}
             >
-              <Globe size={16} />
-              <span>API Direta</span>
+              <div className="flex items-center justify-center gap-2">
+                <Youtube size={16} />
+                API Direta (Browser)
+              </div>
             </button>
           </div>
 
-          {/* Status da Conexão (Depende do Método) */}
-          {uploadMethod === 'webhook' ? (
-            <div className={`mb-6 p-3 rounded-lg border text-sm flex items-center gap-3 transition-colors duration-300 ${
-              webhookError 
-                ? 'bg-red-50 border-red-200 text-red-700' 
-                : loadingWebhook 
-                  ? 'bg-gray-50 border-gray-200 text-gray-600'
-                  : 'bg-green-50 border-green-200 text-green-700'
-            }`}>
-              {loadingWebhook ? (
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current" />
-              ) : webhookError ? (
-                <WifiOff size={18} className="flex-shrink-0 text-red-600" />
-              ) : (
-                <CheckCircle2 size={18} className="flex-shrink-0 text-green-600" />
-              )}
-              
-              <div className="flex-1 flex justify-between items-center">
-                <span className="font-medium">
-                  {loadingWebhook ? 'Testando conexão com o servidor...' : 
-                   webhookError ? webhookError : 
-                   'Conexão estabelecida com sucesso'}
-                </span>
-                
-                {webhookError && !loadingWebhook && (
-                  <button 
-                    onClick={handleRetryConnection}
-                    disabled={isRetrying}
-                    className="ml-2 p-1.5 hover:bg-red-100 rounded-full transition-colors text-red-600"
-                    title="Tentar conectar novamente"
-                  >
-                    <RefreshCw size={16} className={isRetrying ? "animate-spin" : ""} />
-                  </button>
-                )}
+          {/* Content based on Tab */}
+          {activeTab === 'webhook' ? (
+            <div className="space-y-4 animate-fade-in">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">URL do Webhook (n8n/Make)</label>
+                <input
+                  type="url"
+                  value={webhookUrl}
+                  onChange={(e) => setWebhookUrl(e.target.value)}
+                  placeholder="https://seu-n8n.com/webhook/..."
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-brand-500 dark:bg-gray-700 dark:text-white"
+                />
+                <p className="text-xs text-gray-500 mt-1">O vídeo será enviado para esta URL para processamento externo.</p>
               </div>
             </div>
           ) : (
-            <div className={`mb-6 p-3 rounded-lg border text-sm flex flex-col gap-2 transition-colors duration-300 ${
-              !googleClientId 
-                ? 'bg-amber-50 border-amber-200 text-amber-700' 
-                : 'bg-blue-50 border-blue-200 text-blue-700'
-            }`}>
-              <div className="flex items-center gap-3">
-                {!googleClientId ? (
-                  <AlertTriangle size={18} className="flex-shrink-0 text-amber-600" />
-                ) : (
-                  <Globe size={18} className="flex-shrink-0 text-blue-600" />
-                )}
-                
-                <div className="flex-1">
-                  <span className="font-medium">
-                    {!googleClientId 
-                      ? 'Client ID do Google não configurado (.env)' 
-                      : 'Upload direto via navegador habilitado'}
-                  </span>
-                </div>
-              </div>
-              
-              {/* Aviso sobre CORS */}
-              {googleClientId && (
-                <div className="flex items-start gap-2 mt-1 text-xs opacity-90 bg-white/50 p-2 rounded">
-                  <Info size={14} className="mt-0.5 flex-shrink-0" />
-                  <p>
-                    Nota: O upload direto exige que o servidor do vídeo (S3) permita <strong>CORS</strong> para este domínio. Se falhar, verifique as configurações do seu bucket.
-                  </p>
+            <div className="space-y-4 animate-fade-in">
+              {!isGapiLoaded && (
+                <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-3 rounded-lg flex gap-2 text-sm text-yellow-800 dark:text-yellow-200">
+                  <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                  <p>A API do Google não foi carregada corretamente. Tente recarregar a página.</p>
                 </div>
               )}
+              
+              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 p-4 rounded-lg">
+                <h4 className="text-sm font-semibold text-blue-800 dark:text-blue-200 mb-2 flex items-center gap-2">
+                  <CheckCircle2 size={16} /> Upload direto via navegador habilitado
+                </h4>
+                <p className="text-xs text-blue-600 dark:text-blue-300 leading-relaxed">
+                  Nota: O upload direto exige que a URL atual ({window.location.origin}) esteja autorizada no Google Cloud Console.
+                  Se falhar com erro de CORS, verifique as "Origens JavaScript Autorizadas".
+                </p>
+              </div>
+
+              {/* Privacy Selector */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Visibilidade</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'public', label: 'Público', icon: Globe },
+                    { id: 'unlisted', label: 'Não Listado', icon: Eye },
+                    { id: 'private', label: 'Privado', icon: Lock }
+                  ].map((opt) => (
+                    <button
+                      key={opt.id}
+                      onClick={() => setPrivacy(opt.id as any)}
+                      className={`flex flex-col items-center justify-center p-3 rounded-lg border transition-all ${
+                        privacy === opt.id
+                          ? 'bg-brand-50 dark:bg-brand-900/30 border-brand-200 dark:border-brand-700 text-brand-700 dark:text-brand-300 ring-1 ring-brand-500'
+                          : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+                      }`}
+                    >
+                      <opt.icon size={20} className="mb-1" />
+                      <span className="text-xs font-medium">{opt.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
 
-          {/* Mode Selection */}
-          <div className="grid grid-cols-2 gap-3 mb-6">
-            <button
-              onClick={() => setPostMode('now')}
-              disabled={uploadMethod === 'webhook' ? !!webhookError : !googleClientId}
-              className={`relative flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all duration-200 ${
-                (uploadMethod === 'webhook' ? !!webhookError : !googleClientId)
-                  ? 'opacity-50 cursor-not-allowed border-gray-100 bg-gray-50 text-gray-400'
-                  : postMode === 'now'
-                    ? 'border-blue-500 bg-blue-50/50 text-blue-700'
-                    : 'border-gray-100 hover:border-gray-200 text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              <Send size={24} className="mb-2" />
-              <span className="font-semibold text-sm">Postar Agora</span>
-              {postMode === 'now' && !(uploadMethod === 'webhook' ? !!webhookError : !googleClientId) && (
-                <div className="absolute top-2 right-2 w-2 h-2 bg-blue-500 rounded-full" />
-              )}
-            </button>
+          {/* Common Fields */}
+          <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
+            <div className="flex items-center justify-between mb-4">
+              <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!!scheduleDate}
+                  onChange={(e) => setScheduleDate(e.target.checked ? new Date() : null)}
+                  className="rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+                />
+                Agendar Publicação
+              </label>
+            </div>
 
-            <button
-              onClick={() => setPostMode('schedule')}
-              disabled={uploadMethod === 'webhook' ? !!webhookError : !googleClientId}
-              className={`relative flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all duration-200 ${
-                (uploadMethod === 'webhook' ? !!webhookError : !googleClientId)
-                  ? 'opacity-50 cursor-not-allowed border-gray-100 bg-gray-50 text-gray-400'
-                  : postMode === 'schedule'
-                    ? 'border-purple-500 bg-purple-50/50 text-purple-700'
-                    : 'border-gray-100 hover:border-gray-200 text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              <CalendarIcon size={24} className="mb-2" />
-              <span className="font-semibold text-sm">Agendar</span>
-              {postMode === 'schedule' && !(uploadMethod === 'webhook' ? !!webhookError : !googleClientId) && (
-                <div className="absolute top-2 right-2 w-2 h-2 bg-purple-500 rounded-full" />
-              )}
-            </button>
+            {scheduleDate && (
+              <div className="mb-4 animate-slide-down">
+                <label className="block text-xs text-gray-500 mb-1">Data e Hora da Publicação</label>
+                <DatePicker
+                  selected={scheduleDate}
+                  onChange={(date) => setScheduleDate(date)}
+                  showTimeSelect
+                  dateFormat="Pp"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-brand-500 dark:bg-gray-700 dark:text-white"
+                  minDate={new Date()}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  O vídeo será enviado como "Privado" e agendado no YouTube.
+                </p>
+              </div>
+            )}
           </div>
 
-          {/* Calendar Section */}
-          {postMode === 'schedule' && !(uploadMethod === 'webhook' ? !!webhookError : !googleClientId) && (
-            <div className="animate-slide-up">
-              <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
-                <Clock size={16} className="text-purple-500" />
-                Data e Hora da Publicação
-              </label>
-              <div className="custom-datepicker-wrapper">
-                <DatePicker
-                  selected={selectedDate}
-                  onChange={(date) => setSelectedDate(date)}
-                  showTimeSelect
-                  timeFormat="HH:mm"
-                  timeIntervals={15}
-                  dateFormat="dd 'de' MMMM 'de' yyyy, HH:mm"
-                  locale="pt-BR"
-                  minDate={new Date()}
-                  placeholderText="Selecione a data e hora"
-                  className="w-full px-4 py-3 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition-all text-gray-700 font-medium shadow-sm"
-                  calendarClassName="shadow-xl border-0 rounded-xl font-sans"
-                  dayClassName={() => "rounded-full hover:bg-purple-100"}
-                />
-              </div>
-              <p className="text-xs text-gray-500 mt-2 ml-1">
-                {uploadMethod === 'direct' 
-                  ? 'O vídeo será enviado como "Privado" e agendado no YouTube.' 
-                  : 'O vídeo será enviado para a fila e processado na data escolhida.'}
-              </p>
+          {/* Error Message */}
+          {errorMessage && (
+            <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-start gap-2 text-sm text-red-700 dark:text-red-200 animate-shake">
+              <AlertCircle size={16} className="shrink-0 mt-0.5" />
+              <span>{errorMessage}</span>
             </div>
           )}
 
-          {/* Barra de Progresso (Apenas Upload Direto) */}
-          {isDirectUploading && (
-            <div className="mt-4 animate-fade-in">
-              <div className="flex justify-between text-xs font-medium text-gray-600 mb-1">
-                <span>{directUploadStatus}</span>
-                <span>{Math.round(uploadProgress)}%</span>
+          {/* Progress Bar */}
+          {uploadStatus === 'uploading' && (
+            <div className="mt-4 space-y-2">
+              <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
+                <span>Enviando para o YouTube...</span>
+                <span>{uploadProgress}%</span>
               </div>
-              <div className="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
+              <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 overflow-hidden">
                 <div 
-                  className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
+                  className="bg-brand-600 h-2.5 rounded-full transition-all duration-300 ease-out" 
                   style={{ width: `${uploadProgress}%` }}
                 ></div>
               </div>
             </div>
           )}
+
+          {uploadStatus === 'success' && (
+            <div className="mt-4 p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg flex items-center justify-center gap-2 text-green-700 dark:text-green-200">
+              <CheckCircle2 size={20} />
+              <span className="font-medium">Upload concluído com sucesso!</span>
+            </div>
+          )}
+
         </div>
 
-        {/* Footer Actions */}
-        <div className="p-6 border-t border-gray-100 bg-gray-50/50 flex gap-3">
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 flex justify-end gap-3">
           <button
             onClick={onClose}
-            disabled={isPosting || isDirectUploading}
-            className="flex-1 px-4 py-3 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-xl hover:bg-gray-50 transition-colors disabled:opacity-50"
+            disabled={uploadStatus === 'uploading'}
+            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50"
           >
             Cancelar
           </button>
-          <button
-            onClick={handleConfirm}
-            disabled={!canSubmit}
-            className={`flex-[2] flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold text-white rounded-xl transition-all shadow-sm ${
-              !canSubmit 
-                ? 'bg-gray-300 cursor-not-allowed' 
-                : postMode === 'now'
-                  ? 'bg-blue-600 hover:bg-blue-700 hover:shadow-md hover:-translate-y-0.5'
-                  : 'bg-purple-600 hover:bg-purple-700 hover:shadow-md hover:-translate-y-0.5'
-            }`}
-          >
-            {isPosting || isDirectUploading ? (
-              <>
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white/80"></div>
-                {isDirectUploading ? 'Enviando...' : 'Processando...'}
-              </>
-            ) : (
-              <>
-                {postMode === 'now' ? <Send size={18} /> : <CalendarIcon size={18} />}
-                {postMode === 'now' ? 'Publicar Imediatamente' : 'Confirmar Agendamento'}
-              </>
-            )}
-          </button>
+          
+          {activeTab === 'webhook' ? (
+            <button
+              onClick={handleWebhookSubmit}
+              disabled={isPosting}
+              className="flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-brand-600 hover:bg-brand-700 rounded-lg shadow-lg shadow-brand-500/30 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
+            >
+              {isPosting ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" />
+                  Enviando...
+                </>
+              ) : (
+                <>
+                  <Upload size={16} />
+                  Enviar Webhook
+                </>
+              )}
+            </button>
+          ) : (
+            <button
+              onClick={handleDirectUpload}
+              disabled={uploadStatus === 'uploading' || uploadStatus === 'success'}
+              className={`flex items-center gap-2 px-6 py-2 text-sm font-medium text-white rounded-lg shadow-lg transition-all disabled:opacity-70 disabled:cursor-not-allowed ${
+                uploadStatus === 'success' ? 'bg-green-600' : 'bg-red-600 hover:bg-red-700 shadow-red-500/30'
+              }`}
+            >
+              {uploadStatus === 'uploading' ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" />
+                  Enviando...
+                </>
+              ) : uploadStatus === 'success' ? (
+                <>
+                  <CheckCircle2 size={16} />
+                  Enviado
+                </>
+              ) : (
+                <>
+                  <Youtube size={16} />
+                  Postar Agora
+                </>
+              )}
+            </button>
+          )}
         </div>
-
-        <style>{`
-          .react-datepicker-wrapper { width: 100%; }
-          .react-datepicker__header { background-color: #f9fafb; border-bottom: 1px solid #e5e7eb; border-top-left-radius: 0.75rem !important; border-top-right-radius: 0.75rem !important; padding-top: 1rem; }
-          .react-datepicker { border: 1px solid #e5e7eb; border-radius: 0.75rem !important; font-family: inherit; }
-          .react-datepicker__day--selected, .react-datepicker__day--keyboard-selected, .react-datepicker__time-container .react-datepicker__time .react-datepicker__time-box ul.react-datepicker__time-list li.react-datepicker__time-list-item--selected { background-color: #9333ea !important; color: white !important; }
-          .react-datepicker__day:hover { background-color: #f3e8ff !important; }
-          .react-datepicker__current-month { color: #374151; font-weight: 600; margin-bottom: 0.5rem; }
-          .react-datepicker__day-name { color: #6b7280; }
-          .react-datepicker__time-container { border-left: 1px solid #e5e7eb; }
-          .react-datepicker__time-container .react-datepicker__time { border-top-right-radius: 0.75rem; }
-        `}</style>
       </div>
     </div>
   );
