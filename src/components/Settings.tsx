@@ -6,8 +6,8 @@ import { useAuth, UserRole } from '../contexts/AuthContext';
 import { 
   Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle, Key, 
   CheckCircle, Wifi, RefreshCw, Database, Users, Shield, Lock, User, Sparkles,
-  Cpu, Server, Zap, Globe, HelpCircle, ExternalLink, Info, Youtube, Fingerprint,
-  Play, Activity, Clock, Copy, Settings as SettingsIcon, Radio
+  Server, Zap, Globe, Info, Youtube, Fingerprint,
+  Play, Activity, Copy, Link as LinkIcon
 } from 'lucide-react';
 
 interface Setting {
@@ -28,6 +28,13 @@ interface UserProfile {
   id: string;
   email: string;
   role: UserRole;
+  created_at: string;
+}
+
+interface N8nWebhook {
+  id: string;
+  name: string;
+  url: string;
   created_at: string;
 }
 
@@ -73,8 +80,13 @@ const Settings: React.FC = () => {
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [selectedRole, setSelectedRole] = useState<UserRole>('viewer');
 
-  // --- Estados de Automação ---
-  const [productionWebhook, setProductionWebhook] = useState('');
+  // --- Estados de Automação (n8n) ---
+  const [webhooks, setWebhooks] = useState<N8nWebhook[]>([]);
+  const [loadingWebhooks, setLoadingWebhooks] = useState(false);
+  const [newWebhookName, setNewWebhookName] = useState('');
+  const [newWebhookUrl, setNewWebhookUrl] = useState('');
+  const [selectedWebhookId, setSelectedWebhookId] = useState<string>('');
+  
   const [triggeringWorkflow, setTriggeringWorkflow] = useState(false);
   const [workflowResponse, setWorkflowResponse] = useState<{ success: boolean; message: string } | null>(null);
   const [currentOrigin, setCurrentOrigin] = useState('');
@@ -86,11 +98,7 @@ const Settings: React.FC = () => {
     setLoadingSettings(true);
     setError(null);
     try {
-      const { data, error } = await supabase
-        .from('shorts_settings')
-        .select('*')
-        .order('channel', { ascending: true });
-
+      const { data, error } = await supabase.from('shorts_settings').select('*').order('channel', { ascending: true });
       if (error) throw error;
       setSettings(data || []);
     } catch (err: any) {
@@ -105,11 +113,7 @@ const Settings: React.FC = () => {
     if (!isAdmin) return;
     setLoadingUsers(true);
     try {
-      const { data, error } = await supabase
-        .from('user_profiles')
-        .select('*')
-        .order('created_at', { ascending: false });
-
+      const { data, error } = await supabase.from('user_profiles').select('*').order('created_at', { ascending: false });
       if (error) throw error;
       setUsers(data || []);
     } catch (err: any) {
@@ -120,23 +124,31 @@ const Settings: React.FC = () => {
     }
   };
 
-  const fetchAutomationConfig = () => {
-    const savedWebhook = localStorage.getItem('n8n_production_webhook');
-    if (savedWebhook) setProductionWebhook(savedWebhook);
+  const fetchWebhooks = async () => {
+    if (!isAdmin) return;
+    setLoadingWebhooks(true);
+    try {
+      const { data, error } = await supabase.from('n8n_webhooks').select('*').order('created_at', { ascending: true });
+      if (error) throw error;
+      setWebhooks(data || []);
+      if (data && data.length > 0 && !selectedWebhookId) {
+        setSelectedWebhookId(data[0].id);
+      }
+    } catch (err: any) {
+      console.error("Error fetching webhooks:", err);
+    } finally {
+      setLoadingWebhooks(false);
+    }
     setCurrentOrigin(window.location.origin);
   };
 
   useEffect(() => {
-    if (activeTab === 'channels') {
-      fetchSettings();
-    } else if (activeTab === 'users' && isAdmin) {
-      fetchUsers();
-    } else if (activeTab === 'automation') {
-      fetchAutomationConfig();
-    }
+    if (activeTab === 'channels') fetchSettings();
+    else if (activeTab === 'users' && isAdmin) fetchUsers();
+    else if (activeTab === 'automation' && isAdmin) fetchWebhooks();
   }, [activeTab, isAdmin]);
 
-  // --- Handlers de Canais ---
+  // --- Handlers ---
 
   const resetForm = () => {
     setIsFormOpen(false);
@@ -145,23 +157,18 @@ const Settings: React.FC = () => {
     setCurrentWebhook('');
     setCurrentApiKey('');
     setCurrentChannelId('');
-    
     setAiProvider('gemini');
     setCurrentGeminiKey('');
     setCurrentGroqKey('');
     setCurrentOllamaUrl('http://localhost:11434');
     setCurrentOllamaKey('');
     setCurrentAiModel('');
-
     setTestResult(null);
     setAiTestResult(null);
     setError(null);
   };
 
-  const handleAddNew = () => {
-    resetForm();
-    setIsFormOpen(true);
-  };
+  const handleAddNew = () => { resetForm(); setIsFormOpen(true); };
 
   const handleEdit = (setting: Setting) => {
     setIsEditing(setting.id);
@@ -169,14 +176,12 @@ const Settings: React.FC = () => {
     setCurrentWebhook(setting.webhook);
     setCurrentApiKey(setting.youtube_api_key || '');
     setCurrentChannelId(setting.youtube_channel_id || '');
-    
     setAiProvider(setting.ai_provider || 'gemini');
     setCurrentGeminiKey(setting.gemini_key || '');
     setCurrentGroqKey(setting.groq_key || '');
     setCurrentOllamaUrl(setting.ollama_url || 'http://localhost:11434');
     setCurrentOllamaKey(setting.ollama_key || '');
     setCurrentAiModel(setting.ai_model || '');
-
     setIsFormOpen(true);
     setTestResult(null);
     setAiTestResult(null);
@@ -186,15 +191,10 @@ const Settings: React.FC = () => {
     if (!isAdmin) return;
     if (window.confirm('Tem certeza que deseja excluir este canal?')) {
       try {
-        const { error } = await supabase
-          .from('shorts_settings')
-          .delete()
-          .eq('id', id);
-        
+        const { error } = await supabase.from('shorts_settings').delete().eq('id', id);
         if (error) throw error;
         setSettings(settings.filter(s => s.id !== id));
       } catch (err: any) {
-        console.error("Error deleting setting:", err);
         setError("Não foi possível excluir a configuração.");
       }
     }
@@ -203,10 +203,7 @@ const Settings: React.FC = () => {
   const handleDetectChannelId = async () => {
     setIsDetectingChannel(true);
     try {
-      if (!window.google || !window.google.accounts) {
-        throw new Error("API do Google não carregada. Recarregue a página.");
-      }
-
+      if (!window.google || !window.google.accounts) throw new Error("API do Google não carregada.");
       const accessToken = await new Promise<string>((resolve, reject) => {
         const tokenClient = window.google.accounts.oauth2.initTokenClient({
           client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID || '441621535337-k4fcqj90ovvfp1d9sj6hugj4bqavhhlv.apps.googleusercontent.com',
@@ -218,49 +215,33 @@ const Settings: React.FC = () => {
         });
         tokenClient.requestAccessToken({ prompt: 'select_account' });
       });
-
       const response = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', {
         headers: { Authorization: `Bearer ${accessToken}` }
       });
-      
       const data = await response.json();
-      
       if (data.items && data.items.length > 0) {
         const channel = data.items[0];
         setCurrentChannelId(channel.id);
-        alert(`Canal Detectado: ${channel.snippet.title}\nID: ${channel.id}\n\nO ID foi preenchido no formulário.`);
+        alert(`Canal Detectado: ${channel.snippet.title}\nID: ${channel.id}`);
       } else {
-        throw new Error("Nenhum canal do YouTube encontrado nesta conta.");
+        throw new Error("Nenhum canal encontrado.");
       }
-
     } catch (err: any) {
-      console.error("Erro ao detectar canal:", err);
-      alert(`Erro: ${err.message || 'Falha ao detectar canal'}`);
+      alert(`Erro: ${err.message}`);
     } finally {
       setIsDetectingChannel(false);
     }
   };
 
   const handleTestApiKey = async () => {
-    if (!currentApiKey) {
-      setTestResult({ success: false, message: "Insira uma chave para testar." });
-      return;
-    }
-
+    if (!currentApiKey) return;
     setIsTestingKey(true);
     setTestResult(null);
-
     try {
       await validateApiKey(currentApiKey);
-      setTestResult({ success: true, message: "Chave válida! Conexão com YouTube estabelecida." });
+      setTestResult({ success: true, message: "Chave válida!" });
     } catch (err: any) {
-      console.error("API Key Test Error:", err);
-      let msg = "Chave inválida ou erro de conexão.";
-      if (err.message.includes('API key not valid')) msg = "A chave informada não é válida.";
-      else if (err.message.includes('quota')) msg = "Cota da API excedida.";
-      else if (err.message) msg = `Erro: ${err.message}`;
-
-      setTestResult({ success: false, message: msg });
+      setTestResult({ success: false, message: "Chave inválida ou erro de conexão." });
     } finally {
       setIsTestingKey(false);
     }
@@ -269,44 +250,19 @@ const Settings: React.FC = () => {
   const handleTestAI = async () => {
     setIsTestingAI(true);
     setAiTestResult(null);
-
     try {
       let apiKeyToUse = '';
       if (aiProvider === 'gemini') apiKeyToUse = currentGeminiKey;
       else if (aiProvider === 'groq') apiKeyToUse = currentGroqKey;
       else if (aiProvider === 'ollama') apiKeyToUse = currentOllamaKey;
 
-      const config = {
-        provider: aiProvider,
-        apiKey: apiKeyToUse,
-        url: currentOllamaUrl,
-        model: currentAiModel
-      };
+      const config = { provider: aiProvider, apiKey: apiKeyToUse, url: currentOllamaUrl, model: currentAiModel };
+      if (aiProvider !== 'ollama' && !config.apiKey) throw new Error("Chave de API necessária.");
 
-      if (aiProvider !== 'ollama' && !config.apiKey) {
-        throw new Error("Chave de API necessária.");
-      }
-
-      const results = await generateContentAI(config, "Olá, teste de conexão.", 'title');
-      
-      if (results && results.length > 0) {
-        setAiTestResult({ success: true, message: `Conexão com ${aiProvider.toUpperCase()} bem sucedida!` });
-      } else {
-        throw new Error("Resposta vazia da IA.");
-      }
+      const results = await generateContentAI(config, "Olá, teste.", 'title');
+      if (results) setAiTestResult({ success: true, message: `Conexão com ${aiProvider.toUpperCase()} OK!` });
     } catch (err: any) {
-      console.error("AI Test Error:", err);
-      let msg = "Erro de conexão.";
-      if (aiProvider === 'ollama') {
-        if (err.message.includes('Failed to fetch') || err.message.includes('CORS')) {
-          msg = "Bloqueio de CORS detectado. O servidor não permitiu a conexão.";
-        } else {
-          msg = `Erro: ${err.message}`;
-        }
-      } else {
-        msg = `Erro: ${err.message}`;
-      }
-      setAiTestResult({ success: false, message: msg });
+      setAiTestResult({ success: false, message: `Erro: ${err.message}` });
     } finally {
       setIsTestingAI(false);
     }
@@ -316,53 +272,25 @@ const Settings: React.FC = () => {
     e.preventDefault();
     if (!isAdmin) return;
     setError(null);
-    
-    if (!currentChannel || !currentWebhook) {
-      setError("Canal e Webhook são obrigatórios.");
-      return;
-    }
+    if (!currentChannel || !currentWebhook) { setError("Canal e Webhook são obrigatórios."); return; }
 
     try {
       const payload = { 
-        channel: currentChannel, 
-        webhook: currentWebhook,
-        youtube_api_key: currentApiKey || null,
-        youtube_channel_id: currentChannelId || null,
-        ai_provider: aiProvider,
-        gemini_key: currentGeminiKey || null,
-        groq_key: currentGroqKey || null,
-        ollama_url: currentOllamaUrl || null,
-        ollama_key: currentOllamaKey || null,
+        channel: currentChannel, webhook: currentWebhook, youtube_api_key: currentApiKey || null,
+        youtube_channel_id: currentChannelId || null, ai_provider: aiProvider, gemini_key: currentGeminiKey || null,
+        groq_key: currentGroqKey || null, ollama_url: currentOllamaUrl || null, ollama_key: currentOllamaKey || null,
         ai_model: currentAiModel || null
       };
 
-      let error;
-      if (isEditing) {
-        const { error: updateError } = await supabase
-          .from('shorts_settings')
-          .update(payload)
-          .eq('id', isEditing);
-        error = updateError;
-      } else {
-        const { error: insertError } = await supabase
-          .from('shorts_settings')
-          .insert(payload);
-        error = insertError;
-      }
-
-      if (error) throw error;
+      if (isEditing) await supabase.from('shorts_settings').update(payload).eq('id', isEditing);
+      else await supabase.from('shorts_settings').insert(payload);
 
       resetForm();
       fetchSettings();
-      setSuccessMessage("Configuração salva com sucesso!");
+      setSuccessMessage("Configuração salva!");
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (err: any) {
-      console.error("Error saving setting:", err);
-      let userMessage = "Não foi possível salvar a configuração.";
-      if (err.message?.includes('duplicate key')) {
-        userMessage = "O nome do canal já existe.";
-      }
-      setError(userMessage);
+      setError(err.message);
     }
   };
 
@@ -370,23 +298,13 @@ const Settings: React.FC = () => {
     if (!isAdmin) return;
     setIsSyncing(true);
     setSyncResult(null);
-    setError(null);
-
     try {
-      const { data: videos, error: fetchError } = await supabase
-        .from('shorts_youtube')
-        .select('id, youtube_id, channel')
-        .or('duration.is.null,title.is.null,title.eq.""');
-
-      if (fetchError) throw fetchError;
-
+      const { data: videos } = await supabase.from('shorts_youtube').select('id, youtube_id, channel').or('duration.is.null,title.is.null,title.eq.""');
       if (!videos || videos.length === 0) {
-        setSyncResult({ updated: 0, total: 0, message: "Todos os vídeos já possuem metadados." });
+        setSyncResult({ updated: 0, total: 0, message: "Tudo atualizado." });
         return;
       }
-
       let updatedCount = 0;
-      
       const videosByChannel: Record<string, typeof videos> = {};
       videos.forEach(v => {
         if (!videosByChannel[v.channel]) videosByChannel[v.channel] = [];
@@ -396,743 +314,192 @@ const Settings: React.FC = () => {
       for (const channelName of Object.keys(videosByChannel)) {
         const channelSettings = settings.find(s => s.channel === channelName);
         if (!channelSettings?.youtube_api_key) continue;
-
         const channelVideos = videosByChannel[channelName];
-        const videoIds = channelVideos.map(v => v.youtube_id); 
-        
+        const videoIds = channelVideos.map(v => v.youtube_id);
         try {
           const detailsMap = await fetchVideoDetails(videoIds, channelSettings.youtube_api_key);
-          
           for (const video of channelVideos) {
             const details = detailsMap[video.youtube_id];
-            
             if (details) {
-              await supabase
-                .from('shorts_youtube')
-                .update({
-                  title: details.title,
-                  duration: details.duration
-                })
-                .eq('id', video.id);
+              await supabase.from('shorts_youtube').update({ title: details.title, duration: details.duration }).eq('id', video.id);
               updatedCount++;
             }
           }
-        } catch (err) {
-          console.error(`Falha ao processar lote do canal ${channelName}:`, err);
-        }
-        
+        } catch (err) { console.error(err); }
         await new Promise(resolve => setTimeout(resolve, 200));
       }
-
-      setSyncResult({ 
-        updated: updatedCount, 
-        total: videos.length, 
-        message: `Sincronização concluída. ${updatedCount} vídeos atualizados.` 
-      });
-
-    } catch (err: any) {
-      console.error("Sync error:", err);
-      setError("Erro durante a sincronização. Verifique o console para detalhes.");
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
-  // --- Handlers de Usuários ---
-
-  const handleEditUser = (userProfile: UserProfile) => {
-    setEditingUserId(userProfile.id);
-    setSelectedRole(userProfile.role);
-  };
-
-  const handleCancelEditUser = () => {
-    setEditingUserId(null);
+      setSyncResult({ updated: updatedCount, total: videos.length, message: `${updatedCount} vídeos atualizados.` });
+    } catch (err) { setError("Erro na sincronização."); } finally { setIsSyncing(false); }
   };
 
   const handleSaveUserRole = async (userId: string) => {
     if (!isAdmin) return;
-    
     try {
-      const { error } = await supabase
-        .from('user_profiles')
-        .update({ role: selectedRole })
-        .eq('id', userId);
-
-      if (error) throw error;
-
+      await supabase.from('user_profiles').update({ role: selectedRole }).eq('id', userId);
       setUsers(users.map(u => u.id === userId ? { ...u, role: selectedRole } : u));
       setEditingUserId(null);
-      setSuccessMessage("Permissão atualizada com sucesso!");
+      setSuccessMessage("Permissão atualizada!");
       setTimeout(() => setSuccessMessage(null), 3000);
-    } catch (err: any) {
-      console.error("Error updating role:", err);
-      setError("Erro ao atualizar permissão.");
-    }
+    } catch (err) { setError("Erro ao atualizar permissão."); }
   };
 
-  // --- Handlers de Automação ---
+  const handleAddWebhook = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newWebhookName || !newWebhookUrl) return;
+    try {
+      const { data, error } = await supabase.from('n8n_webhooks').insert({ name: newWebhookName, url: newWebhookUrl }).select().single();
+      if (error) throw error;
+      setWebhooks([...webhooks, data]);
+      setNewWebhookName('');
+      setNewWebhookUrl('');
+      if (webhooks.length === 0) setSelectedWebhookId(data.id);
+      setSuccessMessage("Webhook adicionado!");
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (err) { setError("Erro ao adicionar webhook."); }
+  };
 
-  const handleSaveAutomation = () => {
-    if (!productionWebhook) {
-      setError("Insira uma URL válida.");
-      return;
-    }
-    localStorage.setItem('n8n_production_webhook', productionWebhook);
-    setSuccessMessage("Webhook de produção salvo localmente!");
-    setTimeout(() => setSuccessMessage(null), 3000);
+  const handleDeleteWebhook = async (id: string) => {
+    if (!window.confirm("Remover este webhook?")) return;
+    try {
+      await supabase.from('n8n_webhooks').delete().eq('id', id);
+      const updated = webhooks.filter(w => w.id !== id);
+      setWebhooks(updated);
+      if (selectedWebhookId === id) setSelectedWebhookId(updated.length > 0 ? updated[0].id : '');
+    } catch (err) { setError("Erro ao remover webhook."); }
   };
 
   const handleTriggerWorkflow = async (method: 'POST' | 'GET' = 'POST') => {
-    if (!productionWebhook) {
-      setError("Configure a URL do Webhook primeiro.");
-      return;
-    }
-
+    const selectedWebhook = webhooks.find(w => w.id === selectedWebhookId);
+    if (!selectedWebhook) { setError("Selecione um webhook."); return; }
     setTriggeringWorkflow(true);
     setWorkflowResponse(null);
-
-    const url = productionWebhook.trim();
-
+    const url = selectedWebhook.url.trim();
     try {
-      const payload = {
-        triggered_by: user?.email,
-        timestamp: new Date().toISOString(),
-        action: 'manual_trigger'
-      };
-
-      let response;
-
+      const payload = { triggered_by: user?.email, timestamp: new Date().toISOString(), action: 'manual_trigger', webhook_name: selectedWebhook.name };
       if (method === 'GET') {
-        // Teste de Conectividade Simples
-        response = await fetch(url, {
-          method: 'GET',
-          mode: 'no-cors' // GET geralmente não precisa de body, mas no-cors ajuda se for só ping
-        });
-        
-        setWorkflowResponse({
-          success: true,
-          message: "Ping enviado! Se o workflow aceita GET, ele deve ter iniciado. Verifique o n8n."
-        });
-
+        await fetch(url, { method: 'GET', mode: 'no-cors' });
+        setWorkflowResponse({ success: true, message: "Ping GET enviado!" });
       } else if (useNoCors) {
-        // Modo No-CORS: Envia como text/plain para evitar Preflight
-        await fetch(url, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: {
-            'Content-Type': 'text/plain' 
-          },
-          body: JSON.stringify(payload)
-        });
-
-        setWorkflowResponse({
-          success: true,
-          message: "Disparo enviado (Modo Compatibilidade). Se der erro 500, verifique se o n8n está ATIVO."
-        });
-
+        await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload) });
+        setWorkflowResponse({ success: true, message: "Disparo enviado (No-CORS)." });
       } else {
-        // Modo Padrão (Requer CORS configurado no n8n)
-        response = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(payload)
-        });
-
-        if (response.ok) {
-          setWorkflowResponse({
-            success: true,
-            message: "Fluxo disparado com sucesso! O n8n iniciou o processamento."
-          });
-        } else {
-          throw new Error(`Erro ${response.status}: ${response.statusText}`);
-        }
+        const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (response.ok) setWorkflowResponse({ success: true, message: "Fluxo disparado!" });
+        else throw new Error(`Erro ${response.status}`);
       }
-
     } catch (err: any) {
-      console.error("Workflow Trigger Error:", err);
-      
-      let msg = `Falha ao disparar: ${err.message}.`;
-      if (err.message.includes('Failed to fetch')) {
-        msg = "Erro de CORS ou Rede. Tente ativar o 'Modo de Compatibilidade' abaixo.";
-      }
-
-      setWorkflowResponse({
-        success: false,
-        message: msg
-      });
-    } finally {
-      setTriggeringWorkflow(false);
-    }
+      setWorkflowResponse({ success: false, message: err.message.includes('fetch') ? "Erro de CORS/Rede." : err.message });
+    } finally { setTriggeringWorkflow(false); }
   };
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    alert("Copiado para a área de transferência!");
-  };
-
-  // --- Render ---
+  // --- Renders ---
 
   const renderChannels = () => {
-    if (loadingSettings) {
-      return (
-        <div className="flex justify-center items-center h-64">
-          <Loader2 className="h-12 w-12 animate-spin text-brand-500" />
-        </div>
-      );
-    }
-
+    if (loadingSettings) return <div className="flex justify-center p-12"><Loader2 className="animate-spin text-brand-500" /></div>;
     return (
       <div className="space-y-6 animate-fade-in">
-        {/* Header de Ações */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-          <div>
-            <h3 className="font-bold text-gray-800 flex items-center gap-2">
-              <Database size={20} className="text-brand-500" />
-              Gerenciar Canais
-            </h3>
-            <p className="text-sm text-gray-500">Configure webhooks, YouTube API e Provedor de IA.</p>
-          </div>
-          
-          <div className="flex gap-2 w-full sm:w-auto">
-            {isAdmin && (
-              <button
-                onClick={handleSyncMetadata}
-                disabled={isSyncing}
-                className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-indigo-50 text-indigo-700 px-4 py-2 rounded-lg font-medium hover:bg-indigo-100 transition-colors disabled:opacity-50"
-                title="Buscar títulos e durações faltantes no YouTube"
-              >
-                {isSyncing ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}
-                <span className="hidden sm:inline">Sincronizar Dados</span>
-              </button>
-            )}
-            
-            {isAdmin && !isFormOpen && (
-              <button
-                onClick={handleAddNew}
-                className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-brand-500 text-white px-4 py-2 rounded-lg font-medium hover:bg-brand-600 transition-colors shadow-sm"
-              >
-                <Plus size={18} />
-                Adicionar
-              </button>
-            )}
+        <div className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+          <div><h3 className="font-bold text-gray-800 flex items-center gap-2"><Database size={20} className="text-brand-500" />Gerenciar Canais</h3></div>
+          <div className="flex gap-2">
+            {isAdmin && <button onClick={handleSyncMetadata} disabled={isSyncing} className="flex items-center gap-2 bg-indigo-50 text-indigo-700 px-4 py-2 rounded-lg hover:bg-indigo-100">{isSyncing ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}<span className="hidden sm:inline">Sincronizar</span></button>}
+            {isAdmin && !isFormOpen && <button onClick={handleAddNew} className="flex items-center gap-2 bg-brand-500 text-white px-4 py-2 rounded-lg hover:bg-brand-600"><Plus size={18} />Adicionar</button>}
           </div>
         </div>
-
-        {/* Feedback de Sync */}
-        {syncResult && (
-          <div className="bg-indigo-50 border border-indigo-200 text-indigo-700 px-4 py-3 rounded-lg flex items-center">
-            <CheckCircle className="mr-2 h-5 w-5" />
-            <span>{syncResult.message}</span>
-          </div>
-        )}
-
-        {/* Formulário */}
+        {syncResult && <div className="bg-indigo-50 text-indigo-700 px-4 py-3 rounded-lg flex items-center"><CheckCircle className="mr-2 h-5 w-5" />{syncResult.message}</div>}
+        
         {isFormOpen && isAdmin && (
           <div className="bg-white p-6 rounded-xl shadow-md border border-gray-200 animate-slide-up">
             <form onSubmit={handleSubmit}>
-              <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
-                {isEditing ? <Edit size={20} className="text-brand-500" /> : <Plus size={20} className="text-brand-500" />}
-                {isEditing ? 'Editar Canal' : 'Novo Canal'}
-              </h2>
-              
-              <div className="grid grid-cols-1 gap-6">
-                {/* Dados Básicos */}
+              <h2 className="text-xl font-bold mb-4">{isEditing ? 'Editar' : 'Novo'} Canal</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <div><label className="block text-sm font-medium mb-1">Nome</label><input type="text" value={currentChannel} onChange={e => setCurrentChannel(e.target.value)} className="w-full px-3 py-2 border rounded-lg" disabled={!!isEditing} /></div>
+                <div><label className="block text-sm font-medium mb-1">Webhook Discord</label><input type="text" value={currentWebhook} onChange={e => setCurrentWebhook(e.target.value)} className="w-full px-3 py-2 border rounded-lg" /></div>
+              </div>
+              <div className="border-t pt-6 mb-6">
+                <h3 className="font-bold mb-4 flex items-center gap-2"><Youtube size={18} className="text-red-600" />YouTube</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
-                    <label htmlFor="channel" className="block text-sm font-medium text-gray-700 mb-1">Nome do Canal</label>
-                    <input
-                      type="text"
-                      id="channel"
-                      value={currentChannel}
-                      onChange={(e) => setCurrentChannel(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition-all disabled:bg-gray-100"
-                      placeholder="Ex: Canal Principal"
-                      disabled={!!isEditing}
-                    />
-                    {isEditing && <p className="text-xs text-gray-500 mt-1">O nome do canal é usado como identificador.</p>}
+                    <label className="block text-sm font-medium mb-1">ID do Canal (Trava)</label>
+                    <div className="flex gap-2"><input type="text" value={currentChannelId} onChange={e => setCurrentChannelId(e.target.value)} className="w-full px-3 py-2 border rounded-lg font-mono text-sm" /><button type="button" onClick={handleDetectChannelId} disabled={isDetectingChannel} className="px-3 py-2 bg-red-50 text-red-700 rounded-lg">{isDetectingChannel ? <Loader2 size={16} className="animate-spin" /> : <Youtube size={16} />}</button></div>
                   </div>
-
                   <div>
-                    <label htmlFor="webhook" className="block text-sm font-medium text-gray-700 mb-1">Webhook Discord</label>
-                    <div className="relative">
-                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <Wifi size={16} className="text-gray-400" />
-                      </div>
-                      <input
-                        type="text"
-                        id="webhook"
-                        value={currentWebhook}
-                        onChange={(e) => setCurrentWebhook(e.target.value)}
-                        className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition-all"
-                        placeholder="https://discord.com/api/webhooks/..."
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* YouTube Security & API */}
-                <div className="border-t border-gray-100 pt-6">
-                  <h3 className="text-md font-bold text-gray-800 mb-4 flex items-center gap-2">
-                    <Youtube size={18} className="text-red-600" />
-                    Segurança e API do YouTube
-                  </h3>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {/* Channel ID Lock */}
-                    <div>
-                      <label htmlFor="channelId" className="block text-sm font-medium text-gray-700 mb-1">
-                        ID do Canal (Trava de Segurança)
-                      </label>
-                      <div className="flex gap-2">
-                        <div className="relative flex-grow">
-                          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <Fingerprint size={16} className="text-gray-400" />
-                          </div>
-                          <input
-                            type="text"
-                            id="channelId"
-                            value={currentChannelId}
-                            onChange={(e) => setCurrentChannelId(e.target.value)}
-                            className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition-all font-mono text-sm"
-                            placeholder="UC..."
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={handleDetectChannelId}
-                          disabled={isDetectingChannel}
-                          className="px-3 py-2 bg-red-50 text-red-700 border border-red-100 rounded-lg hover:bg-red-100 transition-colors disabled:opacity-50 text-sm font-medium flex items-center gap-2"
-                          title="Logar com Google para detectar ID"
-                        >
-                          {isDetectingChannel ? <Loader2 size={16} className="animate-spin" /> : <Youtube size={16} />}
-                          Detectar
-                        </button>
-                      </div>
-                      <p className="text-xs text-gray-500 mt-1">
-                        Se preenchido, o sistema só permitirá uploads se o usuário logado tiver este ID exato.
-                      </p>
-                    </div>
-
-                    {/* API Key */}
-                    <div>
-                      <label htmlFor="apiKey" className="block text-sm font-medium text-gray-700 mb-1">
-                        YouTube Data API Key <span className="text-gray-400 font-normal">(Opcional)</span>
-                      </label>
-                      <div className="flex gap-2">
-                        <div className="relative flex-grow">
-                          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <Key size={16} className="text-gray-400" />
-                          </div>
-                          <input
-                            type="password"
-                            id="apiKey"
-                            value={currentApiKey}
-                            onChange={(e) => {
-                              setCurrentApiKey(e.target.value);
-                              setTestResult(null);
-                            }}
-                            className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 transition-all font-mono text-sm"
-                            placeholder="AIzaSy..."
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={handleTestApiKey}
-                          disabled={!currentApiKey || isTestingKey}
-                          className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 text-sm font-medium"
-                        >
-                          {isTestingKey ? <Loader2 size={16} className="animate-spin" /> : 'Testar'}
-                        </button>
-                      </div>
-                      {testResult && (
-                        <p className={`text-xs mt-2 flex items-center gap-1 ${testResult.success ? 'text-green-600' : 'text-red-600'}`}>
-                          {testResult.success ? <CheckCircle size={12} /> : <AlertCircle size={12} />}
-                          {testResult.message}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Configuração de IA */}
-                <div className="border-t border-gray-100 pt-6">
-                  <h3 className="text-md font-bold text-gray-800 mb-4 flex items-center gap-2">
-                    <Sparkles size={18} className="text-purple-500" />
-                    Configuração de Inteligência Artificial
-                  </h3>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                    <button
-                      type="button"
-                      onClick={() => { setAiProvider('gemini'); setAiTestResult(null); }}
-                      className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all ${
-                        aiProvider === 'gemini' 
-                          ? 'border-blue-500 bg-blue-50 text-blue-700' 
-                          : 'border-gray-200 hover:border-blue-200 text-gray-600'
-                      }`}
-                    >
-                      <Sparkles size={24} className="mb-2" />
-                      <span className="font-bold">Google Gemini</span>
-                      <span className="text-xs mt-1">Rápido & Gratuito (Tier Free)</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => { setAiProvider('groq'); setAiTestResult(null); }}
-                      className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all ${
-                        aiProvider === 'groq' 
-                          ? 'border-orange-500 bg-orange-50 text-orange-700' 
-                          : 'border-gray-200 hover:border-orange-200 text-gray-600'
-                      }`}
-                    >
-                      <Zap size={24} className="mb-2" />
-                      <span className="font-bold">Groq (Llama 3)</span>
-                      <span className="text-xs mt-1">Ultra Rápido & Baixo Custo</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => { setAiProvider('ollama'); setAiTestResult(null); }}
-                      className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all ${
-                        aiProvider === 'ollama' 
-                          ? 'border-gray-800 bg-gray-100 text-gray-900' 
-                          : 'border-gray-200 hover:border-gray-400 text-gray-600'
-                      }`}
-                    >
-                      <Server size={24} className="mb-2" />
-                      <span className="font-bold">Ollama / API</span>
-                      <span className="text-xs mt-1">Local ou Remoto</span>
-                    </button>
-                  </div>
-
-                  {/* Campos Dinâmicos baseados no Provider */}
-                  <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-                    {aiProvider === 'gemini' && (
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Gemini API Key</label>
-                        <input
-                          type="password"
-                          value={currentGeminiKey}
-                          onChange={(e) => { setCurrentGeminiKey(e.target.value); setAiTestResult(null); }}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
-                          placeholder="AIzaSy..."
-                        />
-                      </div>
-                    )}
-
-                    {aiProvider === 'groq' && (
-                      <div className="space-y-4">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Groq API Key</label>
-                          <input
-                            type="password"
-                            value={currentGroqKey}
-                            onChange={(e) => { setCurrentGroqKey(e.target.value); setAiTestResult(null); }}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500 font-mono text-sm"
-                            placeholder="gsk_..."
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Modelo (Opcional)</label>
-                          <input
-                            type="text"
-                            value={currentAiModel}
-                            onChange={(e) => setCurrentAiModel(e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500 font-mono text-sm"
-                            placeholder="llama3-70b-8192"
-                          />
-                          <p className="text-xs text-gray-500 mt-1">Padrão: llama3-70b-8192</p>
-                        </div>
-                      </div>
-                    )}
-
-                    {aiProvider === 'ollama' && (
-                      <div className="space-y-4">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">URL do Servidor / API</label>
-                          <div className="relative">
-                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                              <Globe size={16} className="text-gray-400" />
-                            </div>
-                            <input
-                              type="text"
-                              value={currentOllamaUrl}
-                              onChange={(e) => { setCurrentOllamaUrl(e.target.value); setAiTestResult(null); }}
-                              className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-gray-500 focus:border-gray-500 font-mono text-sm"
-                              placeholder="https://ollama.com"
-                            />
-                          </div>
-                          <div className="mt-2 flex items-start gap-2 text-xs text-amber-700 bg-amber-50 p-2 rounded border border-amber-200">
-                            <Info size={14} className="mt-0.5 flex-shrink-0" />
-                            <p>
-                              <strong>Atenção CORS:</strong> Para conexões via navegador (Local ou Remoto), o servidor Ollama deve permitir a origem.
-                              <br />
-                              No terminal local, inicie com: <code>OLLAMA_ORIGINS="*" ollama serve</code>
-                            </p>
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            API Key / Token <span className="text-gray-400 font-normal">(Obrigatório para Cloud)</span>
-                          </label>
-                          <div className="relative">
-                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                              <Key size={16} className="text-gray-400" />
-                            </div>
-                            <input
-                              type="password"
-                              value={currentOllamaKey}
-                              onChange={(e) => { setCurrentOllamaKey(e.target.value); setAiTestResult(null); }}
-                              className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-gray-500 focus:border-gray-500 font-mono text-sm"
-                              placeholder="Bearer Token ou API Key"
-                            />
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Modelo</label>
-                          <input
-                            type="text"
-                            value={currentAiModel}
-                            onChange={(e) => setCurrentAiModel(e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-gray-500 focus:border-gray-500 font-mono text-sm"
-                            placeholder="llama3"
-                          />
-                          <p className="text-xs text-gray-500 mt-1">Padrão: llama3</p>
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="mt-4 flex justify-end">
-                      <button
-                        type="button"
-                        onClick={handleTestAI}
-                        disabled={isTestingAI}
-                        className="text-sm flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-                      >
-                        {isTestingAI ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
-                        Testar Conexão IA
-                      </button>
-                    </div>
-                    {aiTestResult && (
-                      <div className={`mt-3 p-3 rounded-lg text-sm border ${
-                        aiTestResult.success 
-                          ? 'bg-green-50 border-green-200 text-green-700' 
-                          : 'bg-red-50 border-red-200 text-red-700'
-                      }`}>
-                        <div className="flex items-start gap-2">
-                          {aiTestResult.success ? <CheckCircle size={16} className="mt-0.5" /> : <AlertCircle size={16} className="mt-0.5" />}
-                          <span>{aiTestResult.message}</span>
-                        </div>
-                      </div>
-                    )}
+                    <label className="block text-sm font-medium mb-1">API Key</label>
+                    <div className="flex gap-2"><input type="password" value={currentApiKey} onChange={e => { setCurrentApiKey(e.target.value); setTestResult(null); }} className="w-full px-3 py-2 border rounded-lg font-mono text-sm" /><button type="button" onClick={handleTestApiKey} disabled={!currentApiKey || isTestingKey} className="px-3 py-2 bg-gray-100 rounded-lg">{isTestingKey ? <Loader2 size={16} className="animate-spin" /> : 'Testar'}</button></div>
+                    {testResult && <p className={`text-xs mt-1 ${testResult.success ? 'text-green-600' : 'text-red-600'}`}>{testResult.message}</p>}
                   </div>
                 </div>
               </div>
-
-              <div className="flex justify-end gap-3 mt-8 pt-4 border-t border-gray-100">
-                <button
-                  type="button"
-                  onClick={resetForm}
-                  className="flex items-center gap-2 bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg font-medium hover:bg-gray-50 transition-colors"
-                >
-                  <XCircle size={18} />
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="flex items-center gap-2 bg-brand-500 text-white px-6 py-2 rounded-lg font-medium hover:bg-brand-600 transition-colors shadow-sm"
-                >
-                  <Save size={18} />
-                  Salvar Configuração
-                </button>
+              <div className="border-t pt-6 mb-6">
+                <h3 className="font-bold mb-4 flex items-center gap-2"><Sparkles size={18} className="text-purple-500" />Inteligência Artificial</h3>
+                <div className="grid grid-cols-3 gap-4 mb-4">
+                  {['gemini', 'groq', 'ollama'].map(p => (
+                    <button key={p} type="button" onClick={() => setAiProvider(p as any)} className={`p-3 rounded-xl border-2 capitalize ${aiProvider === p ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}>{p}</button>
+                  ))}
+                </div>
+                <div className="bg-gray-50 p-4 rounded-lg border">
+                  {aiProvider === 'gemini' && <div><label className="block text-sm font-medium mb-1">Gemini Key</label><input type="password" value={currentGeminiKey} onChange={e => setCurrentGeminiKey(e.target.value)} className="w-full px-3 py-2 border rounded-lg font-mono text-sm" /></div>}
+                  {aiProvider === 'groq' && <div className="space-y-3"><div><label className="block text-sm font-medium mb-1">Groq Key</label><input type="password" value={currentGroqKey} onChange={e => setCurrentGroqKey(e.target.value)} className="w-full px-3 py-2 border rounded-lg font-mono text-sm" /></div><div><label className="block text-sm font-medium mb-1">Modelo</label><input type="text" value={currentAiModel} onChange={e => setCurrentAiModel(e.target.value)} className="w-full px-3 py-2 border rounded-lg font-mono text-sm" placeholder="llama3-70b-8192" /></div></div>}
+                  {aiProvider === 'ollama' && <div className="space-y-3"><div><label className="block text-sm font-medium mb-1">URL</label><input type="text" value={currentOllamaUrl} onChange={e => setCurrentOllamaUrl(e.target.value)} className="w-full px-3 py-2 border rounded-lg font-mono text-sm" /></div><div><label className="block text-sm font-medium mb-1">Key (Opcional)</label><input type="password" value={currentOllamaKey} onChange={e => setCurrentOllamaKey(e.target.value)} className="w-full px-3 py-2 border rounded-lg font-mono text-sm" /></div><div><label className="block text-sm font-medium mb-1">Modelo</label><input type="text" value={currentAiModel} onChange={e => setCurrentAiModel(e.target.value)} className="w-full px-3 py-2 border rounded-lg font-mono text-sm" placeholder="llama3" /></div></div>}
+                  <div className="mt-3 flex justify-end"><button type="button" onClick={handleTestAI} disabled={isTestingAI} className="text-sm px-3 py-2 bg-white border rounded-lg flex items-center gap-2">{isTestingAI ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />} Testar IA</button></div>
+                  {aiTestResult && <p className={`text-xs mt-2 ${aiTestResult.success ? 'text-green-600' : 'text-red-600'}`}>{aiTestResult.message}</p>}
+                </div>
+              </div>
+              <div className="flex justify-end gap-3">
+                <button type="button" onClick={resetForm} className="px-4 py-2 border rounded-lg hover:bg-gray-50">Cancelar</button>
+                <button type="submit" className="px-6 py-2 bg-brand-500 text-white rounded-lg hover:bg-brand-600">Salvar</button>
               </div>
             </form>
           </div>
         )}
 
-        {/* Lista de Canais */}
         <div className="grid gap-4">
-          {settings.map((setting) => (
-            <div key={setting.id} className="bg-white p-5 rounded-xl shadow-sm border border-gray-200 hover:border-brand-200 transition-all group">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <div className="flex-grow min-w-0">
-                  <div className="flex items-center gap-3 mb-1">
-                    <h4 className="font-bold text-gray-800 text-lg">{setting.channel}</h4>
-                    <div className="flex gap-2">
-                      {/* Badge YouTube Lock */}
-                      {setting.youtube_channel_id ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800" title="Canal Travado (Seguro)">
-                          <Lock size={10} className="mr-1" /> Seguro
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800" title="Sem trava de segurança">
-                          <AlertCircle size={10} className="mr-1" /> Aberto
-                        </span>
-                      )}
-
-                      {/* Badge YouTube API */}
-                      {setting.youtube_api_key ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800" title="YouTube API Ativa">
-                          <Key size={10} className="mr-1" /> API
-                        </span>
-                      ) : null}
-                      
-                      {/* Badge IA */}
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium capitalize
-                        ${setting.ai_provider === 'gemini' ? 'bg-purple-100 text-purple-800' : 
-                          setting.ai_provider === 'groq' ? 'bg-orange-100 text-orange-800' : 
-                          'bg-gray-100 text-gray-800'}`}
-                      >
-                        <Sparkles size={10} className="mr-1" /> {setting.ai_provider || 'Gemini'}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 text-sm text-gray-500 font-mono bg-gray-50 px-2 py-1 rounded w-fit max-w-full">
-                    <Wifi size={12} />
-                    <span className="truncate max-w-[200px] sm:max-w-md">{setting.webhook}</span>
+          {settings.map((s) => (
+            <div key={s.id} className="bg-white p-5 rounded-xl shadow-sm border border-gray-200 flex justify-between items-center group">
+              <div>
+                <div className="flex items-center gap-3 mb-1">
+                  <h4 className="font-bold text-lg">{s.channel}</h4>
+                  <div className="flex gap-1">
+                    {s.youtube_channel_id && <span className="px-2 py-0.5 rounded text-xs bg-green-100 text-green-800">Seguro</span>}
+                    <span className="px-2 py-0.5 rounded text-xs bg-purple-100 text-purple-800 capitalize">{s.ai_provider}</span>
                   </div>
                 </div>
-                
-                {isAdmin && (
-                  <div className="flex items-center gap-2 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button 
-                      onClick={() => handleEdit(setting)} 
-                      className="p-2 text-gray-500 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition-colors"
-                      title="Editar"
-                    >
-                      <Edit size={18} />
-                    </button>
-                    <button 
-                      onClick={() => handleDelete(setting.id)} 
-                      className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                      title="Excluir"
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
-                )}
+                <div className="text-sm text-gray-500 font-mono bg-gray-50 px-2 py-1 rounded truncate max-w-md">{s.webhook}</div>
               </div>
+              {isAdmin && <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => handleEdit(s)} className="p-2 text-gray-500 hover:text-brand-600"><Edit size={18} /></button><button onClick={() => handleDelete(s.id)} className="p-2 text-gray-500 hover:text-red-600"><Trash2 size={18} /></button></div>}
             </div>
           ))}
-          
-          {settings.length === 0 && !isFormOpen && (
-            <div className="text-center py-16 border-2 border-dashed border-gray-200 rounded-xl bg-gray-50">
-              <Database className="mx-auto h-12 w-12 text-gray-300 mb-3" />
-              <p className="text-gray-500 font-medium">Nenhum canal configurado.</p>
-              {isAdmin && <p className="text-sm text-gray-400 mt-1">Clique em "Adicionar" para começar.</p>}
-            </div>
-          )}
+          {settings.length === 0 && !isFormOpen && <div className="text-center py-12 bg-gray-50 rounded-xl border-2 border-dashed"><Database className="mx-auto h-10 w-10 text-gray-300 mb-2" /><p className="text-gray-500">Nenhum canal configurado.</p></div>}
         </div>
       </div>
     );
   };
 
   const renderUsers = () => {
-    if (loadingUsers) {
-      return (
-        <div className="flex justify-center items-center h-64">
-          <Loader2 className="h-12 w-12 animate-spin text-brand-500" />
-        </div>
-      );
-    }
-
+    if (loadingUsers) return <div className="flex justify-center p-12"><Loader2 className="animate-spin text-brand-500" /></div>;
     return (
       <div className="space-y-6 animate-fade-in">
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-          <h3 className="font-bold text-gray-800 flex items-center gap-2">
-            <Users size={20} className="text-brand-500" />
-            Gerenciar Usuários
-          </h3>
-          <p className="text-sm text-gray-500">Controle quem tem acesso ao painel.</p>
-        </div>
-
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100"><h3 className="font-bold text-gray-800 flex items-center gap-2"><Users size={20} className="text-brand-500" />Gerenciar Usuários</h3></div>
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="px-6 py-4 font-semibold text-gray-700">Usuário</th>
-                  <th className="px-6 py-4 font-semibold text-gray-700">Função</th>
-                  <th className="px-6 py-4 font-semibold text-gray-700">Data de Cadastro</th>
-                  <th className="px-6 py-4 font-semibold text-gray-700 text-right">Ações</th>
+          <table className="w-full text-left text-sm">
+            <thead className="bg-gray-50 border-b"><tr><th className="px-6 py-4">Usuário</th><th className="px-6 py-4">Função</th><th className="px-6 py-4 text-right">Ações</th></tr></thead>
+            <tbody className="divide-y">
+              {users.map((u) => (
+                <tr key={u.id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center text-brand-600"><User size={16} /></div><span className="font-medium">{u.email}</span></div></td>
+                  <td className="px-6 py-4">
+                    {editingUserId === u.id ? (
+                      <select value={selectedRole} onChange={(e) => setSelectedRole(e.target.value as UserRole)} className="border rounded p-1"><option value="viewer">Viewer</option><option value="editor">Editor</option><option value="admin">Admin</option></select>
+                    ) : <span className={`px-2 py-1 rounded-full text-xs capitalize ${u.role === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-gray-100'}`}>{u.role}</span>}
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    {editingUserId === u.id ? (
+                      <div className="flex justify-end gap-2"><button onClick={() => handleSaveUserRole(u.id)} className="text-green-600"><CheckCircle size={18} /></button><button onClick={handleCancelEditUser} className="text-gray-400"><XCircle size={18} /></button></div>
+                    ) : <button onClick={() => handleEditUser(u)} disabled={u.role === 'admin' && u.email === 'dalexperia@gmail.com'} className="text-gray-400 hover:text-brand-600 disabled:opacity-30"><Edit size={18} /></button>}
+                  </td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {users.map((u) => (
-                  <tr key={u.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center text-brand-600">
-                          <User size={16} />
-                        </div>
-                        <span className="font-medium text-gray-900">{u.email}</span>
-                        {u.id === user?.id && (
-                          <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">Você</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      {editingUserId === u.id ? (
-                        <select
-                          value={selectedRole}
-                          onChange={(e) => setSelectedRole(e.target.value as UserRole)}
-                          className="block w-full pl-3 pr-10 py-1 text-base border-gray-300 focus:outline-none focus:ring-brand-500 focus:border-brand-500 sm:text-sm rounded-md"
-                        >
-                          <option value="viewer">Viewer (Leitura)</option>
-                          <option value="editor">Editor (Edição)</option>
-                          <option value="admin">Admin (Total)</option>
-                        </select>
-                      ) : (
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize
-                          ${u.role === 'admin' ? 'bg-purple-100 text-purple-800' : 
-                            u.role === 'editor' ? 'bg-blue-100 text-blue-800' : 
-                            'bg-gray-100 text-gray-800'}`}>
-                          {u.role === 'admin' && <Shield size={10} className="mr-1" />}
-                          {u.role}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 text-gray-500">
-                      {new Date(u.created_at).toLocaleDateString('pt-BR')}
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      {editingUserId === u.id ? (
-                        <div className="flex justify-end gap-2">
-                          <button
-                            onClick={() => handleSaveUserRole(u.id)}
-                            className="text-green-600 hover:text-green-800 p-1"
-                            title="Salvar"
-                          >
-                            <CheckCircle size={18} />
-                          </button>
-                          <button
-                            onClick={handleCancelEditUser}
-                            className="text-gray-400 hover:text-gray-600 p-1"
-                            title="Cancelar"
-                          >
-                            <XCircle size={18} />
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => handleEditUser(u)}
-                          disabled={u.role === 'admin' && u.email === 'dalexperia@gmail.com'} // Proteção extra para o super admin principal
-                          className="text-gray-400 hover:text-brand-600 p-1 disabled:opacity-30 disabled:cursor-not-allowed"
-                          title="Alterar Permissão"
-                        >
-                          <Edit size={18} />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     );
@@ -1141,158 +508,59 @@ const Settings: React.FC = () => {
   const renderAutomation = () => {
     return (
       <div className="space-y-6 animate-fade-in">
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-          <h3 className="font-bold text-gray-800 flex items-center gap-2">
-            <Activity size={20} className="text-brand-500" />
-            Automação e Produção
-          </h3>
-          <p className="text-sm text-gray-500">Controle manual dos fluxos de backend (n8n).</p>
-        </div>
-
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100"><h3 className="font-bold text-gray-800 flex items-center gap-2"><Activity size={20} className="text-brand-500" />Automação (n8n)</h3></div>
+        
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Card de Configuração */}
+          {/* Gerenciar Webhooks */}
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-            <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-              <Wifi size={18} className="text-gray-500" />
-              Configuração do Webhook
-            </h4>
-            
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  URL do Webhook de Produção (n8n)
-                </label>
-                <input
-                  type="text"
-                  value={productionWebhook}
-                  onChange={(e) => setProductionWebhook(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 font-mono text-sm"
-                  placeholder="https://seu-n8n.com/webhook/iniciar-producao"
-                />
-                <p className="text-xs text-gray-500 mt-2">
-                  No n8n, use o nó <strong>Webhook</strong> com método <strong>POST</strong>.
-                  Isso substituirá ou complementará o nó "Schedule" (Cron) que costuma falhar.
-                </p>
-              </div>
-
-              {/* CORS Helper */}
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
-                <div className="flex items-start gap-2">
-                  <Info size={16} className="mt-0.5 flex-shrink-0" />
-                  <div className="flex-grow">
-                    <p className="font-bold mb-1">Atenção ao CORS (Erro "Failed to fetch")</p>
-                    <p className="mb-2">
-                      O CORS é configurado <strong>individualmente para cada nó de Webhook</strong> no n8n.
-                      O fato de o "Agendar" funcionar não garante que este webhook funcione, pois são nós diferentes.
-                    </p>
-                    <div className="flex items-center gap-2 bg-white border border-amber-300 rounded px-2 py-1 font-mono text-xs">
-                      <span className="truncate">{currentOrigin}</span>
-                      <button 
-                        onClick={() => copyToClipboard(currentOrigin)}
-                        className="text-amber-600 hover:text-amber-800 p-1"
-                        title="Copiar URL"
-                      >
-                        <Copy size={14} />
-                      </button>
-                    </div>
-                    <p className="mt-2 text-xs opacity-80">
-                      Adicione esta origem nas opções do nó Webhook específico deste fluxo.
-                    </p>
+            <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2"><LinkIcon size={18} className="text-gray-500" />Webhooks Cadastrados</h4>
+            <form onSubmit={handleAddWebhook} className="mb-6 flex gap-2">
+              <input type="text" placeholder="Nome (ex: Produção)" value={newWebhookName} onChange={e => setNewWebhookName(e.target.value)} className="flex-1 px-3 py-2 border rounded-lg text-sm" required />
+              <input type="text" placeholder="URL do Webhook" value={newWebhookUrl} onChange={e => setNewWebhookUrl(e.target.value)} className="flex-[2] px-3 py-2 border rounded-lg text-sm font-mono" required />
+              <button type="submit" className="bg-gray-800 text-white px-3 py-2 rounded-lg hover:bg-gray-900"><Plus size={18} /></button>
+            </form>
+            <div className="space-y-2 max-h-60 overflow-y-auto">
+              {webhooks.map(w => (
+                <div key={w.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg border border-gray-100">
+                  <div className="overflow-hidden">
+                    <p className="font-bold text-sm text-gray-700">{w.name}</p>
+                    <p className="text-xs text-gray-500 font-mono truncate" title={w.url}>{w.url}</p>
                   </div>
+                  <button onClick={() => handleDeleteWebhook(w.id)} className="text-gray-400 hover:text-red-600 p-1"><Trash2 size={16} /></button>
                 </div>
-              </div>
-
-              <div className="flex justify-end">
-                <button
-                  onClick={handleSaveAutomation}
-                  className="flex items-center gap-2 bg-gray-800 text-white px-4 py-2 rounded-lg font-medium hover:bg-gray-900 transition-colors"
-                >
-                  <Save size={16} />
-                  Salvar URL
-                </button>
-              </div>
+              ))}
+              {webhooks.length === 0 && <p className="text-center text-gray-400 text-sm py-4">Nenhum webhook cadastrado.</p>}
+            </div>
+            <div className="mt-4 bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+              <p className="font-bold mb-1">CORS Info:</p>
+              <div className="flex items-center gap-2 bg-white border border-amber-300 rounded px-2 py-1 font-mono"><span className="truncate">{currentOrigin}</span><button onClick={() => copyToClipboard(currentOrigin)} className="text-amber-600"><Copy size={12} /></button></div>
             </div>
           </div>
 
-          {/* Card de Ação Manual */}
+          {/* Disparo Manual */}
           <div className="bg-gradient-to-br from-brand-50 to-white p-6 rounded-xl shadow-sm border border-brand-100">
-            <h4 className="font-bold text-brand-800 mb-4 flex items-center gap-2">
-              <Play size={18} className="text-brand-600" />
-              Disparo Manual
-            </h4>
-            
-            <p className="text-sm text-gray-600 mb-6">
-              Se o fluxo automático (Cron) não rodou ou travou, use este botão para forçar o início da produção de Shorts imediatamente.
-            </p>
-
-            <div className="flex flex-col items-center justify-center p-6 bg-white rounded-xl border border-gray-200 border-dashed">
-              <div className="flex gap-2 w-full mb-4">
-                <button
-                  onClick={() => handleTriggerWorkflow('POST')}
-                  disabled={triggeringWorkflow || !productionWebhook}
-                  className="flex-1 flex items-center justify-center gap-3 px-4 py-4 bg-brand-600 text-white rounded-xl font-bold text-lg shadow-lg shadow-brand-500/30 hover:bg-brand-700 hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
-                >
-                  {triggeringWorkflow ? (
-                    <>
-                      <Loader2 size={24} className="animate-spin" />
-                      Iniciando...
-                    </>
-                  ) : (
-                    <>
-                      <Zap size={24} />
-                      INICIAR (POST)
-                    </>
-                  )}
-                </button>
-                
-                <button
-                  onClick={() => handleTriggerWorkflow('GET')}
-                  disabled={triggeringWorkflow || !productionWebhook}
-                  className="flex-none flex items-center justify-center px-4 py-4 bg-gray-100 text-gray-600 rounded-xl font-bold hover:bg-gray-200 transition-all disabled:opacity-50"
-                  title="Testar Conectividade (Ping GET)"
-                >
-                  <Wifi size={24} />
-                </button>
-              </div>
-              
-              {!productionWebhook && (
-                <p className="text-xs text-red-500 mt-3 font-medium">
-                  Configure a URL ao lado primeiro.
-                </p>
-              )}
-
-              {/* Checkbox No-CORS */}
-              <div className="mt-4 flex items-center gap-2">
-                <input 
-                  type="checkbox" 
-                  id="useNoCors" 
-                  checked={useNoCors} 
-                  onChange={(e) => setUseNoCors(e.target.checked)}
-                  className="rounded border-gray-300 text-brand-600 focus:ring-brand-500"
-                />
-                <label htmlFor="useNoCors" className="text-xs text-gray-600 cursor-pointer select-none flex items-center gap-1">
-                  Modo de Compatibilidade (Ignorar CORS)
-                  <span className="text-gray-400" title="Envia a requisição sem esperar resposta JSON. Útil se o n8n estiver bloqueando a origem.">(?)</span>
-                </label>
-              </div>
+            <h4 className="font-bold text-brand-800 mb-4 flex items-center gap-2"><Play size={18} className="text-brand-600" />Disparo Manual</h4>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Selecionar Webhook</label>
+              <select value={selectedWebhookId} onChange={e => setSelectedWebhookId(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500">
+                <option value="" disabled>Selecione...</option>
+                {webhooks.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+              </select>
             </div>
-
+            <div className="flex gap-2 w-full mb-4">
+              <button onClick={() => handleTriggerWorkflow('POST')} disabled={triggeringWorkflow || !selectedWebhookId} className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-brand-600 text-white rounded-xl font-bold shadow-lg hover:bg-brand-700 disabled:opacity-50">
+                {triggeringWorkflow ? <Loader2 size={20} className="animate-spin" /> : <Zap size={20} />} INICIAR
+              </button>
+              <button onClick={() => handleTriggerWorkflow('GET')} disabled={triggeringWorkflow || !selectedWebhookId} className="px-4 py-3 bg-gray-100 text-gray-600 rounded-xl font-bold hover:bg-gray-200 disabled:opacity-50" title="Ping GET"><Wifi size={20} /></button>
+            </div>
+            <div className="flex items-center gap-2 mb-4">
+              <input type="checkbox" id="useNoCors" checked={useNoCors} onChange={(e) => setUseNoCors(e.target.checked)} className="rounded border-gray-300 text-brand-600" />
+              <label htmlFor="useNoCors" className="text-xs text-gray-600 cursor-pointer">Modo Compatibilidade (Ignorar CORS)</label>
+            </div>
             {workflowResponse && (
-              <div className={`mt-4 p-4 rounded-lg border flex items-start gap-3 animate-fade-in ${
-                workflowResponse.success 
-                  ? 'bg-green-50 border-green-200 text-green-800' 
-                  : 'bg-red-50 border-red-200 text-red-800'
-              }`}>
-                {workflowResponse.success ? <CheckCircle size={20} className="mt-0.5" /> : <AlertCircle size={20} className="mt-0.5" />}
-                <div>
-                  <p className="font-bold">{workflowResponse.success ? 'Sucesso!' : 'Erro'}</p>
-                  <p className="text-sm mt-1">{workflowResponse.message}</p>
-                  {!workflowResponse.success && workflowResponse.message.includes('500') && (
-                     <p className="text-xs mt-2 font-semibold bg-red-100 p-1 rounded">
-                       DICA: Verifique se o workflow está ATIVO no n8n (canto superior direito).
-                     </p>
-                  )}
-                </div>
+              <div className={`p-3 rounded-lg border flex items-start gap-2 text-sm ${workflowResponse.success ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+                {workflowResponse.success ? <CheckCircle size={16} className="mt-0.5" /> : <AlertCircle size={16} className="mt-0.5" />}
+                <span>{workflowResponse.message}</span>
               </div>
             )}
           </div>
@@ -1303,78 +571,14 @@ const Settings: React.FC = () => {
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-5xl animate-fade-in">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
-        <div>
-          <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Configurações</h1>
-          <p className="text-gray-500 mt-1">Gerencie canais, integrações e permissões de acesso.</p>
-        </div>
-      </div>
-
-      {/* Tabs */}
+      <div className="mb-8"><h1 className="text-3xl font-extrabold text-gray-900">Configurações</h1><p className="text-gray-500">Gerencie canais, integrações e permissões.</p></div>
       <div className="flex border-b border-gray-200 mb-8 overflow-x-auto">
-        <button
-          onClick={() => setActiveTab('channels')}
-          className={`pb-4 px-6 font-medium text-sm transition-colors relative whitespace-nowrap ${
-            activeTab === 'channels'
-              ? 'text-brand-600'
-              : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          Canais e Integrações
-          {activeTab === 'channels' && (
-            <div className="absolute bottom-0 left-0 w-full h-0.5 bg-brand-600 rounded-t-full" />
-          )}
-        </button>
-        
-        {isAdmin && (
-          <button
-            onClick={() => setActiveTab('users')}
-            className={`pb-4 px-6 font-medium text-sm transition-colors relative whitespace-nowrap ${
-              activeTab === 'users'
-                ? 'text-brand-600'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Usuários e Permissões
-            {activeTab === 'users' && (
-              <div className="absolute bottom-0 left-0 w-full h-0.5 bg-brand-600 rounded-t-full" />
-            )}
-          </button>
-        )}
-
-        {isAdmin && (
-          <button
-            onClick={() => setActiveTab('automation')}
-            className={`pb-4 px-6 font-medium text-sm transition-colors relative whitespace-nowrap ${
-              activeTab === 'automation'
-                ? 'text-brand-600'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Automação (n8n)
-            {activeTab === 'automation' && (
-              <div className="absolute bottom-0 left-0 w-full h-0.5 bg-brand-600 rounded-t-full" />
-            )}
-          </button>
-        )}
+        <button onClick={() => setActiveTab('channels')} className={`pb-4 px-6 font-medium text-sm border-b-2 transition-colors ${activeTab === 'channels' ? 'border-brand-600 text-brand-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Canais</button>
+        {isAdmin && <button onClick={() => setActiveTab('users')} className={`pb-4 px-6 font-medium text-sm border-b-2 transition-colors ${activeTab === 'users' ? 'border-brand-600 text-brand-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Usuários</button>}
+        {isAdmin && <button onClick={() => setActiveTab('automation')} className={`pb-4 px-6 font-medium text-sm border-b-2 transition-colors ${activeTab === 'automation' ? 'border-brand-600 text-brand-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Automação</button>}
       </div>
-
-      {/* Mensagens Globais */}
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center mb-6 animate-shake" role="alert">
-          <AlertCircle className="mr-2 flex-shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      {successMessage && (
-        <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg flex items-center mb-6 animate-fade-in" role="alert">
-          <CheckCircle className="mr-2 flex-shrink-0" />
-          <span>{successMessage}</span>
-        </div>
-      )}
-
-      {/* Conteúdo da Aba */}
+      {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center mb-6"><AlertCircle className="mr-2" />{error}</div>}
+      {successMessage && <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg flex items-center mb-6"><CheckCircle className="mr-2" />{successMessage}</div>}
       {activeTab === 'channels' && renderChannels()}
       {activeTab === 'users' && (isAdmin ? renderUsers() : <div className="p-8 text-center text-gray-500"><Lock className="mx-auto mb-2" />Acesso restrito.</div>)}
       {activeTab === 'automation' && (isAdmin ? renderAutomation() : <div className="p-8 text-center text-gray-500"><Lock className="mx-auto mb-2" />Acesso restrito.</div>)}
