@@ -10,9 +10,10 @@ const Login = () => {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const getRedirectUrl = () => {
-    // Tenta usar a URL atual (Vercel ou Localhost)
-    // Certifique-se de adicionar esta URL nas "Redirect URLs" no painel do Supabase!
-    return window.location.origin;
+    // Pega a URL atual (seja localhost ou vercel)
+    let url = window.location.origin;
+    // Remove barra no final se existir para evitar duplicidade na verificação do Supabase
+    return url.endsWith('/') ? url.slice(0, -1) : url;
   };
 
   const handleGoogleLogin = async () => {
@@ -21,7 +22,7 @@ const Login = () => {
       setErrorMsg(null);
       
       const redirectUrl = getRedirectUrl();
-      console.log('Iniciando login Google. Redirecionar para:', redirectUrl);
+      console.log('Tentando login Google. Redirecionar para:', redirectUrl);
 
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
@@ -36,6 +37,7 @@ const Login = () => {
 
       if (error) throw error;
     } catch (error: any) {
+      console.error('Erro Google Auth:', error);
       setErrorMsg(error.message || 'Erro ao tentar fazer login com Google.');
       setLoading(false);
     }
@@ -46,6 +48,8 @@ const Login = () => {
     setLoading(true);
     setErrorMsg(null);
 
+    const redirectUrl = getRedirectUrl();
+
     try {
       if (isSignUp) {
         // Cadastro
@@ -53,7 +57,7 @@ const Login = () => {
           email,
           password,
           options: {
-            emailRedirectTo: getRedirectUrl(),
+            emailRedirectTo: redirectUrl,
           }
         });
         if (error) throw error;

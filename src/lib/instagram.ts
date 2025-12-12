@@ -19,10 +19,11 @@ export interface InstagramProfile {
   profile_picture_url: string;
   followers_count: number;
   media_count: number;
-  is_partial?: boolean; // Novo campo para indicar conexão simplificada
+  is_partial?: boolean;
 }
 
-// Busca as credenciais salvas no Supabase para um canal específico
+// --- FUNÇÕES DE LEITURA (JÁ EXISTENTES) ---
+
 export const getInstagramCredentials = async (channelName: string) => {
   const { data, error } = await supabase
     .from('shorts_settings')
@@ -34,80 +35,45 @@ export const getInstagramCredentials = async (channelName: string) => {
   return data;
 };
 
-// Busca o perfil do Instagram (Business)
 export const fetchInstagramProfile = async (businessId: string, accessToken: string): Promise<InstagramProfile | null> => {
   try {
-    // TENTATIVA 1: Busca Completa (Ideal)
-    // Requer permissões: instagram_basic, pages_read_engagement
-    // ATUALIZADO PARA v24.0 conforme alerta do n8n
     const url = `https://graph.facebook.com/v24.0/${businessId}?fields=name,username,profile_picture_url,followers_count,media_count&access_token=${accessToken}`;
     const response = await fetch(url);
     
     if (!response.ok) {
-      // TENTATIVA 2: "Modo n8n" (Fallback Simplificado)
-      // Se a busca completa falhar (por permissão), tentamos apenas verificar se o ID existe com esse Token.
-      // Isso valida a conexão sem exigir permissões de leitura de perfil.
-      console.warn("Busca completa de perfil falhou. Tentando validação simples (ping)...");
-      
+      console.warn("Busca completa de perfil falhou. Tentando validação simples...");
       const simpleUrl = `https://graph.facebook.com/v24.0/${businessId}?fields=id&access_token=${accessToken}`;
       const simpleResponse = await fetch(simpleUrl);
 
       if (simpleResponse.ok) {
-        // SUCESSO! O Token é válido para este ID.
-        // Retornamos um perfil "fictício" apenas para o app saber que conectou.
         return {
           id: businessId,
           name: "Conexão Validada",
-          username: "instagram_user", // Placeholder
+          username: "instagram_user",
           profile_picture_url: "",
           followers_count: 0,
           media_count: 0,
           is_partial: true
         };
       }
-
-      // Se falhar até o simples, analisamos o erro da primeira tentativa (que é mais descritivo)
       const err = await response.json();
-      
-      // Tratamento para erro (#200) Provide valid app ID
-      if (err.error?.code === 200) {
-        throw new Error('Erro de Permissão (#200): O Facebook não autorizou este Token para este ID. Verifique se o ID está correto.');
-      }
-
-      // Tratamento específico para erro de App ID no Perfil
-      if (err.error?.code === 100 && err.error?.message?.includes('node type (Application)')) {
-        throw new Error('ID incorreto: Você inseriu o "App ID". É necessário o "Instagram Business ID".');
-      }
-      
       throw new Error(err.error?.message || 'Token inválido ou ID incorreto.');
     }
-    
     return await response.json();
   } catch (error) {
     console.error('Erro Instagram Profile:', error);
-    throw error; // Repassa o erro para ser tratado na UI
+    throw error;
   }
 };
 
-// Busca as mídias (Reels/Posts)
 export const fetchInstagramMedia = async (businessId: string, accessToken: string, limit = 12): Promise<InstagramMedia[]> => {
   try {
     const fields = 'id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count';
-    // ATUALIZADO PARA v24.0
     const url = `https://graph.facebook.com/v24.0/${businessId}/media?fields=${fields}&limit=${limit}&access_token=${accessToken}`;
     
     const response = await fetch(url);
     if (!response.ok) {
       const err = await response.json();
-      
-      if (err.error?.code === 200) {
-        throw new Error('Erro de Permissão (#200): Verifique a conexão da Página com o Instagram no Facebook Business Suite.');
-      }
-
-      if (err.error?.code === 100 && err.error?.message?.includes('node type (Application)')) {
-        throw new Error('ID incorreto: O ID salvo é um "App ID". Use o botão "Detectar IDs".');
-      }
-      
       throw new Error(err.error?.message || 'Erro ao buscar mídia');
     }
     
@@ -119,56 +85,121 @@ export const fetchInstagramMedia = async (businessId: string, accessToken: strin
   }
 };
 
-// Detecta automaticamente os IDs usando o Token
-export const detectInstagramConfig = async (accessToken: string) => {
+// --- NOVAS FUNÇÕES DE POSTAGEM ---
+
+interface PublishOptions {
+  imageUrl?: string;
+  videoUrl?: string;
+  caption?: string;
+  type: 'IMAGE' | 'REELS' | 'STORIES';
+  coverUrl?: string; // Para capa de Reels (opcional)
+}
+
+/**
+ * Publica mídia no Instagram em 2 passos:
+ * 1. Cria o Container de Mídia
+ * 2. Publica o Container
+ */
+export const publishToInstagram = async (
+  businessId: string, 
+  accessToken: string, 
+  options: PublishOptions
+) => {
   try {
-    // 1. Tenta assumir que é um Page Token
-    // ATUALIZADO PARA v24.0
-    const response = await fetch(`https://graph.facebook.com/v24.0/me?fields=id,name,instagram_business_account`, {
-      headers: { Authorization: `Bearer ${accessToken}` }
-    });
+    let containerId = '';
 
-    if (!response.ok) {
-      const errBody = await response.json();
-      
-      // Fallback: Tenta listar contas do usuário
-      const userResponse = await fetch(`https://graph.facebook.com/v24.0/me/accounts?fields=id,name,instagram_business_account`, {
-        headers: { Authorization: `Bearer ${accessToken}` }
-      });
+    // PASSO 1: Criar Container
+    const params = new URLSearchParams();
+    params.append('access_token', accessToken);
+    
+    if (options.caption && options.type !== 'STORIES') {
+      params.append('caption', options.caption);
+    }
 
-      if (userResponse.ok) {
-        const data = await userResponse.json();
-        const connectedPage = data.data?.find((p: any) => p.instagram_business_account);
-        
-        if (connectedPage) {
-          return {
-            pageId: connectedPage.id,
-            instagramId: connectedPage.instagram_business_account.id,
-            name: connectedPage.name,
-            username: ''
-          };
-        }
-        throw new Error('Nenhuma página com Instagram Business conectado foi encontrada neste token.');
+    let endpoint = `https://graph.facebook.com/v24.0/${businessId}/media`;
+
+    if (options.type === 'IMAGE') {
+      if (!options.imageUrl) throw new Error('URL da imagem é obrigatória para posts de foto.');
+      params.append('image_url', options.imageUrl);
+    
+    } else if (options.type === 'REELS') {
+      if (!options.videoUrl) throw new Error('URL do vídeo é obrigatória para Reels.');
+      params.append('media_type', 'REELS');
+      params.append('video_url', options.videoUrl);
+      if (options.coverUrl) params.append('cover_url', options.coverUrl);
+    
+    } else if (options.type === 'STORIES') {
+      // Stories podem ser imagem ou vídeo
+      params.append('media_type', 'STORIES');
+      if (options.videoUrl) {
+        params.append('video_url', options.videoUrl);
+      } else if (options.imageUrl) {
+        params.append('image_url', options.imageUrl);
+      } else {
+        throw new Error('URL de imagem ou vídeo é obrigatória para Stories.');
       }
-      
-      throw new Error(errBody.error?.message || 'Token inválido.');
     }
 
-    const data = await response.json();
+    console.log(`[Instagram] Criando container (${options.type})...`);
+    const createRes = await fetch(`${endpoint}?${params.toString()}`, { method: 'POST' });
+    const createData = await createRes.json();
 
-    if (data.instagram_business_account) {
-      return {
-        pageId: data.id,
-        instagramId: data.instagram_business_account.id,
-        name: data.name,
-        username: ''
-      };
-    } else {
-      throw new Error(`A página "${data.name}" foi encontrada, mas NÃO tem Instagram vinculado.`);
+    if (!createRes.ok) {
+      throw new Error(`Erro ao criar container: ${createData.error?.message || 'Erro desconhecido'}`);
     }
 
-  } catch (error: any) {
-    console.error('Erro na detecção:', error);
-    throw new Error(error.message || 'Falha ao detectar configurações.');
+    containerId = createData.id;
+    console.log(`[Instagram] Container criado: ${containerId}`);
+
+    // PASSO 1.5: Aguardar processamento (apenas para Vídeos/Reels)
+    if (options.type === 'REELS' || (options.type === 'STORIES' && options.videoUrl)) {
+      console.log('[Instagram] Aguardando processamento do vídeo...');
+      await waitForMediaProcessing(containerId, accessToken);
+    }
+
+    // PASSO 2: Publicar Container
+    console.log('[Instagram] Publicando container...');
+    const publishParams = new URLSearchParams();
+    publishParams.append('creation_id', containerId);
+    publishParams.append('access_token', accessToken);
+
+    const publishRes = await fetch(`https://graph.facebook.com/v24.0/${businessId}/media_publish?${publishParams.toString()}`, { method: 'POST' });
+    const publishData = await publishRes.json();
+
+    if (!publishRes.ok) {
+      throw new Error(`Erro ao publicar: ${publishData.error?.message || 'Erro desconhecido'}`);
+    }
+
+    return publishData.id; // ID da publicação final
+
+  } catch (error) {
+    console.error('Erro na publicação Instagram:', error);
+    throw error;
   }
 };
+
+// Função auxiliar para verificar status do processamento de vídeo
+async function waitForMediaProcessing(containerId: string, accessToken: string, maxAttempts = 10) {
+  let attempts = 0;
+  
+  while (attempts < maxAttempts) {
+    const res = await fetch(
+      `https://graph.facebook.com/v24.0/${containerId}?fields=status_code,status&access_token=${accessToken}`
+    );
+    const data = await res.json();
+
+    if (data.status_code === 'FINISHED') {
+      return true;
+    }
+    
+    if (data.status_code === 'ERROR') {
+      throw new Error(`Erro no processamento do vídeo pelo Instagram: ${data.status}`);
+    }
+
+    // Espera 3 segundos antes de tentar de novo
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    attempts++;
+  }
+  
+  throw new Error('Tempo limite excedido aguardando processamento do vídeo.');
+}

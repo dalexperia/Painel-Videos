@@ -3,8 +3,9 @@ import { supabase } from '../lib/supabaseClient';
 import { fetchInstagramMedia, fetchInstagramProfile, InstagramMedia, InstagramProfile } from '../lib/instagram';
 import { 
   Instagram, Heart, MessageCircle, ExternalLink, Loader2, 
-  AlertCircle, Video, Image as ImageIcon, Layers, RefreshCw, Settings 
+  AlertCircle, Video, Image as ImageIcon, Layers, RefreshCw, Settings, Plus 
 } from 'lucide-react';
+import InstagramPostModal from './InstagramPostModal';
 
 const InstagramDashboard: React.FC = () => {
   const [channels, setChannels] = useState<any[]>([]);
@@ -15,6 +16,9 @@ const InstagramDashboard: React.FC = () => {
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Modal State
+  const [isPostModalOpen, setIsPostModalOpen] = useState(false);
 
   // 1. Carregar canais que têm configuração de Instagram
   useEffect(() => {
@@ -58,7 +62,6 @@ const InstagramDashboard: React.FC = () => {
       // Busca Perfil e Mídia em paralelo
       const [profileData, mediaData] = await Promise.all([
         fetchInstagramProfile(instagram_business_account_id, instagram_access_token).catch(e => {
-           // Se falhar o perfil, mas for erro de ID, lançamos para parar tudo. Se for outro erro, logamos e seguimos.
            if (e.message.includes('ID incorreto')) throw e;
            console.warn("Falha ao carregar perfil:", e);
            return null;
@@ -80,6 +83,17 @@ const InstagramDashboard: React.FC = () => {
     }
   };
 
+  // Helper para pegar config atual para o modal
+  const getCurrentChannelConfig = () => {
+    const config = channels.find(c => c.channel === selectedChannel);
+    if (!config) return null;
+    return {
+      id: config.instagram_business_account_id,
+      token: config.instagram_access_token,
+      name: config.channel
+    };
+  };
+
   if (channels.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 bg-white rounded-xl border border-gray-100 shadow-sm">
@@ -96,10 +110,10 @@ const InstagramDashboard: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Seletor de Canal */}
-      <div className="flex justify-between items-center bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="bg-gradient-to-tr from-yellow-400 via-red-500 to-purple-500 p-0.5 rounded-full">
+      {/* Seletor de Canal e Ações */}
+      <div className="flex flex-col sm:flex-row justify-between items-center bg-white p-4 rounded-xl border border-gray-100 shadow-sm gap-4">
+        <div className="flex items-center gap-3 w-full sm:w-auto">
+          <div className="bg-gradient-to-tr from-yellow-400 via-red-500 to-purple-500 p-0.5 rounded-full shrink-0">
             <div className="bg-white p-1.5 rounded-full">
               <Instagram size={20} className="text-gray-800" />
             </div>
@@ -107,20 +121,32 @@ const InstagramDashboard: React.FC = () => {
           <select 
             value={selectedChannel}
             onChange={(e) => setSelectedChannel(e.target.value)}
-            className="bg-transparent font-bold text-gray-800 text-lg focus:outline-none cursor-pointer"
+            className="bg-transparent font-bold text-gray-800 text-lg focus:outline-none cursor-pointer w-full sm:w-auto"
           >
             {channels.map(c => (
               <option key={c.channel} value={c.channel}>{c.channel}</option>
             ))}
           </select>
         </div>
-        <button 
-          onClick={loadInstagramData} 
-          disabled={loading}
-          className="p-2 text-gray-500 hover:text-pink-600 hover:bg-pink-50 rounded-full transition-colors"
-        >
-          <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
-        </button>
+        
+        <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+          <button 
+            onClick={() => setIsPostModalOpen(true)}
+            className="flex items-center gap-2 bg-pink-600 hover:bg-pink-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-lg shadow-pink-500/20"
+          >
+            <Plus size={18} />
+            Nova Postagem
+          </button>
+          
+          <button 
+            onClick={loadInstagramData} 
+            disabled={loading}
+            className="p-2 text-gray-500 hover:text-pink-600 hover:bg-pink-50 rounded-full transition-colors"
+            title="Atualizar"
+          >
+            <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -228,6 +254,16 @@ const InstagramDashboard: React.FC = () => {
           ))}
         </div>
       )}
+
+      {/* Modal de Postagem */}
+      <InstagramPostModal 
+        isOpen={isPostModalOpen}
+        onClose={() => setIsPostModalOpen(false)}
+        channelConfig={getCurrentChannelConfig()}
+        onSuccess={() => {
+          loadInstagramData(); // Recarrega o feed após postar
+        }}
+      />
     </div>
   );
 };
