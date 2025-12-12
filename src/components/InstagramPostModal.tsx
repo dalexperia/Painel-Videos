@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { X, Image as ImageIcon, Film, History, Send, Loader2, AlertCircle, CheckCircle2, Link as LinkIcon } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Image as ImageIcon, Film, History, Send, Loader2, AlertCircle, CheckCircle2, Link as LinkIcon, Wand2, Sparkles, RefreshCw } from 'lucide-react';
 import { publishToInstagram } from '../lib/instagram';
+import { supabase } from '../lib/supabaseClient';
 
 interface InstagramPostModalProps {
   isOpen: boolean;
@@ -14,16 +15,130 @@ interface InstagramPostModalProps {
 }
 
 type PostType = 'IMAGE' | 'REELS' | 'STORIES';
+type InputMode = 'UPLOAD' | 'GENERATE';
+type GenerationStatus = 'idle' | 'pending' | 'completed' | 'failed';
+
+const WEBHOOK_URL = 'https://n8n-main.oficinadamultape.com.br/webhook-test/gerar-imagens-insta';
 
 const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose, channelConfig, onSuccess }) => {
+  // UI State
   const [postType, setPostType] = useState<PostType>('IMAGE');
+  const [inputMode, setInputMode] = useState<InputMode>('UPLOAD');
+  
+  // Form Data
   const [mediaUrl, setMediaUrl] = useState('');
   const [caption, setCaption] = useState('');
+  const [prompt, setPrompt] = useState('');
+  
+  // Status State
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<'idle' | 'processing' | 'publishing' | 'success' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  
+  // Generation State
+  const [generationId, setGenerationId] = useState<string | null>(null);
+  const [generationStatus, setGenerationStatus] = useState<GenerationStatus>('idle');
+
+  // Reset state when modal opens/closes
+  useEffect(() => {
+    if (!isOpen) {
+      setMediaUrl('');
+      setCaption('');
+      setPrompt('');
+      setStatus('idle');
+      setGenerationStatus('idle');
+      setGenerationId(null);
+      setInputMode('UPLOAD');
+    }
+  }, [isOpen]);
+
+  // Realtime Subscription for Image Generation
+  useEffect(() => {
+    if (!generationId || generationStatus === 'completed' || generationStatus === 'failed') return;
+
+    console.log(`[Realtime] Subscribing to generated_images changes for ID: ${generationId}`);
+
+    const channel = supabase
+      .channel(`generation-${generationId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'generated_images',
+          filter: `id=eq.${generationId}`,
+        },
+        (payload) => {
+          console.log('[Realtime] Update received:', payload);
+          const newRecord = payload.new;
+          
+          if (newRecord.status === 'completed' && newRecord.image_url) {
+            setMediaUrl(newRecord.image_url);
+            if (newRecord.description) {
+              setCaption(newRecord.description);
+            }
+            setGenerationStatus('completed');
+            setInputMode('UPLOAD'); // Switch back to preview/post mode
+          } else if (newRecord.status === 'failed') {
+            setGenerationStatus('failed');
+            setErrorMessage('Falha na geração da imagem. Tente novamente.');
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [generationId, generationStatus]);
 
   if (!isOpen) return null;
+
+  const handleGenerate = async () => {
+    if (!prompt.trim() || !channelConfig) return;
+
+    setGenerationStatus('pending');
+    setErrorMessage(null);
+
+    try {
+      // 1. Create pending record in Supabase
+      const { data, error } = await supabase
+        .from('generated_images')
+        .insert({
+          prompt: prompt,
+          channel: channelConfig.name,
+          status: 'pending',
+          format: postType === 'STORIES' ? 'STORY' : 'SQUARE' // Default mapping
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      if (!data) throw new Error('Falha ao criar registro de geração.');
+
+      setGenerationId(data.id);
+
+      // 2. Call Webhook
+      // We don't await the result of the generation, just the acknowledgement of the webhook
+      fetch(WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: data.id,
+          prompt: prompt,
+          channel: channelConfig.name,
+          format: postType === 'STORIES' ? 'STORY' : 'SQUARE'
+        })
+      }).catch(err => {
+        console.error("Webhook trigger error (non-fatal if n8n received it):", err);
+      });
+
+    } catch (err: any) {
+      console.error(err);
+      setGenerationStatus('failed');
+      setErrorMessage(err.message || 'Erro ao iniciar geração.');
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,27 +149,21 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
     setErrorMessage(null);
 
     try {
-      // Validação básica
       if (!mediaUrl) throw new Error('A URL da mídia é obrigatória.');
       
-      // Determinar parâmetros baseado no tipo
       const isVideo = postType === 'REELS' || (postType === 'STORIES' && mediaUrl.match(/\.(mp4|mov)$/i));
       
       await publishToInstagram(channelConfig.id, channelConfig.token, {
         type: postType,
         imageUrl: !isVideo ? mediaUrl : undefined,
         videoUrl: isVideo ? mediaUrl : undefined,
-        caption: postType !== 'STORIES' ? caption : undefined // Stories não suportam legenda via API
+        caption: postType !== 'STORIES' ? caption : undefined
       });
 
       setStatus('success');
       setTimeout(() => {
         onSuccess();
         onClose();
-        // Reset form
-        setMediaUrl('');
-        setCaption('');
-        setStatus('idle');
       }, 2000);
 
     } catch (error: any) {
@@ -129,100 +238,178 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
             </button>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            
-            {/* Media URL Input */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                URL da Mídia (Pública)
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <LinkIcon className="h-5 w-5 text-gray-400" />
-                </div>
-                <input
-                  type="url"
-                  required
-                  value={mediaUrl}
-                  onChange={(e) => setMediaUrl(e.target.value)}
-                  placeholder={postType === 'IMAGE' ? "https://exemplo.com/foto.jpg" : "https://exemplo.com/video.mp4"}
-                  className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-500 focus:border-transparent transition-all text-sm"
-                />
-              </div>
-              <p className="text-[10px] text-gray-500 mt-1">
-                A URL deve ser pública (ex: S3, Supabase Storage, Link direto). O Instagram precisa baixar o arquivo.
-              </p>
+          {/* Input Mode Tabs (Only for Image/Stories) */}
+          {postType !== 'REELS' && (
+            <div className="flex bg-gray-100 p-1 rounded-lg mb-6">
+              <button
+                type="button"
+                onClick={() => setInputMode('UPLOAD')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-all ${
+                  inputMode === 'UPLOAD' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <LinkIcon size={16} />
+                Link / Upload
+              </button>
+              <button
+                type="button"
+                onClick={() => setInputMode('GENERATE')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-all ${
+                  inputMode === 'GENERATE' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <Sparkles size={16} />
+                Gerar com IA
+              </button>
             </div>
+          )}
 
-            {/* Preview Area (Simple) */}
-            {mediaUrl && (
-              <div className="bg-gray-50 rounded-lg p-2 border border-gray-200 flex justify-center">
-                {postType === 'IMAGE' ? (
-                  <img src={mediaUrl} alt="Preview" className="max-h-48 rounded object-contain" onError={(e) => (e.currentTarget.style.display = 'none')} />
-                ) : (
-                  <video src={mediaUrl} className="max-h-48 rounded" controls onError={(e) => (e.currentTarget.style.display = 'none')} />
-                )}
-              </div>
-            )}
-
-            {/* Caption Input (Hidden for Stories) */}
-            {postType !== 'STORIES' && (
+          {/* GENERATION MODE */}
+          {inputMode === 'GENERATE' && postType !== 'REELS' ? (
+            <div className="space-y-4 animate-fade-in">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Legenda
+                  Prompt da Imagem
                 </label>
                 <textarea
                   rows={4}
-                  value={caption}
-                  onChange={(e) => setCaption(e.target.value)}
-                  placeholder="Escreva sua legenda aqui... #hashtags"
-                  className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-500 focus:border-transparent transition-all text-sm resize-none"
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="Descreva a imagem que você quer criar... Ex: Uma paisagem futurista cyberpunk com neon rosa e azul."
+                  className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all text-sm resize-none"
+                  disabled={generationStatus === 'pending'}
                 />
               </div>
-            )}
 
-            {postType === 'STORIES' && (
-              <div className="bg-blue-50 text-blue-700 text-xs p-3 rounded-lg flex gap-2">
-                <AlertCircle size={16} className="shrink-0" />
-                <p>Stories não suportam legenda via API. Adicione textos ou stickers na edição do vídeo/imagem antes de fazer upload.</p>
-              </div>
-            )}
-
-            {/* Error Message */}
-            {errorMessage && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-sm text-red-700 animate-shake">
-                <AlertCircle size={16} className="shrink-0 mt-0.5" />
-                <span>{errorMessage}</span>
-              </div>
-            )}
-
-            {/* Success Message */}
-            {status === 'success' && (
-              <div className="p-3 bg-green-50 border border-green-200 rounded-lg flex items-center justify-center gap-2 text-green-700">
-                <CheckCircle2 size={20} />
-                <span className="font-medium">Publicado com sucesso!</span>
-              </div>
-            )}
-
-            {/* Submit Button */}
-            <button
-              type="submit"
-              disabled={loading || status === 'success'}
-              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg shadow-pink-500/30 transition-all disabled:opacity-70 disabled:cursor-not-allowed mt-4"
-            >
-              {loading ? (
-                <>
-                  <Loader2 size={18} className="animate-spin" />
-                  {status === 'processing' ? 'Processando Mídia...' : 'Publicando...'}
-                </>
-              ) : (
-                <>
-                  <Send size={18} />
-                  Publicar Agora
-                </>
+              {generationStatus === 'pending' && (
+                <div className="bg-purple-50 border border-purple-100 rounded-xl p-6 flex flex-col items-center justify-center text-center animate-pulse">
+                  <Loader2 size={32} className="text-purple-600 animate-spin mb-3" />
+                  <h3 className="text-purple-900 font-bold">Criando sua arte...</h3>
+                  <p className="text-purple-600 text-sm mt-1">Isso pode levar alguns segundos.</p>
+                </div>
               )}
-            </button>
-          </form>
+
+              {generationStatus !== 'pending' && (
+                <button
+                  type="button"
+                  onClick={handleGenerate}
+                  disabled={!prompt.trim()}
+                  className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg shadow-purple-500/30 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
+                >
+                  <Wand2 size={18} />
+                  Gerar Imagem
+                </button>
+              )}
+            </div>
+          ) : (
+            /* UPLOAD / PREVIEW MODE */
+            <form onSubmit={handleSubmit} className="space-y-4 animate-fade-in">
+              
+              {/* Media URL Input */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  URL da Mídia (Pública)
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <LinkIcon className="h-5 w-5 text-gray-400" />
+                  </div>
+                  <input
+                    type="url"
+                    required
+                    value={mediaUrl}
+                    onChange={(e) => setMediaUrl(e.target.value)}
+                    placeholder={postType === 'IMAGE' ? "https://exemplo.com/foto.jpg" : "https://exemplo.com/video.mp4"}
+                    className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-500 focus:border-transparent transition-all text-sm"
+                  />
+                </div>
+                <p className="text-[10px] text-gray-500 mt-1">
+                  A URL deve ser pública. {generationStatus === 'completed' && <span className="text-green-600 font-bold">Imagem gerada por IA carregada!</span>}
+                </p>
+              </div>
+
+              {/* Preview Area */}
+              {mediaUrl && (
+                <div className="bg-gray-50 rounded-lg p-2 border border-gray-200 flex justify-center relative group">
+                  {postType === 'IMAGE' || postType === 'STORIES' ? (
+                    <img src={mediaUrl} alt="Preview" className="max-h-64 rounded object-contain shadow-sm" onError={(e) => (e.currentTarget.style.display = 'none')} />
+                  ) : (
+                    <video src={mediaUrl} className="max-h-64 rounded shadow-sm" controls onError={(e) => (e.currentTarget.style.display = 'none')} />
+                  )}
+                  
+                  {/* Quick Action to Regenerate if it came from AI */}
+                  {generationStatus === 'completed' && (
+                    <button
+                      type="button"
+                      onClick={() => setInputMode('GENERATE')}
+                      className="absolute top-4 right-4 bg-white/90 hover:bg-white text-gray-700 p-2 rounded-full shadow-md transition-all opacity-0 group-hover:opacity-100"
+                      title="Gerar Novamente"
+                    >
+                      <RefreshCw size={16} />
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Caption Input (Hidden for Stories) */}
+              {postType !== 'STORIES' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Legenda
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={caption}
+                    onChange={(e) => setCaption(e.target.value)}
+                    placeholder="Escreva sua legenda aqui... #hashtags"
+                    className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-500 focus:border-transparent transition-all text-sm resize-none"
+                  />
+                </div>
+              )}
+
+              {postType === 'STORIES' && (
+                <div className="bg-blue-50 text-blue-700 text-xs p-3 rounded-lg flex gap-2">
+                  <AlertCircle size={16} className="shrink-0" />
+                  <p>Stories não suportam legenda via API. Adicione textos ou stickers na edição do vídeo/imagem antes de fazer upload.</p>
+                </div>
+              )}
+
+              {/* Error Message */}
+              {errorMessage && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-sm text-red-700 animate-shake">
+                  <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
+
+              {/* Success Message */}
+              {status === 'success' && (
+                <div className="p-3 bg-green-50 border border-green-200 rounded-lg flex items-center justify-center gap-2 text-green-700">
+                  <CheckCircle2 size={20} />
+                  <span className="font-medium">Publicado com sucesso!</span>
+                </div>
+              )}
+
+              {/* Submit Button */}
+              <button
+                type="submit"
+                disabled={loading || status === 'success'}
+                className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg shadow-pink-500/30 transition-all disabled:opacity-70 disabled:cursor-not-allowed mt-4"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 size={18} className="animate-spin" />
+                    {status === 'processing' ? 'Processando Mídia...' : 'Publicando...'}
+                  </>
+                ) : (
+                  <>
+                    <Send size={18} />
+                    Publicar Agora
+                  </>
+                )}
+              </button>
+            </form>
+          )}
         </div>
       </div>
     </div>
