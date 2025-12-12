@@ -252,7 +252,7 @@ const Settings: React.FC = () => {
     setIsTestingKey(true);
     setTestResult(null);
     try {
-      await validateApiKey(currentApiKey);
+      await validateApiKey(currentApiKey.trim());
       setTestResult({ success: true, message: "Chave válida!" });
     } catch (err: any) {
       setTestResult({ success: false, message: "Chave inválida ou erro de conexão." });
@@ -346,9 +346,10 @@ const Settings: React.FC = () => {
     setAiTestResult(null);
     try {
       let apiKeyToUse = '';
-      if (aiProvider === 'gemini') apiKeyToUse = currentGeminiKey;
-      else if (aiProvider === 'groq') apiKeyToUse = currentGroqKey;
-      else if (aiProvider === 'ollama') apiKeyToUse = currentOllamaKey;
+      // TRIM KEYS HERE
+      if (aiProvider === 'gemini') apiKeyToUse = currentGeminiKey.trim();
+      else if (aiProvider === 'groq') apiKeyToUse = currentGroqKey.trim();
+      else if (aiProvider === 'ollama') apiKeyToUse = currentOllamaKey.trim();
 
       const config = { provider: aiProvider, apiKey: apiKeyToUse, url: currentOllamaUrl, model: currentAiModel };
       if (aiProvider !== 'ollama' && !config.apiKey) throw new Error("Chave de API necessária.");
@@ -380,12 +381,12 @@ const Settings: React.FC = () => {
         facebook_page_id: currentFbPageId ? currentFbPageId.trim() : null,
         instagram_access_token: currentIgToken ? currentIgToken.trim() : null,
         instagram_username: currentIgUsername ? currentIgUsername.trim() : null,
-        // AI
+        // AI - TRIM KEYS HERE TOO
         ai_provider: aiProvider, 
-        gemini_key: currentGeminiKey || null,
-        groq_key: currentGroqKey || null, 
+        gemini_key: currentGeminiKey ? currentGeminiKey.trim() : null,
+        groq_key: currentGroqKey ? currentGroqKey.trim() : null, 
         ollama_url: currentOllamaUrl || null, 
-        ollama_key: currentOllamaKey || null,
+        ollama_key: currentOllamaKey ? currentOllamaKey.trim() : null,
         ai_model: currentAiModel || null
       };
 

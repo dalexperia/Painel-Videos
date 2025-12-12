@@ -156,9 +156,10 @@ const RecentVideos: React.FC = () => {
     
     if (error || !settings) throw new Error("Configurações de IA não encontradas.");
     
+    // TRIM KEYS HERE
     return {
       provider: settings.ai_provider || 'gemini',
-      apiKey: settings.ai_provider === 'groq' ? settings.groq_key : settings.gemini_key,
+      apiKey: (settings.ai_provider === 'groq' ? settings.groq_key : settings.gemini_key)?.trim(),
       url: settings.ollama_url,
       model: settings.ai_model
     };

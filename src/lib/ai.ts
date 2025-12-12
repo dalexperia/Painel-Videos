@@ -160,6 +160,9 @@ export const generateContentAI = async (
   let finalPrompt = prompt;
   let contextForSystem = prompt;
 
+  // Limpeza da chave de API (Trim)
+  const cleanApiKey = config.apiKey ? config.apiKey.trim() : undefined;
+
   if (type === 'autocomplete_tags' || type === 'autocomplete_hashtags') {
     if (!prompt || prompt.length < 2) return [];
     contextForSystem = extraContext || "Vídeo Genérico";
@@ -177,16 +180,16 @@ export const generateContentAI = async (
 
     switch (config.provider) {
       case 'gemini':
-        if (!config.apiKey) throw new Error("Chave Gemini não configurada.");
-        rawResult = await generateGemini(config.apiKey, effectivePrompt, type);
+        if (!cleanApiKey) throw new Error("Chave Gemini não configurada.");
+        rawResult = await generateGemini(cleanApiKey, effectivePrompt, type);
         break;
       case 'groq':
-        if (!config.apiKey) throw new Error("Chave Groq não configurada.");
-        rawResult = await generateGroq(config.apiKey, effectivePrompt, type, config.model || 'llama3-70b-8192');
+        if (!cleanApiKey) throw new Error("Chave Groq não configurada.");
+        rawResult = await generateGroq(cleanApiKey, effectivePrompt, type, config.model || 'llama3-70b-8192');
         break;
       case 'ollama':
         if (!config.url) throw new Error("URL do Ollama não configurada.");
-        rawResult = await generateOllama(config.url, config.apiKey, effectivePrompt, type, config.model || 'llama3');
+        rawResult = await generateOllama(config.url, cleanApiKey, effectivePrompt, type, config.model || 'llama3');
         break;
       default:
         throw new Error("Provedor desconhecido.");
@@ -197,7 +200,17 @@ export const generateContentAI = async (
 
   } catch (error: any) {
     console.error(`Erro na geração (${config.provider}):`, error);
+    
+    // Tratamento de erro mais amigável para o usuário
+    let friendlyMessage = error.message;
+    
+    if (error.message.includes('401') || error.message.includes('invalid_api_key')) {
+      friendlyMessage = "Chave de API inválida (401). Verifique se a chave está correta e sem espaços.";
+    } else if (error.message.includes('429')) {
+      friendlyMessage = "Limite de requisições excedido (429). Tente novamente mais tarde.";
+    }
+
     if (type.includes('autocomplete')) return [];
-    throw new Error(`Falha na IA: ${error.message}`);
+    throw new Error(friendlyMessage);
   }
 };

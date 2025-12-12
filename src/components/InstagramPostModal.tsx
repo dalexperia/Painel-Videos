@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Image as ImageIcon, Film, History, Send, Loader2, AlertCircle, CheckCircle2, Link as LinkIcon, Wand2, Sparkles, RefreshCw, RectangleVertical, Square, Lightbulb, Bot } from 'lucide-react';
+import { X, Image as ImageIcon, Film, History, Send, Loader2, AlertCircle, CheckCircle2, Link as LinkIcon, Wand2, Sparkles, RefreshCw, RectangleVertical, Square, Lightbulb, Bot, LayoutGrid, Calendar, Search } from 'lucide-react';
 import { publishToInstagram } from '../lib/instagram';
 import { supabase } from '../lib/supabaseClient';
 import { generateContentAI, AIProvider, AIConfig } from '../lib/ai';
@@ -16,7 +16,7 @@ interface InstagramPostModalProps {
 }
 
 type PostType = 'IMAGE' | 'REELS' | 'STORIES';
-type InputMode = 'UPLOAD' | 'GENERATE';
+type InputMode = 'UPLOAD' | 'GENERATE' | 'GALLERY';
 type GenerationStatus = 'idle' | 'pending' | 'completed' | 'failed';
 type ImageFormat = 'SQUARE' | 'PORTRAIT' | 'STORY';
 
@@ -27,6 +27,17 @@ interface ChannelSettings {
   ollama_url?: string;
   ollama_key?: string;
   ai_model?: string;
+}
+
+interface GeneratedImage {
+  id: string;
+  created_at: string;
+  prompt: string;
+  image_url: string;
+  status: string;
+  description?: string;
+  format?: string;
+  channel?: string;
 }
 
 const WEBHOOK_URL = 'https://n8n-main.oficinadamultape.com.br/webhook/gerar-imagens-insta';
@@ -57,6 +68,10 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
   const [enhancedPrompts, setEnhancedPrompts] = useState<string[]>([]);
   const [channelSettings, setChannelSettings] = useState<ChannelSettings | null>(null);
 
+  // Gallery State
+  const [galleryImages, setGalleryImages] = useState<GeneratedImage[]>([]);
+  const [loadingGallery, setLoadingGallery] = useState(false);
+
   // Reset state when modal opens/closes
   useEffect(() => {
     if (!isOpen) {
@@ -70,11 +85,55 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
       setImageFormat('SQUARE');
       setEnhancedPrompts([]);
       setChannelSettings(null);
+      setGalleryImages([]);
     } else if (channelConfig) {
-      // Fetch Channel Specific Settings for AI
       fetchChannelSettings();
     }
   }, [isOpen, channelConfig]);
+
+  // Fetch Gallery when switching to Gallery tab
+  useEffect(() => {
+    if (isOpen && inputMode === 'GALLERY' && channelConfig) {
+      fetchGalleryImages();
+    }
+  }, [inputMode, isOpen, channelConfig]);
+
+  // Poll for generation status
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+
+    if (generationId && generationStatus === 'pending') {
+      interval = setInterval(async () => {
+        try {
+          const { data, error } = await supabase
+            .from('generated_images')
+            .select('*')
+            .eq('id', generationId)
+            .single();
+
+          if (error) throw error;
+
+          if (data.status === 'completed') {
+            setGenerationStatus('completed');
+            setMediaUrl(data.image_url);
+            if (data.description) setCaption(data.description);
+            setInputMode('UPLOAD'); // Switch to upload/preview mode
+            clearInterval(interval);
+          } else if (data.status === 'failed') {
+            setGenerationStatus('failed');
+            setErrorMessage('Falha na geração da imagem.');
+            clearInterval(interval);
+          }
+        } catch (err) {
+          console.error('Erro ao verificar status:', err);
+        }
+      }, 3000);
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [generationId, generationStatus]);
 
   const fetchChannelSettings = async () => {
     if (!channelConfig) return;
@@ -93,136 +152,108 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
     }
   };
 
-  // Update format automatically when switching Post Type
-  useEffect(() => {
-    if (postType === 'STORIES') {
-      setImageFormat('STORY');
-    } else if (postType === 'IMAGE' && imageFormat === 'STORY') {
-      setImageFormat('SQUARE'); // Reset to square if coming back from stories
+  const fetchGalleryImages = async () => {
+    if (!channelConfig) return;
+    setLoadingGallery(true);
+    try {
+      const { data, error } = await supabase
+        .from('generated_images')
+        .select('*')
+        .eq('channel', channelConfig.name)
+        .eq('status', 'completed')
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (error) throw error;
+      setGalleryImages(data || []);
+    } catch (err) {
+      console.error("Erro ao carregar galeria:", err);
+    } finally {
+      setLoadingGallery(false);
     }
-  }, [postType]);
+  };
 
-  // Realtime Subscription for Image Generation
-  useEffect(() => {
-    if (!generationId || generationStatus === 'completed' || generationStatus === 'failed') return;
-
-    console.log(`[Realtime] Subscribing to generated_images changes for ID: ${generationId}`);
-
-    const channel = supabase
-      .channel(`generation-${generationId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'generated_images',
-          filter: `id=eq.${generationId}`,
-        },
-        (payload) => {
-          console.log('[Realtime] Update received:', payload);
-          const newRecord = payload.new;
-          
-          if (newRecord.status === 'completed' && newRecord.image_url) {
-            setMediaUrl(newRecord.image_url);
-            if (newRecord.description) {
-              setCaption(newRecord.description);
-            }
-            setGenerationStatus('completed');
-            setInputMode('UPLOAD'); // Switch back to preview/post mode
-          } else if (newRecord.status === 'failed') {
-            setGenerationStatus('failed');
-            setErrorMessage('Falha na geração da imagem. Tente novamente.');
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [generationId, generationStatus]);
-
-  if (!isOpen) return null;
+  const handleSelectFromGallery = (image: GeneratedImage) => {
+    setMediaUrl(image.image_url);
+    if (image.description) {
+      setCaption(image.description);
+    }
+    // Tenta inferir o formato se disponível, senão mantém o atual
+    if (image.format === 'STORY') setPostType('STORIES');
+    
+    setInputMode('UPLOAD'); // Vai para a tela de preview/post
+  };
 
   const handleEnhancePrompt = async () => {
-    if (!prompt.trim()) return;
+    if (!prompt.trim() || !channelSettings) return;
     
     setIsEnhancing(true);
-    setEnhancedPrompts([]);
-    
     try {
-      // Construct Config from Channel Settings
       const config: AIConfig = {
-        provider: channelSettings?.ai_provider || 'gemini',
-        apiKey: channelSettings?.ai_provider === 'groq' ? channelSettings.groq_key : 
-                channelSettings?.ai_provider === 'ollama' ? channelSettings.ollama_key :
-                channelSettings?.gemini_key,
-        url: channelSettings?.ollama_url,
-        model: channelSettings?.ai_model
+        provider: channelSettings.ai_provider,
+        apiKey: channelSettings.ai_provider === 'gemini' ? channelSettings.gemini_key : 
+                channelSettings.ai_provider === 'groq' ? channelSettings.groq_key : undefined,
+        baseUrl: channelSettings.ollama_url,
+        model: channelSettings.ai_model
       };
 
-      const suggestions = await generateContentAI(
-        config,
-        prompt,
-        'image_prompt'
-      );
+      const systemPrompt = `Você é um especialista em criar prompts detalhados para geradores de imagem IA (como Midjourney/DALL-E). 
+      Melhore o prompt do usuário para criar uma imagem de alta qualidade, fotorealista e impressionante.
+      Retorne APENAS 3 variações do prompt melhorado, separadas por '|||'. Não inclua introduções.`;
+
+      const enhanced = await generateContentAI(prompt, config, systemPrompt);
+      const suggestions = enhanced.split('|||').map(s => s.trim()).filter(s => s.length > 0);
       setEnhancedPrompts(suggestions);
     } catch (error) {
-      console.error("Erro ao melhorar prompt:", error);
-      setEnhancedPrompts([
-        `Cinematic shot of ${prompt}, highly detailed, 8k resolution, dramatic lighting`,
-        `Oil painting of ${prompt}, vivid colors, textured brushstrokes`,
-        `Futuristic cyberpunk version of ${prompt}, neon lights, high tech atmosphere`
-      ]);
+      console.error('Erro ao melhorar prompt:', error);
+      setErrorMessage('Não foi possível melhorar o prompt. Verifique as configurações de IA.');
     } finally {
       setIsEnhancing(false);
     }
   };
 
-  const handleGenerate = async () => {
+  const handleGenerateImage = async () => {
     if (!prompt.trim() || !channelConfig) return;
 
+    setLoading(true);
     setGenerationStatus('pending');
     setErrorMessage(null);
 
     try {
-      const finalFormat = postType === 'STORIES' ? 'STORY' : imageFormat;
-
-      // 1. Create pending record
-      const { data, error } = await supabase
+      // 1. Criar registro no Supabase
+      const { data: record, error: dbError } = await supabase
         .from('generated_images')
         .insert({
-          prompt: prompt,
           channel: channelConfig.name,
+          prompt: prompt,
           status: 'pending',
-          format: finalFormat
+          format: imageFormat
         })
         .select()
         .single();
 
-      if (error) throw error;
-      if (!data) throw new Error('Falha ao criar registro de geração.');
+      if (dbError) throw dbError;
+      setGenerationId(record.id);
 
-      setGenerationId(data.id);
-
-      // 2. Call Webhook
-      fetch(WEBHOOK_URL, {
+      // 2. Chamar Webhook n8n
+      const response = await fetch(WEBHOOK_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          id: data.id,
+          id: record.id,
           prompt: prompt,
           channel: channelConfig.name,
-          format: finalFormat
+          format: imageFormat
         })
-      }).catch(err => {
-        console.error("Webhook trigger error:", err);
       });
 
-    } catch (err: any) {
-      console.error(err);
+      if (!response.ok) throw new Error('Erro ao iniciar geração no n8n');
+
+    } catch (error: any) {
+      console.error(error);
+      setErrorMessage(error.message || 'Erro ao iniciar geração.');
       setGenerationStatus('failed');
-      setErrorMessage(err.message || 'Erro ao iniciar geração.');
+      setLoading(false);
     }
   };
 
@@ -261,9 +292,11 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
     }
   };
 
+  if (!isOpen) return null;
+
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
         
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gradient-to-r from-pink-50 to-purple-50">
@@ -324,162 +357,203 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
             </button>
           </div>
 
-          {/* Input Mode Tabs */}
-          {postType !== 'REELS' && (
-            <div className="flex bg-gray-100 p-1 rounded-lg mb-6">
-              <button
-                type="button"
-                onClick={() => setInputMode('UPLOAD')}
-                className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-all ${
-                  inputMode === 'UPLOAD' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                <LinkIcon size={16} />
-                Link / Upload
-              </button>
-              <button
-                type="button"
-                onClick={() => setInputMode('GENERATE')}
-                className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-all ${
-                  inputMode === 'GENERATE' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                <Sparkles size={16} />
-                Gerar com IA
-              </button>
+          {/* Input Mode Selector */}
+          <div className="flex bg-gray-100 p-1 rounded-xl mb-6">
+            <button
+              onClick={() => setInputMode('UPLOAD')}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-all ${
+                inputMode === 'UPLOAD' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <LinkIcon size={16} /> Link / Upload
+            </button>
+            <button
+              onClick={() => setInputMode('GENERATE')}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-all ${
+                inputMode === 'GENERATE' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Wand2 size={16} /> Gerar com IA
+            </button>
+            <button
+              onClick={() => setInputMode('GALLERY')}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-all ${
+                inputMode === 'GALLERY' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <LayoutGrid size={16} /> Galeria
+            </button>
+          </div>
+
+          {/* --- MODE: GALLERY --- */}
+          {inputMode === 'GALLERY' && (
+            <div className="space-y-4 animate-fade-in">
+              <div className="flex justify-between items-center mb-2">
+                <h3 className="text-sm font-bold text-gray-700 flex items-center gap-2">
+                  <ImageIcon size={16} className="text-blue-500" />
+                  Imagens Geradas para {channelConfig?.name}
+                </h3>
+                <button 
+                  onClick={fetchGalleryImages} 
+                  className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                >
+                  <RefreshCw size={12} className={loadingGallery ? "animate-spin" : ""} /> Atualizar
+                </button>
+              </div>
+
+              {loadingGallery ? (
+                <div className="flex justify-center py-12">
+                  <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+                </div>
+              ) : galleryImages.length === 0 ? (
+                <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-300">
+                  <ImageIcon className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                  <p className="text-gray-500 font-medium">Nenhuma imagem encontrada</p>
+                  <p className="text-xs text-gray-400 mt-1">Gere novas imagens na aba "Gerar com IA"</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-[400px] overflow-y-auto pr-1">
+                  {galleryImages.map((img) => (
+                    <button
+                      key={img.id}
+                      onClick={() => handleSelectFromGallery(img)}
+                      className="group relative aspect-square rounded-lg overflow-hidden border border-gray-200 hover:ring-2 hover:ring-blue-500 transition-all text-left"
+                    >
+                      <img 
+                        src={img.image_url} 
+                        alt={img.prompt} 
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2">
+                        <p className="text-white text-[10px] line-clamp-2 font-medium">{img.prompt}</p>
+                        <span className="text-[9px] text-gray-300 mt-1 flex items-center gap-1">
+                          <Calendar size={10} />
+                          {new Date(img.created_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
-          {/* GENERATION MODE */}
-          {inputMode === 'GENERATE' && postType !== 'REELS' ? (
+          {/* --- MODE: GENERATE --- */}
+          {inputMode === 'GENERATE' && (
             <div className="space-y-4 animate-fade-in">
-              
               {/* Format Selector */}
-              {postType === 'IMAGE' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Formato da Imagem
-                  </label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setImageFormat('SQUARE')}
-                      className={`flex items-center justify-center gap-2 p-3 rounded-lg border transition-all ${
-                        imageFormat === 'SQUARE'
-                          ? 'bg-purple-50 border-purple-200 text-purple-700 ring-1 ring-purple-500'
-                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
-                      }`}
-                    >
-                      <Square size={18} />
-                      <div className="text-left">
-                        <span className="block text-xs font-bold">Quadrado</span>
-                        <span className="block text-[10px] opacity-70">1:1 (1080x1080)</span>
-                      </div>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setImageFormat('PORTRAIT')}
-                      className={`flex items-center justify-center gap-2 p-3 rounded-lg border transition-all ${
-                        imageFormat === 'PORTRAIT'
-                          ? 'bg-purple-50 border-purple-200 text-purple-700 ring-1 ring-purple-500'
-                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
-                      }`}
-                    >
-                      <RectangleVertical size={18} />
-                      <div className="text-left">
-                        <span className="block text-xs font-bold">Vertical</span>
-                        <span className="block text-[10px] opacity-70">4:5 (1080x1350)</span>
-                      </div>
-                    </button>
-                  </div>
-                </div>
-              )}
-
               <div>
-                <div className="flex justify-between items-end mb-2">
-                  <label className="block text-sm font-medium text-gray-700">
-                    Prompt da Imagem
-                  </label>
-                  {channelSettings && (
-                    <span className="text-[10px] text-gray-400 flex items-center gap-1 bg-gray-50 px-2 py-1 rounded-full border border-gray-100">
-                      <Bot size={10} />
-                      IA: {channelSettings.ai_provider.toUpperCase()}
+                <label className="block text-sm font-medium text-gray-700 mb-2">Formato da Imagem</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setImageFormat('SQUARE')}
+                    className={`flex items-center justify-center gap-2 p-3 rounded-lg border ${
+                      imageFormat === 'SQUARE' 
+                        ? 'border-purple-500 bg-purple-50 text-purple-700' 
+                        : 'border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    <Square size={18} />
+                    <div className="text-left">
+                      <div className="text-sm font-bold">Quadrado</div>
+                      <div className="text-[10px] opacity-70">1:1 (1080x1080)</div>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setImageFormat('PORTRAIT')}
+                    className={`flex items-center justify-center gap-2 p-3 rounded-lg border ${
+                      imageFormat === 'PORTRAIT' 
+                        ? 'border-purple-500 bg-purple-50 text-purple-700' 
+                        : 'border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    <RectangleVertical size={18} />
+                    <div className="text-left">
+                      <div className="text-sm font-bold">Vertical</div>
+                      <div className="text-[10px] opacity-70">4:5 (1080x1350)</div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Prompt Input */}
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block text-sm font-medium text-gray-700">Prompt da Imagem</label>
+                  {channelSettings?.ai_provider && (
+                    <span className="text-[10px] bg-gray-100 px-2 py-0.5 rounded-full text-gray-500 flex items-center gap-1">
+                      <Bot size={10} /> IA: {channelSettings.ai_provider.toUpperCase()}
                     </span>
                   )}
                 </div>
+                <textarea
+                  rows={3}
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="Descreva a imagem que você quer criar... Ex: Uma paisagem futurista cyberpunk com neon rosa e azul."
+                  className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all text-sm resize-none"
+                />
                 
-                <div className="relative group">
-                  <textarea
-                    rows={4}
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    placeholder="Descreva a imagem que você quer criar... Ex: Uma paisagem futurista cyberpunk com neon rosa e azul."
-                    className="block w-full px-3 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all text-sm resize-none shadow-sm"
-                    disabled={generationStatus === 'pending'}
-                  />
-                  
-                  {/* Magic Wand Button - Floating inside textarea */}
+                {/* Magic Enhance Button */}
+                <div className="mt-2 flex justify-end">
                   <button
                     type="button"
                     onClick={handleEnhancePrompt}
-                    disabled={!prompt.trim() || isEnhancing || generationStatus === 'pending'}
-                    className="absolute bottom-3 right-3 flex items-center gap-1.5 bg-white/90 hover:bg-purple-50 text-purple-600 border border-purple-100 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed backdrop-blur-sm"
-                    title="Melhorar prompt com IA do Canal"
+                    disabled={isEnhancing || !prompt.trim()}
+                    className="text-xs flex items-center gap-1 text-purple-600 hover:text-purple-800 disabled:opacity-50 transition-colors font-medium px-2 py-1 rounded hover:bg-purple-50"
                   >
-                    {isEnhancing ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+                    {isEnhancing ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
                     {isEnhancing ? 'Melhorando...' : 'Mágica'}
                   </button>
                 </div>
 
-                {/* AI Suggestions */}
+                {/* Enhanced Suggestions */}
                 {enhancedPrompts.length > 0 && (
                   <div className="mt-3 space-y-2 animate-fade-in">
                     <p className="text-xs font-bold text-gray-500 flex items-center gap-1">
-                      <Lightbulb size={12} className="text-yellow-500" />
-                      Sugestões da IA:
+                      <Lightbulb size={12} /> Sugestões:
                     </p>
-                    <div className="space-y-2">
-                      {enhancedPrompts.map((suggestion, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => {
-                            setPrompt(suggestion);
-                            setEnhancedPrompts([]);
-                          }}
-                          className="w-full text-left text-xs p-3 bg-gradient-to-r from-purple-50 to-white hover:from-purple-100 hover:to-purple-50 text-purple-900 rounded-lg border border-purple-100 transition-all shadow-sm hover:shadow-md group"
-                        >
-                          <span className="font-medium">{suggestion}</span>
-                        </button>
-                      ))}
-                    </div>
+                    {enhancedPrompts.map((suggestion, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setPrompt(suggestion)}
+                        className="w-full text-left text-xs p-2 bg-purple-50 hover:bg-purple-100 text-purple-800 rounded border border-purple-100 transition-colors"
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
 
-              {generationStatus === 'pending' && (
-                <div className="bg-purple-50 border border-purple-100 rounded-xl p-6 flex flex-col items-center justify-center text-center animate-pulse">
-                  <Loader2 size={32} className="text-purple-600 animate-spin mb-3" />
-                  <h3 className="text-purple-900 font-bold">Criando sua arte...</h3>
-                  <p className="text-purple-600 text-sm mt-1">Isso pode levar alguns segundos.</p>
-                </div>
-              )}
-
-              {generationStatus !== 'pending' && (
-                <button
-                  type="button"
-                  onClick={handleGenerate}
-                  disabled={!prompt.trim()}
-                  className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg shadow-purple-500/30 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
-                >
-                  <Wand2 size={18} />
-                  Gerar Imagem
-                </button>
-              )}
+              {/* Generate Button */}
+              <button
+                type="button"
+                onClick={handleGenerateImage}
+                disabled={loading || !prompt.trim() || generationStatus === 'pending'}
+                className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg shadow-purple-500/30 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
+              >
+                {generationStatus === 'pending' ? (
+                  <>
+                    <Loader2 size={18} className="animate-spin" />
+                    Gerando Imagem...
+                  </>
+                ) : (
+                  <>
+                    <Wand2 size={18} />
+                    Gerar Imagem
+                  </>
+                )}
+              </button>
             </div>
-          ) : (
-            /* UPLOAD / PREVIEW MODE */
+          )}
+
+          {/* --- MODE: UPLOAD (DEFAULT) --- */}
+          {inputMode === 'UPLOAD' && (
             <form onSubmit={handleSubmit} className="space-y-4 animate-fade-in">
               
               {/* Media URL Input */}
@@ -501,7 +575,7 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
                   />
                 </div>
                 <p className="text-[10px] text-gray-500 mt-1">
-                  A URL deve ser pública. {generationStatus === 'completed' && <span className="text-green-600 font-bold">Imagem gerada por IA carregada!</span>}
+                  A URL deve ser pública (ex: S3, Supabase Storage, Link direto). O Instagram precisa baixar o arquivo.
                 </p>
               </div>
 
@@ -514,17 +588,13 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
                     <video src={mediaUrl} className="max-h-64 rounded shadow-sm" controls onError={(e) => (e.currentTarget.style.display = 'none')} />
                   )}
                   
-                  {/* Quick Action to Regenerate if it came from AI */}
-                  {generationStatus === 'completed' && (
-                    <button
-                      type="button"
-                      onClick={() => setInputMode('GENERATE')}
-                      className="absolute top-4 right-4 bg-white/90 hover:bg-white text-gray-700 p-2 rounded-full shadow-md transition-all opacity-0 group-hover:opacity-100"
-                      title="Gerar Novamente"
-                    >
-                      <RefreshCw size={16} />
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => setMediaUrl('')}
+                    className="absolute top-2 right-2 bg-white/80 hover:bg-white text-red-500 p-1 rounded-full shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <X size={16} />
+                  </button>
                 </div>
               )}
 
