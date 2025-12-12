@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { Play, Calendar, CheckCircle2, AlertCircle, MoreVertical, Trash2, Edit, Share2, Loader2, Filter, Search } from 'lucide-react';
+import { Calendar, CheckCircle2, Share2, Loader2, Search, AlertTriangle } from 'lucide-react';
 import PostModal, { Video } from './PostModal';
 import VideoSmartPreview from './VideoSmartPreview';
+import { initializeGoogleApi, requestGoogleAuth, uploadVideoToYouTube } from '../lib/googleUpload';
 
 const ShortsVideos: React.FC = () => {
   const [videos, setVideos] = useState<Video[]>([]);
@@ -11,6 +12,16 @@ const ShortsVideos: React.FC = () => {
   const [isPosting, setIsPosting] = useState(false);
   const [filter, setFilter] = useState<'all' | 'pending' | 'posted' | 'failed'>('all');
   const [searchTerm, setSearchTerm] = useState('');
+
+  // Inicializa a API do Google ao carregar a página
+  useEffect(() => {
+    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+    if (clientId) {
+      initializeGoogleApi(clientId).catch(err => console.error("Falha ao iniciar Google API:", err));
+    } else {
+      console.warn("VITE_GOOGLE_CLIENT_ID não encontrado no .env");
+    }
+  }, []);
 
   const fetchVideos = async () => {
     setLoading(true);
@@ -42,17 +53,17 @@ const ShortsVideos: React.FC = () => {
   const handlePostVideo = async (video: Video, options: { scheduleDate?: string; webhookUrl?: string; method: 'webhook' | 'api'; privacyStatus?: string }) => {
     const { scheduleDate, webhookUrl, method, privacyStatus } = options;
     
-    // VALIDAÇÃO CORRIGIDA: Só exige webhook se o método for webhook
-    if (method === 'webhook' && !webhookUrl) {
-      alert("Erro: URL do Webhook não está definida.");
-      return;
-    }
-
     setIsPosting(true);
 
     try {
+      // =================================================================================
+      // FLUXO 1: WEBHOOK (n8n/Make)
+      // =================================================================================
       if (method === 'webhook') {
-        // --- Lógica via Webhook (n8n/Make) ---
+        if (!webhookUrl) {
+          throw new Error("URL do Webhook não foi fornecida. Verifique a configuração do canal.");
+        }
+
         const payload = {
           video_id: video.id,
           title: video.title,
@@ -60,34 +71,55 @@ const ShortsVideos: React.FC = () => {
           link_s3: video.link_s3,
           channel: video.channel,
           schedule_date: scheduleDate,
-          privacy_status: privacyStatus || 'private', // Passa o status mesmo no webhook, caso o n8n use
+          privacy_status: privacyStatus || 'private',
           hashtags: video.hashtags
         };
 
-        const response = await fetch(webhookUrl!, {
+        const response = await fetch(webhookUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
 
-        if (!response.ok) throw new Error('Falha ao enviar para o Webhook');
+        if (!response.ok) throw new Error(`Erro no Webhook: ${response.statusText}`);
+      
+      // =================================================================================
+      // FLUXO 2: API DIRETA (YouTube Data API v3 + OAuth)
+      // =================================================================================
+      } else if (method === 'api') {
+        
+        // 1. Verifica Client ID no .env
+        const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+        if (!clientId) {
+          throw new Error("VITE_GOOGLE_CLIENT_ID não configurado no arquivo .env");
+        }
 
-      } else {
-        // --- Lógica via API Direta (Simulação/Placeholder) ---
-        // Nota: Upload direto via browser requer OAuth2 token do usuário.
-        // Como não temos o token aqui neste momento, vamos simular o sucesso 
-        // ou chamar uma Edge Function se estivesse configurada.
+        // 2. Autenticação (Popup do Google)
+        console.log("Solicitando autenticação Google...");
+        const accessToken = await requestGoogleAuth();
         
-        console.log("Enviando via API Direta:", { video, privacyStatus, scheduleDate });
-        
-        // Por enquanto, apenas atualizamos o banco para simular o fluxo, 
-        // já que a implementação completa de OAuth2 client-side é complexa sem backend.
-        // Se você tiver uma Edge Function para isso, a chamada seria aqui.
-        
-        await new Promise(resolve => setTimeout(resolve, 1500)); // Fake delay
+        // 3. Download do Vídeo (Blob)
+        console.log("Baixando vídeo do S3 para upload...");
+        const videoResponse = await fetch(video.link_s3);
+        if (!videoResponse.ok) throw new Error("Não foi possível baixar o vídeo original para upload.");
+        const videoBlob = await videoResponse.blob();
+
+        // 4. Upload Resumable para o YouTube
+        console.log("Iniciando upload para o YouTube...");
+        await uploadVideoToYouTube(videoBlob, accessToken, {
+          title: video.title,
+          description: video.description || '',
+          privacyStatus: (privacyStatus as 'private' | 'public' | 'unlisted') || 'private',
+          publishAt: scheduleDate,
+          tags: video.hashtags
+        });
+
+        console.log("Upload via API concluído com sucesso!");
       }
 
-      // Atualiza status no Supabase
+      // =================================================================================
+      // ATUALIZAÇÃO DO BANCO (Comum a ambos)
+      // =================================================================================
       const { error } = await supabase
         .from('shorts_youtube')
         .update({ 
@@ -98,14 +130,14 @@ const ShortsVideos: React.FC = () => {
         .eq('id', video.id);
 
       if (error) throw error;
-
-      alert(scheduleDate ? "Agendamento realizado com sucesso!" : "Vídeo enviado com sucesso!");
+      
       setSelectedVideo(null);
       fetchVideos();
+      // Sucesso silencioso (sem alert intrusivo), o modal fecha e a lista atualiza
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('Erro ao postar:', error);
-      alert("Erro ao processar o envio. Verifique o console.");
+      alert(`Erro: ${error.message || "Falha desconhecida no processo."}`);
     } finally {
       setIsPosting(false);
     }
