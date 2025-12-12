@@ -11,6 +11,7 @@ interface Video {
   youtube_id?: string;
   publish_at?: string;
   channel?: string;
+  hashtags?: string[];
 }
 
 type ViewMode = 'grid' | 'list';
@@ -37,16 +38,29 @@ const PostedVideos: React.FC = () => {
     fetchPostedVideos();
   }, []);
 
+  // Função auxiliar para limpar o ID do YouTube
+  const cleanYoutubeId = (id: string | undefined) => {
+    if (!id) return undefined;
+    const cleanId = id.trim();
+    // Tenta extrair ID de URLs comuns (caso tenha sido salvo errado)
+    const urlMatch = cleanId.match(/[?&]v=([^&]+)/);
+    if (urlMatch) return urlMatch[1];
+    const shortMatch = cleanId.match(/youtu\.be\/([^?]+)/);
+    if (shortMatch) return shortMatch[1];
+    // Retorna o ID limpo (ex: RkqEHcJBxIE)
+    return cleanId;
+  };
+
   const fetchPostedVideos = async () => {
     setLoading(true);
     setError(null);
     try {
       const now = new Date().toISOString();
       
-      // Busca vídeos postados (data passada ou nula)
+      // 1. Busca vídeos postados
       const { data: videosData, error: videosError } = await supabase
         .from('shorts_youtube')
-        .select('id, link_s3, title, description, youtube_id, publish_at, channel')
+        .select('id, link_s3, title, description, youtube_id, publish_at, channel, hashtags')
         .eq('failed', false)
         .eq('status', 'Posted')
         .or(`publish_at.lte.${now},publish_at.is.null`)
@@ -60,40 +74,37 @@ const PostedVideos: React.FC = () => {
       
       setVideos(validVideos);
 
-      // Busca stats do YouTube
+      // 2. Busca QUALQUER chave de API válida nas configurações
+      // Para estatísticas públicas, não precisamos da chave específica do canal dono do vídeo.
       const { data: settingsData } = await supabase
         .from('shorts_settings')
-        .select('channel, youtube_api_key');
+        .select('youtube_api_key')
+        .neq('youtube_api_key', null);
       
-      const channelKeys: Record<string, string> = {};
-      if (settingsData) {
-        settingsData.forEach(s => {
-          if (s.channel && s.youtube_api_key) {
-            channelKeys[s.channel.trim().toLowerCase()] = s.youtube_api_key;
+      // Pega a primeira chave válida encontrada
+      const validApiKey = settingsData?.find(s => s.youtube_api_key && s.youtube_api_key.length > 10)?.youtube_api_key;
+
+      if (!validApiKey) {
+        console.warn("Nenhuma API Key do YouTube encontrada. As estatísticas não serão carregadas.");
+        // Não é um erro crítico, apenas não carrega stats
+      } else {
+        // 3. Coleta TODOS os IDs de vídeo para buscar de uma vez
+        const allVideoIds: string[] = [];
+        
+        validVideos.forEach(v => {
+          const cleanId = cleanYoutubeId(v.youtube_id);
+          if (cleanId) {
+            allVideoIds.push(cleanId);
           }
         });
+
+        // 4. Busca estatísticas em lote usando a chave encontrada
+        if (allVideoIds.length > 0) {
+          const uniqueIds = [...new Set(allVideoIds)];
+          const stats = await fetchYouTubeStats(uniqueIds, validApiKey);
+          setVideoStats(stats);
+        }
       }
-
-      const videosByChannel: Record<string, string[]> = {};
-      validVideos.forEach(v => {
-        const normalizedChannelName = v.channel ? v.channel.trim().toLowerCase() : '';
-        if (v.youtube_id && normalizedChannelName && channelKeys[normalizedChannelName]) {
-          const apiKey = channelKeys[normalizedChannelName];
-          if (!videosByChannel[apiKey]) videosByChannel[apiKey] = [];
-          videosByChannel[apiKey].push(v.youtube_id);
-        }
-      });
-
-      const allStats: Record<string, YouTubeStats> = {};
-      const promises = Object.entries(videosByChannel).map(async ([apiKey, ids]) => {
-        if (apiKey) {
-          const channelStats = await fetchYouTubeStats(ids, apiKey);
-          Object.assign(allStats, channelStats);
-        }
-      });
-
-      await Promise.all(promises);
-      setVideoStats(allStats);
 
     } catch (err: any) {
       setError('Não foi possível carregar os vídeos postados.');
@@ -106,13 +117,9 @@ const PostedVideos: React.FC = () => {
   // Lógica de Filtragem
   const filteredVideos = useMemo(() => {
     return videos.filter(video => {
-      // Filtro de Texto (Título)
       const matchesSearch = video.title?.toLowerCase().includes(searchTerm.toLowerCase());
-      
-      // Filtro de Canal
       const matchesChannel = selectedChannel ? video.channel === selectedChannel : true;
 
-      // Filtro de Data (Publish At)
       let matchesDate = true;
       if (dateStart || dateEnd) {
         if (!video.publish_at) return false;
@@ -128,7 +135,6 @@ const PostedVideos: React.FC = () => {
     });
   }, [videos, searchTerm, selectedChannel, dateStart, dateEnd]);
 
-  // Lista única de canais para o dropdown
   const uniqueChannels = useMemo(() => {
     const channels = videos.map(v => v.channel).filter(Boolean);
     return Array.from(new Set(channels)).sort();
@@ -162,21 +168,16 @@ const PostedVideos: React.FC = () => {
 
   const handleDownload = async (url: string, title: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    
     if (!url) {
       alert('URL inválida para download');
       return;
     }
-
     try {
       document.body.style.cursor = 'wait';
-      
       const response = await fetch(url);
       if (!response.ok) throw new Error('Falha no download');
-      
       const blob = await response.blob();
       const blobUrl = window.URL.createObjectURL(blob);
-      
       const link = document.createElement('a');
       link.href = blobUrl;
       const safeTitle = (title || 'video').replace(/[^a-z0-9]/gi, '_').toLowerCase();
@@ -184,11 +185,9 @@ const PostedVideos: React.FC = () => {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      
       setTimeout(() => window.URL.revokeObjectURL(blobUrl), 100);
     } catch (error) {
       console.error('Erro no download:', error);
-      // Fallback: tenta abrir em nova aba se o download direto falhar
       window.open(url, '_blank');
     } finally {
       document.body.style.cursor = 'default';
@@ -198,10 +197,8 @@ const PostedVideos: React.FC = () => {
   const startEditingDate = (video: Video, e: React.MouseEvent) => {
     e.stopPropagation();
     setEditingDateId(video.id);
-    // Formata a data para o input datetime-local (YYYY-MM-DDThh:mm)
     if (video.publish_at) {
       const date = new Date(video.publish_at);
-      // Ajuste simples para fuso horário local no input
       const offset = date.getTimezoneOffset() * 60000;
       const localISOTime = (new Date(date.getTime() - offset)).toISOString().slice(0, 16);
       setNewDateValue(localISOTime);
@@ -213,27 +210,19 @@ const PostedVideos: React.FC = () => {
   const saveDate = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!newDateValue) return;
-
     try {
       const isoDate = new Date(newDateValue).toISOString();
-      
       const { error } = await supabase
         .from('shorts_youtube')
         .update({ publish_at: isoDate })
         .eq('id', id);
 
       if (error) throw error;
-
-      // Atualiza localmente
       setVideos(videos.map(v => v.id === id ? { ...v, publish_at: isoDate } : v));
       setEditingDateId(null);
-      
-      // Se a data for futura, talvez devêssemos remover da lista de "Postados" e mover para "Agendados"?
-      // Por enquanto, apenas atualizamos a visualização. Se o usuário der refresh, o vídeo sumirá daqui se a query filtrar.
       if (new Date(isoDate) > new Date()) {
         alert("Data atualizada para o futuro. Este vídeo aparecerá na aba 'Agendados' após recarregar.");
       }
-
     } catch (err) {
       console.error("Erro ao atualizar data:", err);
       alert("Erro ao salvar a nova data.");
@@ -270,7 +259,7 @@ const PostedVideos: React.FC = () => {
           <PlayCircle size={48} className="mx-auto text-gray-300 mb-4" />
           <h3 className="text-gray-800 text-xl font-semibold">Nenhum vídeo encontrado</h3>
           <p className="text-gray-500 text-sm mt-2">
-            {videos.length > 0 ? 'Tente ajustar os filtros de busca.' : 'Ainda não há vídeos publicados (com data passada).'}
+            {videos.length > 0 ? 'Tente ajustar os filtros de busca.' : 'Ainda não há vídeos publicados.'}
           </p>
           {videos.length > 0 && (
             <button onClick={clearFilters} className="mt-4 text-blue-600 hover:text-blue-700 font-medium text-sm">
@@ -285,7 +274,8 @@ const PostedVideos: React.FC = () => {
       return (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {filteredVideos.map((video) => {
-            const stats = video.youtube_id ? videoStats[video.youtube_id] : null;
+            const cleanId = cleanYoutubeId(video.youtube_id);
+            const stats = cleanId ? videoStats[cleanId] : null;
             const isEditing = editingDateId === video.id;
             
             return (
@@ -363,8 +353,16 @@ const PostedVideos: React.FC = () => {
                     </h3>
                   </div>
                   
-                  {/* YouTube Stats Row */}
-                  <div className="flex items-center gap-2 mb-3 mt-1">
+                  {/* Info Row: Channel & Stats */}
+                  <div className="flex flex-wrap items-center gap-2 mb-3 mt-1 min-h-[24px]">
+                    {/* Canal Badge */}
+                    {video.channel && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-100 truncate max-w-[120px]">
+                        {video.channel}
+                      </span>
+                    )}
+
+                    {/* Stats */}
                     {stats ? (
                       <>
                         <div className="flex items-center gap-1 text-xs font-medium text-gray-600 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100" title="Visualizações">
@@ -376,12 +374,13 @@ const PostedVideos: React.FC = () => {
                           <span>{formatNumber(stats.likeCount)}</span>
                         </div>
                       </>
-                    ) : video.youtube_id ? (
-                      <div className="text-[10px] text-gray-400 italic">
-                        {video.channel ? 'Sem dados' : 'Canal não config.'}
-                      </div>
                     ) : (
-                      <div className="text-[10px] text-gray-300 italic">Não publicado</div>
+                      // Se tiver youtube_id mas não carregou stats, mostra loading ou vazio
+                      video.youtube_id ? (
+                         <div className="flex items-center gap-1 text-[10px] text-gray-400" title="Carregando ou indisponível">
+                           <span>...</span>
+                         </div>
+                      ) : null
                     )}
                   </div>
 
@@ -392,7 +391,7 @@ const PostedVideos: React.FC = () => {
                   <div className="mt-auto pt-4 flex items-center gap-2 border-t border-gray-100">
                     {video.youtube_id ? (
                       <a
-                        href={`https://www.youtube.com/watch?v=${video.youtube_id}`}
+                        href={`https://www.youtube.com/watch?v=${cleanYoutubeId(video.youtube_id)}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         onClick={(e) => e.stopPropagation()}
@@ -436,10 +435,12 @@ const PostedVideos: React.FC = () => {
       );
     }
 
+    // LIST VIEW
     return (
       <div className="space-y-3">
         {filteredVideos.map((video) => {
-          const stats = video.youtube_id ? videoStats[video.youtube_id] : null;
+          const cleanId = cleanYoutubeId(video.youtube_id);
+          const stats = cleanId ? videoStats[cleanId] : null;
           const isEditing = editingDateId === video.id;
 
           return (
@@ -466,8 +467,14 @@ const PostedVideos: React.FC = () => {
                   {video.title || 'Vídeo sem título'}
                 </h3>
                 
-                {/* Stats na Lista */}
-                <div className="flex items-center gap-4 mt-1 mb-1">
+                {/* Stats e Info na Lista */}
+                <div className="flex flex-wrap items-center gap-3 mt-1 mb-1">
+                  {video.channel && (
+                    <span className="text-[10px] font-medium px-2 py-0.5 bg-blue-50 text-blue-700 rounded border border-blue-100">
+                      {video.channel}
+                    </span>
+                  )}
+
                   {stats ? (
                     <>
                       <div className="flex items-center gap-1 text-xs text-gray-500" title="Visualizações">
@@ -479,14 +486,10 @@ const PostedVideos: React.FC = () => {
                         <span>{formatNumber(stats.likeCount)}</span>
                       </div>
                     </>
-                  ) : video.youtube_id ? (
-                    <span className="text-[10px] text-gray-400">
-                       {video.channel ? 'Sem dados' : 'Canal não config.'}
-                    </span>
                   ) : null}
                   
                   {/* Data com Edição */}
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 ml-auto sm:ml-0">
                     {isEditing ? (
                       <div className="flex items-center gap-1 animate-fade-in">
                         <input 
@@ -520,7 +523,7 @@ const PostedVideos: React.FC = () => {
               <div className="flex items-center gap-2 self-end sm:self-center">
                 {video.youtube_id ? (
                   <a
-                    href={`https://www.youtube.com/watch?v=${video.youtube_id}`}
+                    href={`https://www.youtube.com/watch?v=${cleanYoutubeId(video.youtube_id)}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={(e) => e.stopPropagation()}
@@ -697,16 +700,16 @@ const PostedVideos: React.FC = () => {
               </h2>
               
               {/* Stats no Modal */}
-              {selectedVideo.youtube_id && videoStats[selectedVideo.youtube_id] && (
+              {selectedVideo.youtube_id && videoStats[cleanYoutubeId(selectedVideo.youtube_id)!] && (
                 <div className="flex items-center gap-4 mb-4">
                   <div className="flex items-center gap-2 bg-white/10 px-3 py-1.5 rounded-lg">
                     <Eye size={16} className="text-blue-400" />
-                    <span className="font-bold">{formatNumber(videoStats[selectedVideo.youtube_id].viewCount)}</span>
+                    <span className="font-bold">{formatNumber(videoStats[cleanYoutubeId(selectedVideo.youtube_id)!].viewCount)}</span>
                     <span className="text-xs text-gray-400">visualizações</span>
                   </div>
                   <div className="flex items-center gap-2 bg-white/10 px-3 py-1.5 rounded-lg">
                     <ThumbsUp size={16} className="text-green-400" />
-                    <span className="font-bold">{formatNumber(videoStats[selectedVideo.youtube_id].likeCount)}</span>
+                    <span className="font-bold">{formatNumber(videoStats[cleanYoutubeId(selectedVideo.youtube_id)!].likeCount)}</span>
                     <span className="text-xs text-gray-400">curtidas</span>
                   </div>
                 </div>
@@ -719,7 +722,7 @@ const PostedVideos: React.FC = () => {
               <div className="flex flex-col sm:flex-row items-center gap-3 w-full">
                 {selectedVideo.youtube_id ? (
                   <a
-                    href={`https://www.youtube.com/watch?v=${selectedVideo.youtube_id}`}
+                    href={`https://www.youtube.com/watch?v=${cleanYoutubeId(selectedVideo.youtube_id)}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="w-full sm:flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-red-600 hover:bg-red-700 rounded-lg transition-colors font-semibold"
