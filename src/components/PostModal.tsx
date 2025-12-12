@@ -100,7 +100,7 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
       }
 
       const tokenClient = window.google.accounts.oauth2.initTokenClient({
-        client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID || '441621535337-k4fcqj90ovvfp1d9sj6hugj4bqavhhlv.apps.googleusercontent.com',
+        client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
         scope: 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/youtube.force-ssl',
         callback: (response: any) => {
           if (response.error) {
