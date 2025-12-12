@@ -15,4 +15,4 @@ COPY package*.json ./
 COPY --from=build /app/bun.lock* ./
 RUN bun add serve
 EXPOSE 4173
-CMD ["bunx", "serve", "-s", "dist", "-l", "4173"]
+CMD ["bunx", "serve", "-s", "dist", "-l", "4175"]
