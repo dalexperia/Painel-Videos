@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { X, Image as ImageIcon, Film, History, Send, Loader2, AlertCircle, CheckCircle2, Link as LinkIcon, Wand2, Sparkles, RefreshCw, RectangleVertical, Square, Lightbulb } from 'lucide-react';
+import { X, Image as ImageIcon, Film, History, Send, Loader2, AlertCircle, CheckCircle2, Link as LinkIcon, Wand2, Sparkles, RefreshCw, RectangleVertical, Square, Lightbulb, Bot } from 'lucide-react';
 import { publishToInstagram } from '../lib/instagram';
 import { supabase } from '../lib/supabaseClient';
-import { generateContentAI } from '../lib/ai';
-import { useSettingsStore } from '../store/settingsStore';
+import { generateContentAI, AIProvider, AIConfig } from '../lib/ai';
 
 interface InstagramPostModalProps {
   isOpen: boolean;
@@ -21,10 +20,18 @@ type InputMode = 'UPLOAD' | 'GENERATE';
 type GenerationStatus = 'idle' | 'pending' | 'completed' | 'failed';
 type ImageFormat = 'SQUARE' | 'PORTRAIT' | 'STORY';
 
+interface ChannelSettings {
+  ai_provider: AIProvider;
+  gemini_key?: string;
+  groq_key?: string;
+  ollama_url?: string;
+  ollama_key?: string;
+  ai_model?: string;
+}
+
 const WEBHOOK_URL = 'https://n8n-main.oficinadamultape.com.br/webhook/gerar-imagens-insta';
 
 const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose, channelConfig, onSuccess }) => {
-  const { aiConfig } = useSettingsStore();
   
   // UI State
   const [postType, setPostType] = useState<PostType>('IMAGE');
@@ -48,6 +55,7 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
   // Prompt Enhancement State
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [enhancedPrompts, setEnhancedPrompts] = useState<string[]>([]);
+  const [channelSettings, setChannelSettings] = useState<ChannelSettings | null>(null);
 
   // Reset state when modal opens/closes
   useEffect(() => {
@@ -61,8 +69,29 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
       setInputMode('UPLOAD');
       setImageFormat('SQUARE');
       setEnhancedPrompts([]);
+      setChannelSettings(null);
+    } else if (channelConfig) {
+      // Fetch Channel Specific Settings for AI
+      fetchChannelSettings();
     }
-  }, [isOpen]);
+  }, [isOpen, channelConfig]);
+
+  const fetchChannelSettings = async () => {
+    if (!channelConfig) return;
+    try {
+      const { data, error } = await supabase
+        .from('shorts_settings')
+        .select('ai_provider, gemini_key, groq_key, ollama_url, ollama_key, ai_model')
+        .eq('channel', channelConfig.name)
+        .single();
+      
+      if (data) {
+        setChannelSettings(data as ChannelSettings);
+      }
+    } catch (err) {
+      console.error("Erro ao carregar configurações do canal:", err);
+    }
+  };
 
   // Update format automatically when switching Post Type
   useEffect(() => {
@@ -122,15 +151,24 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
     setEnhancedPrompts([]);
     
     try {
+      // Construct Config from Channel Settings
+      const config: AIConfig = {
+        provider: channelSettings?.ai_provider || 'gemini',
+        apiKey: channelSettings?.ai_provider === 'groq' ? channelSettings.groq_key : 
+                channelSettings?.ai_provider === 'ollama' ? channelSettings.ollama_key :
+                channelSettings?.gemini_key,
+        url: channelSettings?.ollama_url,
+        model: channelSettings?.ai_model
+      };
+
       const suggestions = await generateContentAI(
-        aiConfig,
+        config,
         prompt,
         'image_prompt'
       );
       setEnhancedPrompts(suggestions);
     } catch (error) {
       console.error("Erro ao melhorar prompt:", error);
-      // Fallback simples se der erro
       setEnhancedPrompts([
         `Cinematic shot of ${prompt}, highly detailed, 8k resolution, dramatic lighting`,
         `Oil painting of ${prompt}, vivid colors, textured brushstrokes`,
@@ -148,10 +186,9 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
     setErrorMessage(null);
 
     try {
-      // Determine final format based on post type and user selection
       const finalFormat = postType === 'STORIES' ? 'STORY' : imageFormat;
 
-      // 1. Create pending record in Supabase
+      // 1. Create pending record
       const { data, error } = await supabase
         .from('generated_images')
         .insert({
@@ -179,7 +216,7 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
           format: finalFormat
         })
       }).catch(err => {
-        console.error("Webhook trigger error (non-fatal if n8n received it):", err);
+        console.error("Webhook trigger error:", err);
       });
 
     } catch (err: any) {
@@ -287,7 +324,7 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
             </button>
           </div>
 
-          {/* Input Mode Tabs (Only for Image/Stories) */}
+          {/* Input Mode Tabs */}
           {postType !== 'REELS' && (
             <div className="flex bg-gray-100 p-1 rounded-lg mb-6">
               <button
@@ -317,7 +354,7 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
           {inputMode === 'GENERATE' && postType !== 'REELS' ? (
             <div className="space-y-4 animate-fade-in">
               
-              {/* Format Selector (Only for Feed Images) */}
+              {/* Format Selector */}
               {postType === 'IMAGE' && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -360,30 +397,39 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
               )}
 
               <div>
-                <div className="flex justify-between items-center mb-1">
+                <div className="flex justify-between items-end mb-2">
                   <label className="block text-sm font-medium text-gray-700">
                     Prompt da Imagem
                   </label>
-                  <button
-                    type="button"
-                    onClick={handleEnhancePrompt}
-                    disabled={!prompt.trim() || isEnhancing || generationStatus === 'pending'}
-                    className="text-xs flex items-center gap-1 text-purple-600 hover:text-purple-800 font-medium disabled:opacity-50 transition-colors"
-                  >
-                    {isEnhancing ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />}
-                    Melhorar com IA
-                  </button>
+                  {channelSettings && (
+                    <span className="text-[10px] text-gray-400 flex items-center gap-1 bg-gray-50 px-2 py-1 rounded-full border border-gray-100">
+                      <Bot size={10} />
+                      IA: {channelSettings.ai_provider.toUpperCase()}
+                    </span>
+                  )}
                 </div>
                 
-                <div className="relative">
+                <div className="relative group">
                   <textarea
                     rows={4}
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
                     placeholder="Descreva a imagem que você quer criar... Ex: Uma paisagem futurista cyberpunk com neon rosa e azul."
-                    className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all text-sm resize-none"
+                    className="block w-full px-3 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all text-sm resize-none shadow-sm"
                     disabled={generationStatus === 'pending'}
                   />
+                  
+                  {/* Magic Wand Button - Floating inside textarea */}
+                  <button
+                    type="button"
+                    onClick={handleEnhancePrompt}
+                    disabled={!prompt.trim() || isEnhancing || generationStatus === 'pending'}
+                    className="absolute bottom-3 right-3 flex items-center gap-1.5 bg-white/90 hover:bg-purple-50 text-purple-600 border border-purple-100 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed backdrop-blur-sm"
+                    title="Melhorar prompt com IA do Canal"
+                  >
+                    {isEnhancing ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+                    {isEnhancing ? 'Melhorando...' : 'Mágica'}
+                  </button>
                 </div>
 
                 {/* AI Suggestions */}
@@ -402,9 +448,9 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
                             setPrompt(suggestion);
                             setEnhancedPrompts([]);
                           }}
-                          className="w-full text-left text-xs p-2 bg-purple-50 hover:bg-purple-100 text-purple-800 rounded-md border border-purple-100 transition-colors"
+                          className="w-full text-left text-xs p-3 bg-gradient-to-r from-purple-50 to-white hover:from-purple-100 hover:to-purple-50 text-purple-900 rounded-lg border border-purple-100 transition-all shadow-sm hover:shadow-md group"
                         >
-                          {suggestion}
+                          <span className="font-medium">{suggestion}</span>
                         </button>
                       ))}
                     </div>
