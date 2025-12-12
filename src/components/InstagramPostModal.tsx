@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Image as ImageIcon, Film, History, Send, Loader2, AlertCircle, CheckCircle2, Link as LinkIcon, Wand2, Sparkles, RefreshCw } from 'lucide-react';
+import { X, Image as ImageIcon, Film, History, Send, Loader2, AlertCircle, CheckCircle2, Link as LinkIcon, Wand2, Sparkles, RefreshCw, RectangleVertical, Square } from 'lucide-react';
 import { publishToInstagram } from '../lib/instagram';
 import { supabase } from '../lib/supabaseClient';
 
@@ -17,13 +17,15 @@ interface InstagramPostModalProps {
 type PostType = 'IMAGE' | 'REELS' | 'STORIES';
 type InputMode = 'UPLOAD' | 'GENERATE';
 type GenerationStatus = 'idle' | 'pending' | 'completed' | 'failed';
+type ImageFormat = 'SQUARE' | 'PORTRAIT' | 'STORY';
 
-const WEBHOOK_URL = 'https://n8n-main.oficinadamultape.com.br/webhook-test/gerar-imagens-insta';
+const WEBHOOK_URL = 'https://n8n-main.oficinadamultape.com.br/webhook/gerar-imagens-insta';
 
 const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose, channelConfig, onSuccess }) => {
   // UI State
   const [postType, setPostType] = useState<PostType>('IMAGE');
   const [inputMode, setInputMode] = useState<InputMode>('UPLOAD');
+  const [imageFormat, setImageFormat] = useState<ImageFormat>('SQUARE');
   
   // Form Data
   const [mediaUrl, setMediaUrl] = useState('');
@@ -49,8 +51,18 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
       setGenerationStatus('idle');
       setGenerationId(null);
       setInputMode('UPLOAD');
+      setImageFormat('SQUARE');
     }
   }, [isOpen]);
+
+  // Update format automatically when switching Post Type
+  useEffect(() => {
+    if (postType === 'STORIES') {
+      setImageFormat('STORY');
+    } else if (postType === 'IMAGE' && imageFormat === 'STORY') {
+      setImageFormat('SQUARE'); // Reset to square if coming back from stories
+    }
+  }, [postType]);
 
   // Realtime Subscription for Image Generation
   useEffect(() => {
@@ -101,6 +113,9 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
     setErrorMessage(null);
 
     try {
+      // Determine final format based on post type and user selection
+      const finalFormat = postType === 'STORIES' ? 'STORY' : imageFormat;
+
       // 1. Create pending record in Supabase
       const { data, error } = await supabase
         .from('generated_images')
@@ -108,7 +123,7 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
           prompt: prompt,
           channel: channelConfig.name,
           status: 'pending',
-          format: postType === 'STORIES' ? 'STORY' : 'SQUARE' // Default mapping
+          format: finalFormat
         })
         .select()
         .single();
@@ -119,7 +134,6 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
       setGenerationId(data.id);
 
       // 2. Call Webhook
-      // We don't await the result of the generation, just the acknowledgement of the webhook
       fetch(WEBHOOK_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -127,7 +141,7 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
           id: data.id,
           prompt: prompt,
           channel: channelConfig.name,
-          format: postType === 'STORIES' ? 'STORY' : 'SQUARE'
+          format: finalFormat
         })
       }).catch(err => {
         console.error("Webhook trigger error (non-fatal if n8n received it):", err);
@@ -267,6 +281,49 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
           {/* GENERATION MODE */}
           {inputMode === 'GENERATE' && postType !== 'REELS' ? (
             <div className="space-y-4 animate-fade-in">
+              
+              {/* Format Selector (Only for Feed Images) */}
+              {postType === 'IMAGE' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Formato da Imagem
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setImageFormat('SQUARE')}
+                      className={`flex items-center justify-center gap-2 p-3 rounded-lg border transition-all ${
+                        imageFormat === 'SQUARE'
+                          ? 'bg-purple-50 border-purple-200 text-purple-700 ring-1 ring-purple-500'
+                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      <Square size={18} />
+                      <div className="text-left">
+                        <span className="block text-xs font-bold">Quadrado</span>
+                        <span className="block text-[10px] opacity-70">1:1 (1080x1080)</span>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setImageFormat('PORTRAIT')}
+                      className={`flex items-center justify-center gap-2 p-3 rounded-lg border transition-all ${
+                        imageFormat === 'PORTRAIT'
+                          ? 'bg-purple-50 border-purple-200 text-purple-700 ring-1 ring-purple-500'
+                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      <RectangleVertical size={18} />
+                      <div className="text-left">
+                        <span className="block text-xs font-bold">Vertical</span>
+                        <span className="block text-[10px] opacity-70">4:5 (1080x1350)</span>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Prompt da Imagem
