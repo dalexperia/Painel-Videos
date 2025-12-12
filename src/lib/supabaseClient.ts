@@ -4,12 +4,13 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.error('Supabase URL ou Anon Key estão faltando nas variáveis de ambiente (.env).');
+  console.error('ERRO CRÍTICO: Variáveis de ambiente do Supabase estão faltando!');
+  throw new Error('As variáveis VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY são obrigatórias.');
 }
 
-// Cria o cliente mesmo se as chaves faltarem para evitar crash imediato na importação,
-// mas as chamadas falharão se não estiver configurado.
-export const supabase = createClient(
-  supabaseUrl || 'https://placeholder.supabase.co',
-  supabaseAnonKey || 'placeholder-key'
-);
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+  },
+});
