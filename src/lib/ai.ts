@@ -2,7 +2,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import Groq from "groq-sdk";
 
 export type AIProvider = 'gemini' | 'groq' | 'ollama';
-export type GenerationType = 'title' | 'description' | 'tags' | 'hashtags' | 'autocomplete_tags' | 'autocomplete_hashtags';
+export type GenerationType = 'title' | 'description' | 'tags' | 'hashtags' | 'autocomplete_tags' | 'autocomplete_hashtags' | 'image_prompt';
 
 interface AIConfig {
   provider: AIProvider;
@@ -14,7 +14,7 @@ interface AIConfig {
 // --- Prompts Otimizados para JSON ---
 const getSystemInstruction = (type: GenerationType, context?: string): string => {
   const baseInstruction = `
-    Você é um assistente de IA especializado em YouTube.
+    Você é um assistente de IA especializado em YouTube e Criação de Conteúdo.
     REGRAS CRÍTICAS:
     1. Responda APENAS com um ARRAY JSON de strings válido.
     2. NÃO use Markdown.
@@ -50,6 +50,14 @@ const getSystemInstruction = (type: GenerationType, context?: string): string =>
       OBJETIVO: Você é um motor de autocomplete de hashtags.
       CONTEXTO DO VÍDEO: O vídeo é sobre "${context}".
       TAREFA: O usuário digitou um termo parcial. Retorne 5 a 8 hashtags (com #) que completem esse termo.`;
+
+    case 'image_prompt':
+      return `${baseInstruction}
+      OBJETIVO: Você é um Engenheiro de Prompt (Prompt Engineer) especialista em Midjourney e DALL-E 3.
+      TAREFA: Melhore a ideia básica do usuário para criar uma imagem visualmente impressionante.
+      CONTEXTO: O usuário quer uma imagem sobre: "${context}".
+      SAÍDA: Gere 3 variações de prompts detalhados, em INGLÊS (pois as IAs de imagem entendem melhor), focando em iluminação, estilo, câmera e detalhes artísticos.
+      Exemplo de Saída: ["A cinematic shot of a black cat, golden eyes, neon lighting, cyberpunk city background, 8k resolution", "Oil painting of a black cat sleeping on a vintage rug, cozy atmosphere, warm lighting"]`;
     
     default:
       return baseInstruction;
@@ -109,7 +117,7 @@ const generateGroq = async (apiKey: string, prompt: string, type: GenerationType
       { role: "user", content: "Gere o JSON agora." }
     ],
     model: modelId,
-    temperature: 0.3, // Temperatura baixa para autocomplete preciso
+    temperature: 0.7, // Temperatura um pouco maior para criatividade nos prompts
     response_format: { type: "json_object" }
   });
 
@@ -146,21 +154,14 @@ export const generateContentAI = async (
   config: AIConfig,
   prompt: string,
   type: GenerationType,
-  extraContext?: string // Usado para passar o título do vídeo no autocomplete
+  extraContext?: string
 ): Promise<string[]> => {
   
-  // Lógica especial para Autocomplete:
-  // O "prompt" aqui será o termo parcial (ex: "salm")
-  // O "extraContext" será o título do vídeo (ex: "Salmo 91 Oração")
-  // Precisamos passar ambos para o prompt do sistema
-  
   let finalPrompt = prompt;
-  let contextForSystem = prompt; // Default
+  let contextForSystem = prompt;
 
   if (type === 'autocomplete_tags' || type === 'autocomplete_hashtags') {
-    if (!prompt || prompt.length < 2) return []; // Não gera para 1 letra
-    // Para autocomplete, passamos o Título como contexto principal para o System Instruction
-    // E o termo parcial concatenado na instrução
+    if (!prompt || prompt.length < 2) return [];
     contextForSystem = extraContext || "Vídeo Genérico";
     finalPrompt = `Termo parcial digitado pelo usuário: "${prompt}"`;
   }
@@ -170,20 +171,6 @@ export const generateContentAI = async (
   let rawResult = "";
 
   try {
-    // Modificamos as chamadas para passar o contextForSystem corretamente nas instruções
-    // Nota: As funções generate* usam o segundo argumento como input para o getSystemInstruction
-    // Então precisamos garantir que o getSystemInstruction receba o contexto correto.
-    
-    // Hack rápido: As funções generate* chamam getSystemInstruction(type, prompt).
-    // Para autocomplete, vamos passar o contexto no lugar do prompt para a instrução de sistema,
-    // e o termo parcial já está embutido na lógica do switch case acima ou será passado de outra forma.
-    
-    // Vamos ajustar a chamada das funções internas para passar o contexto correto:
-    
-    const promptToUse = (type.includes('autocomplete')) ? contextForSystem : finalPrompt;
-    // Mas espere, o termo parcial precisa ir também.
-    // Vamos concatenar no promptToUse para simplificar sem mudar assinaturas
-    
     const effectivePrompt = (type.includes('autocomplete')) 
       ? `${contextForSystem}. Termo parcial a completar: "${prompt}"`
       : finalPrompt;

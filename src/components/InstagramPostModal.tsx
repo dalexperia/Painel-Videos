@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { X, Image as ImageIcon, Film, History, Send, Loader2, AlertCircle, CheckCircle2, Link as LinkIcon, Wand2, Sparkles, RefreshCw, RectangleVertical, Square } from 'lucide-react';
+import { X, Image as ImageIcon, Film, History, Send, Loader2, AlertCircle, CheckCircle2, Link as LinkIcon, Wand2, Sparkles, RefreshCw, RectangleVertical, Square, Lightbulb } from 'lucide-react';
 import { publishToInstagram } from '../lib/instagram';
 import { supabase } from '../lib/supabaseClient';
+import { generateContentAI } from '../lib/ai';
+import { useSettingsStore } from '../store/settingsStore';
 
 interface InstagramPostModalProps {
   isOpen: boolean;
@@ -22,6 +24,8 @@ type ImageFormat = 'SQUARE' | 'PORTRAIT' | 'STORY';
 const WEBHOOK_URL = 'https://n8n-main.oficinadamultape.com.br/webhook/gerar-imagens-insta';
 
 const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose, channelConfig, onSuccess }) => {
+  const { aiConfig } = useSettingsStore();
+  
   // UI State
   const [postType, setPostType] = useState<PostType>('IMAGE');
   const [inputMode, setInputMode] = useState<InputMode>('UPLOAD');
@@ -40,6 +44,10 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
   // Generation State
   const [generationId, setGenerationId] = useState<string | null>(null);
   const [generationStatus, setGenerationStatus] = useState<GenerationStatus>('idle');
+  
+  // Prompt Enhancement State
+  const [isEnhancing, setIsEnhancing] = useState(false);
+  const [enhancedPrompts, setEnhancedPrompts] = useState<string[]>([]);
 
   // Reset state when modal opens/closes
   useEffect(() => {
@@ -52,6 +60,7 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
       setGenerationId(null);
       setInputMode('UPLOAD');
       setImageFormat('SQUARE');
+      setEnhancedPrompts([]);
     }
   }, [isOpen]);
 
@@ -105,6 +114,32 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
   }, [generationId, generationStatus]);
 
   if (!isOpen) return null;
+
+  const handleEnhancePrompt = async () => {
+    if (!prompt.trim()) return;
+    
+    setIsEnhancing(true);
+    setEnhancedPrompts([]);
+    
+    try {
+      const suggestions = await generateContentAI(
+        aiConfig,
+        prompt,
+        'image_prompt'
+      );
+      setEnhancedPrompts(suggestions);
+    } catch (error) {
+      console.error("Erro ao melhorar prompt:", error);
+      // Fallback simples se der erro
+      setEnhancedPrompts([
+        `Cinematic shot of ${prompt}, highly detailed, 8k resolution, dramatic lighting`,
+        `Oil painting of ${prompt}, vivid colors, textured brushstrokes`,
+        `Futuristic cyberpunk version of ${prompt}, neon lights, high tech atmosphere`
+      ]);
+    } finally {
+      setIsEnhancing(false);
+    }
+  };
 
   const handleGenerate = async () => {
     if (!prompt.trim() || !channelConfig) return;
@@ -325,17 +360,56 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
               )}
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Prompt da Imagem
-                </label>
-                <textarea
-                  rows={4}
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="Descreva a imagem que você quer criar... Ex: Uma paisagem futurista cyberpunk com neon rosa e azul."
-                  className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all text-sm resize-none"
-                  disabled={generationStatus === 'pending'}
-                />
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Prompt da Imagem
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleEnhancePrompt}
+                    disabled={!prompt.trim() || isEnhancing || generationStatus === 'pending'}
+                    className="text-xs flex items-center gap-1 text-purple-600 hover:text-purple-800 font-medium disabled:opacity-50 transition-colors"
+                  >
+                    {isEnhancing ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />}
+                    Melhorar com IA
+                  </button>
+                </div>
+                
+                <div className="relative">
+                  <textarea
+                    rows={4}
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    placeholder="Descreva a imagem que você quer criar... Ex: Uma paisagem futurista cyberpunk com neon rosa e azul."
+                    className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all text-sm resize-none"
+                    disabled={generationStatus === 'pending'}
+                  />
+                </div>
+
+                {/* AI Suggestions */}
+                {enhancedPrompts.length > 0 && (
+                  <div className="mt-3 space-y-2 animate-fade-in">
+                    <p className="text-xs font-bold text-gray-500 flex items-center gap-1">
+                      <Lightbulb size={12} className="text-yellow-500" />
+                      Sugestões da IA:
+                    </p>
+                    <div className="space-y-2">
+                      {enhancedPrompts.map((suggestion, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            setPrompt(suggestion);
+                            setEnhancedPrompts([]);
+                          }}
+                          className="w-full text-left text-xs p-2 bg-purple-50 hover:bg-purple-100 text-purple-800 rounded-md border border-purple-100 transition-colors"
+                        >
+                          {suggestion}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {generationStatus === 'pending' && (
