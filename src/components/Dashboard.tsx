@@ -2,13 +2,14 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { fetchYouTubeStats, fetchChannelStats, formatNumber, YouTubeStats, ChannelStats } from '../lib/youtube';
 import { AutomationMonitor } from './AutomationMonitor';
+import InstagramDashboard from './InstagramDashboard'; // Importando o novo componente
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   PieChart, Pie, Cell, Legend, BarChart, Bar
 } from 'recharts';
 import { 
   Youtube, Calendar, Sparkles, Trash2, AlertCircle, Loader2, 
-  TrendingUp, Activity, Layers, Zap, Eye, ThumbsUp, Trophy, Users, Video
+  TrendingUp, Activity, Layers, Zap, Eye, ThumbsUp, Trophy, Users, Video, Instagram
 } from 'lucide-react';
 
 // --- Utilitários e Configurações ---
@@ -120,6 +121,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 // --- Componente Principal ---
 
 const Dashboard: React.FC = () => {
+  const [activeTab, setActiveTab] = useState<'youtube' | 'instagram'>('youtube'); // Estado para abas
   const [loading, setLoading] = useState(true);
   const [loadingStats, setLoadingStats] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -380,309 +382,337 @@ const Dashboard: React.FC = () => {
           {/* Monitor de Automação */}
           <AutomationMonitor />
 
-          {loadingStats && (
+          {loadingStats && activeTab === 'youtube' && (
             <span className="flex items-center text-xs text-blue-600 bg-blue-50 px-3 py-1 rounded-full animate-pulse">
               <Loader2 size={12} className="mr-1 animate-spin" />
               Atualizando métricas...
             </span>
           )}
-          <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg p-1 shadow-sm">
-            <span className="px-3 py-1 text-xs font-semibold text-brand-700 bg-brand-50 rounded-md">Últimos 7 dias</span>
-          </div>
         </div>
       </div>
 
-      {/* KPI Cards - Produção */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard 
-          title="Postados" 
-          value={globalStats.posted} 
-          icon={<Youtube size={24} />} 
-          colorClass="text-green-600"
-          bgClass="bg-green-100"
-        />
-        <StatCard 
-          title="Agendados" 
-          value={globalStats.scheduled} 
-          icon={<Calendar size={24} />} 
-          colorClass="text-purple-600"
-          bgClass="bg-purple-100"
-        />
-        <StatCard 
-          title="Recentes" 
-          value={globalStats.recent} 
-          icon={<Sparkles size={24} />} 
-          colorClass="text-blue-600"
-          bgClass="bg-blue-100"
-        />
-        <StatCard 
-          title="Reprovados" 
-          value={globalStats.reproved} 
-          icon={<Trash2 size={24} />} 
-          colorClass="text-red-600"
-          bgClass="bg-red-100"
-        />
+      {/* Tab Switcher */}
+      <div className="flex border-b border-gray-200">
+        <button
+          onClick={() => setActiveTab('youtube')}
+          className={`pb-4 px-6 font-medium text-sm transition-colors relative flex items-center gap-2 ${
+            activeTab === 'youtube' ? 'text-red-600' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Youtube size={18} />
+          YouTube
+          {activeTab === 'youtube' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-red-600 rounded-t-full" />}
+        </button>
+        <button
+          onClick={() => setActiveTab('instagram')}
+          className={`pb-4 px-6 font-medium text-sm transition-colors relative flex items-center gap-2 ${
+            activeTab === 'instagram' ? 'text-pink-600' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Instagram size={18} />
+          Instagram
+          {activeTab === 'instagram' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-pink-600 rounded-t-full" />}
+        </button>
       </div>
 
-      {/* Seção de Métricas Oficiais dos Canais (NOVO) */}
-      {channelRealStats.length > 0 && (
-        <div className="animate-fade-in">
-          <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2 mb-4">
-            <Users size={20} className="text-brand-500" />
-            Métricas Oficiais dos Canais
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {channelRealStats.map((stats) => (
-              <ChannelCard key={stats.id} stats={stats} />
-            ))}
+      {/* Conteúdo das Abas */}
+      {activeTab === 'instagram' ? (
+        <InstagramDashboard />
+      ) : (
+        <div className="space-y-8 animate-fade-in">
+          {/* KPI Cards - Produção */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            <StatCard 
+              title="Postados" 
+              value={globalStats.posted} 
+              icon={<Youtube size={24} />} 
+              colorClass="text-green-600"
+              bgClass="bg-green-100"
+            />
+            <StatCard 
+              title="Agendados" 
+              value={globalStats.scheduled} 
+              icon={<Calendar size={24} />} 
+              colorClass="text-purple-600"
+              bgClass="bg-purple-100"
+            />
+            <StatCard 
+              title="Recentes" 
+              value={globalStats.recent} 
+              icon={<Sparkles size={24} />} 
+              colorClass="text-blue-600"
+              bgClass="bg-blue-100"
+            />
+            <StatCard 
+              title="Reprovados" 
+              value={globalStats.reproved} 
+              icon={<Trash2 size={24} />} 
+              colorClass="text-red-600"
+              bgClass="bg-red-100"
+            />
+          </div>
+
+          {/* Seção de Métricas Oficiais dos Canais (NOVO) */}
+          {channelRealStats.length > 0 && (
+            <div className="animate-fade-in">
+              <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2 mb-4">
+                <Users size={20} className="text-brand-500" />
+                Métricas Oficiais dos Canais
+              </h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {channelRealStats.map((stats) => (
+                  <ChannelCard key={stats.id} stats={stats} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* KPI Cards - Performance (Vídeos) */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-gradient-to-br from-indigo-600 to-blue-700 rounded-2xl p-6 text-white shadow-lg relative overflow-hidden">
+              <div className="absolute top-0 right-0 p-4 opacity-10">
+                <Eye size={100} />
+              </div>
+              <div className="relative z-10">
+                <div className="flex items-center gap-2 mb-2 opacity-90">
+                  <Eye size={20} />
+                  <span className="font-medium">Views em Vídeos Rastreados</span>
+                </div>
+                <div className="text-4xl font-bold mb-1">
+                  {loadingStats ? '...' : formatNumber(globalStats.views.toString())}
+                </div>
+                <p className="text-sm opacity-75">Soma dos vídeos no banco de dados</p>
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-center">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="p-2 bg-pink-100 text-pink-600 rounded-lg">
+                  <ThumbsUp size={20} />
+                </div>
+                <span className="text-gray-500 font-medium">Total de Curtidas</span>
+              </div>
+              <div className="text-3xl font-bold text-gray-900">
+                {loadingStats ? '...' : formatNumber(globalStats.likes.toString())}
+              </div>
+              <p className="text-xs text-gray-400 mt-1">Engajamento positivo</p>
+            </div>
+
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-center">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="p-2 bg-yellow-100 text-yellow-600 rounded-lg">
+                  <Trophy size={20} />
+                </div>
+                <span className="text-gray-500 font-medium">Melhor Canal (Views)</span>
+              </div>
+              <div className="text-2xl font-bold text-gray-900 truncate">
+                {viewsByChannelData.length > 0 ? viewsByChannelData[0].name : '-'}
+              </div>
+              <p className="text-xs text-gray-400 mt-1">
+                {viewsByChannelData.length > 0 
+                  ? `${formatNumber(viewsByChannelData[0].views.toString())} visualizações` 
+                  : 'Sem dados'}
+              </p>
+            </div>
+          </div>
+
+          {/* Main Charts Section */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            {/* Timeline Chart (Produção) */}
+            <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                    <Activity size={20} className="text-brand-500" />
+                    Produção por Canal
+                  </h2>
+                  <p className="text-sm text-gray-500">Volume de vídeos criados nos últimos 7 dias</p>
+                </div>
+              </div>
+              
+              <div className="h-[300px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={timelineData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <defs>
+                      {channelStats.map((channel, index) => (
+                        <linearGradient key={channel.name} id={`color${index}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor={getChannelColor(channel.name, index)} stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor={getChannelColor(channel.name, index)} stopOpacity={0}/>
+                        </linearGradient>
+                      ))}
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                    <XAxis 
+                      dataKey="name" 
+                      axisLine={false} 
+                      tickLine={false} 
+                      tick={{ fill: '#9ca3af', fontSize: 12 }} 
+                      dy={10}
+                    />
+                    <YAxis 
+                      axisLine={false} 
+                      tickLine={false} 
+                      tick={{ fill: '#9ca3af', fontSize: 12 }} 
+                    />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Legend iconType="circle" wrapperStyle={{ paddingTop: '20px' }} />
+                    
+                    {channelStats.map((channel, index) => (
+                      <Area
+                        key={channel.name}
+                        type="monotone"
+                        dataKey={channel.name}
+                        stackId="1"
+                        stroke={getChannelColor(channel.name, index)}
+                        fill={`url(#color${index})`}
+                        strokeWidth={2}
+                      />
+                    ))}
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Top Videos List (Ranking) */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col">
+              <div className="mb-4">
+                <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                  <Trophy size={20} className="text-yellow-500" />
+                  Top 5 Vídeos
+                </h2>
+                <p className="text-sm text-gray-500">Melhor performance</p>
+              </div>
+
+              <div className="flex-grow overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+                {topVideos.length > 0 ? (
+                  topVideos.map((video, index) => (
+                    <div key={video.id} className="flex items-start gap-3 p-3 rounded-xl bg-gray-50 hover:bg-gray-100 transition-colors border border-gray-100">
+                      <div className="flex-shrink-0 w-8 h-8 flex items-center justify-center bg-white rounded-full font-bold text-gray-400 shadow-sm text-sm">
+                        #{index + 1}
+                      </div>
+                      <div className="min-w-0 flex-grow">
+                        <p className="text-sm font-semibold text-gray-900 truncate" title={video.title}>
+                          {video.title || 'Sem título'}
+                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-[10px] px-1.5 py-0.5 bg-white rounded border border-gray-200 text-gray-500 truncate max-w-[80px]">
+                            {video.channel}
+                          </span>
+                          <div className="flex items-center gap-1 text-xs font-medium text-blue-600">
+                            <Eye size={10} />
+                            {formatNumber(video.views.toString())}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center text-gray-400 text-sm">
+                    <Activity size={32} className="mb-2 opacity-20" />
+                    <p>Sem dados de visualização ainda.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Secondary Charts Section */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            
+            {/* Views per Channel (Bar Chart) */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+              <div className="mb-6">
+                <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                  <Zap size={20} className="text-brand-500" />
+                  Audiência por Canal
+                </h2>
+                <p className="text-sm text-gray-500">Comparativo de visualizações totais</p>
+              </div>
+              
+              <div className="h-[250px] w-full">
+                {viewsByChannelData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={viewsByChannelData} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f3f4f6" />
+                      <XAxis type="number" hide />
+                      <YAxis 
+                        dataKey="name" 
+                        type="category" 
+                        width={100} 
+                        tick={{ fontSize: 11, fill: '#4b5563' }} 
+                      />
+                      <Tooltip 
+                        cursor={{ fill: '#f9fafb' }}
+                        content={({ active, payload }) => {
+                          if (active && payload && payload.length) {
+                            return (
+                              <div className="bg-white p-2 border border-gray-100 shadow-lg rounded-lg text-xs">
+                                <span className="font-bold">{payload[0].payload.name}:</span> {formatNumber(payload[0].value as string)} views
+                              </div>
+                            );
+                          }
+                          return null;
+                        }}
+                      />
+                      <Bar dataKey="views" radius={[0, 4, 4, 0]} barSize={20}>
+                        {viewsByChannelData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={getChannelColor(entry.name, index)} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-gray-400 text-sm">
+                    Sem dados de audiência.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Distribution Chart (Pie) */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col">
+              <div className="mb-6">
+                <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                  <Layers size={20} className="text-brand-500" />
+                  Volume de Produção
+                </h2>
+                <p className="text-sm text-gray-500">Share of Voice (Quantidade de vídeos)</p>
+              </div>
+
+              <div className="flex-grow flex items-center justify-center relative">
+                <div className="h-[200px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={channelStats}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={50}
+                        outerRadius={70}
+                        paddingAngle={5}
+                        dataKey="total"
+                      >
+                        {channelStats.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={getChannelColor(entry.name, index)} strokeWidth={0} />
+                        ))}
+                      </Pie>
+                      <Tooltip content={<CustomTooltip />} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                {/* Central Text */}
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                  <span className="text-2xl font-bold text-gray-900">
+                    {channelStats.reduce((acc, curr) => acc + curr.total, 0)}
+                  </span>
+                  <span className="text-[10px] text-gray-500 uppercase tracking-wider">Vídeos</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
-
-      {/* KPI Cards - Performance (Vídeos) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-gradient-to-br from-indigo-600 to-blue-700 rounded-2xl p-6 text-white shadow-lg relative overflow-hidden">
-          <div className="absolute top-0 right-0 p-4 opacity-10">
-            <Eye size={100} />
-          </div>
-          <div className="relative z-10">
-            <div className="flex items-center gap-2 mb-2 opacity-90">
-              <Eye size={20} />
-              <span className="font-medium">Views em Vídeos Rastreados</span>
-            </div>
-            <div className="text-4xl font-bold mb-1">
-              {loadingStats ? '...' : formatNumber(globalStats.views.toString())}
-            </div>
-            <p className="text-sm opacity-75">Soma dos vídeos no banco de dados</p>
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-center">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-pink-100 text-pink-600 rounded-lg">
-              <ThumbsUp size={20} />
-            </div>
-            <span className="text-gray-500 font-medium">Total de Curtidas</span>
-          </div>
-          <div className="text-3xl font-bold text-gray-900">
-            {loadingStats ? '...' : formatNumber(globalStats.likes.toString())}
-          </div>
-          <p className="text-xs text-gray-400 mt-1">Engajamento positivo</p>
-        </div>
-
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-center">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-yellow-100 text-yellow-600 rounded-lg">
-              <Trophy size={20} />
-            </div>
-            <span className="text-gray-500 font-medium">Melhor Canal (Views)</span>
-          </div>
-          <div className="text-2xl font-bold text-gray-900 truncate">
-            {viewsByChannelData.length > 0 ? viewsByChannelData[0].name : '-'}
-          </div>
-          <p className="text-xs text-gray-400 mt-1">
-            {viewsByChannelData.length > 0 
-              ? `${formatNumber(viewsByChannelData[0].views.toString())} visualizações` 
-              : 'Sem dados'}
-          </p>
-        </div>
-      </div>
-
-      {/* Main Charts Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        {/* Timeline Chart (Produção) */}
-        <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                <Activity size={20} className="text-brand-500" />
-                Produção por Canal
-              </h2>
-              <p className="text-sm text-gray-500">Volume de vídeos criados nos últimos 7 dias</p>
-            </div>
-          </div>
-          
-          <div className="h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={timelineData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <defs>
-                  {channelStats.map((channel, index) => (
-                    <linearGradient key={channel.name} id={`color${index}`} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={getChannelColor(channel.name, index)} stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor={getChannelColor(channel.name, index)} stopOpacity={0}/>
-                    </linearGradient>
-                  ))}
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                <XAxis 
-                  dataKey="name" 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{ fill: '#9ca3af', fontSize: 12 }} 
-                  dy={10}
-                />
-                <YAxis 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{ fill: '#9ca3af', fontSize: 12 }} 
-                />
-                <Tooltip content={<CustomTooltip />} />
-                <Legend iconType="circle" wrapperStyle={{ paddingTop: '20px' }} />
-                
-                {channelStats.map((channel, index) => (
-                  <Area
-                    key={channel.name}
-                    type="monotone"
-                    dataKey={channel.name}
-                    stackId="1"
-                    stroke={getChannelColor(channel.name, index)}
-                    fill={`url(#color${index})`}
-                    strokeWidth={2}
-                  />
-                ))}
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Top Videos List (Ranking) */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col">
-          <div className="mb-4">
-            <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-              <Trophy size={20} className="text-yellow-500" />
-              Top 5 Vídeos
-            </h2>
-            <p className="text-sm text-gray-500">Melhor performance</p>
-          </div>
-
-          <div className="flex-grow overflow-y-auto space-y-3 pr-2 custom-scrollbar">
-            {topVideos.length > 0 ? (
-              topVideos.map((video, index) => (
-                <div key={video.id} className="flex items-start gap-3 p-3 rounded-xl bg-gray-50 hover:bg-gray-100 transition-colors border border-gray-100">
-                  <div className="flex-shrink-0 w-8 h-8 flex items-center justify-center bg-white rounded-full font-bold text-gray-400 shadow-sm text-sm">
-                    #{index + 1}
-                  </div>
-                  <div className="min-w-0 flex-grow">
-                    <p className="text-sm font-semibold text-gray-900 truncate" title={video.title}>
-                      {video.title || 'Sem título'}
-                    </p>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="text-[10px] px-1.5 py-0.5 bg-white rounded border border-gray-200 text-gray-500 truncate max-w-[80px]">
-                        {video.channel}
-                      </span>
-                      <div className="flex items-center gap-1 text-xs font-medium text-blue-600">
-                        <Eye size={10} />
-                        {formatNumber(video.views.toString())}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="h-full flex flex-col items-center justify-center text-gray-400 text-sm">
-                <Activity size={32} className="mb-2 opacity-20" />
-                <p>Sem dados de visualização ainda.</p>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Secondary Charts Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
-        {/* Views per Channel (Bar Chart) */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-          <div className="mb-6">
-            <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-              <Zap size={20} className="text-brand-500" />
-              Audiência por Canal
-            </h2>
-            <p className="text-sm text-gray-500">Comparativo de visualizações totais</p>
-          </div>
-          
-          <div className="h-[250px] w-full">
-            {viewsByChannelData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={viewsByChannelData} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f3f4f6" />
-                  <XAxis type="number" hide />
-                  <YAxis 
-                    dataKey="name" 
-                    type="category" 
-                    width={100} 
-                    tick={{ fontSize: 11, fill: '#4b5563' }} 
-                  />
-                  <Tooltip 
-                    cursor={{ fill: '#f9fafb' }}
-                    content={({ active, payload }) => {
-                      if (active && payload && payload.length) {
-                        return (
-                          <div className="bg-white p-2 border border-gray-100 shadow-lg rounded-lg text-xs">
-                            <span className="font-bold">{payload[0].payload.name}:</span> {formatNumber(payload[0].value as string)} views
-                          </div>
-                        );
-                      }
-                      return null;
-                    }}
-                  />
-                  <Bar dataKey="views" radius={[0, 4, 4, 0]} barSize={20}>
-                    {viewsByChannelData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={getChannelColor(entry.name, index)} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-full flex items-center justify-center text-gray-400 text-sm">
-                Sem dados de audiência.
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Distribution Chart (Pie) */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col">
-          <div className="mb-6">
-            <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-              <Layers size={20} className="text-brand-500" />
-              Volume de Produção
-            </h2>
-            <p className="text-sm text-gray-500">Share of Voice (Quantidade de vídeos)</p>
-          </div>
-
-          <div className="flex-grow flex items-center justify-center relative">
-            <div className="h-[200px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={channelStats}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={50}
-                    outerRadius={70}
-                    paddingAngle={5}
-                    dataKey="total"
-                  >
-                    {channelStats.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={getChannelColor(entry.name, index)} strokeWidth={0} />
-                    ))}
-                  </Pie>
-                  <Tooltip content={<CustomTooltip />} />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            {/* Central Text */}
-            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <span className="text-2xl font-bold text-gray-900">
-                {channelStats.reduce((acc, curr) => acc + curr.total, 0)}
-              </span>
-              <span className="text-[10px] text-gray-500 uppercase tracking-wider">Vídeos</span>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
   );
 };

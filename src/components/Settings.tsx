@@ -2,12 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { fetchVideoDetails, validateApiKey } from '../lib/youtube';
 import { generateContentAI, AIProvider } from '../lib/ai';
+import { fetchInstagramProfile, detectInstagramConfig } from '../lib/instagram';
 import { useAuth, UserRole } from '../contexts/AuthContext';
 import { 
   Plus, Edit, Trash2, Loader2, AlertCircle, Save, XCircle, Key, 
   CheckCircle, Wifi, RefreshCw, Database, Users, Shield, Lock, User, Sparkles,
-  Server, Zap, Globe, Info, Youtube, Fingerprint,
-  Play, Activity, Copy, Link as LinkIcon
+  Server, Zap, Globe, Info, Youtube, Fingerprint, Instagram, Facebook,
+  Play, Activity, Copy, Search, HelpCircle
 } from 'lucide-react';
 
 interface Setting {
@@ -22,19 +23,17 @@ interface Setting {
   ollama_url?: string;
   ollama_key?: string;
   ai_model?: string;
+  // Instagram Fields
+  instagram_business_account_id?: string;
+  facebook_page_id?: string;
+  instagram_access_token?: string;
+  instagram_username?: string;
 }
 
 interface UserProfile {
   id: string;
   email: string;
   role: UserRole;
-  created_at: string;
-}
-
-interface N8nWebhook {
-  id: string;
-  name: string;
-  url: string;
   created_at: string;
 }
 
@@ -51,12 +50,20 @@ const Settings: React.FC = () => {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isEditing, setIsEditing] = useState<number | null>(null);
   
-  // Form States
+  // Form States - General
   const [currentChannel, setCurrentChannel] = useState('');
   const [currentWebhook, setCurrentWebhook] = useState('');
+  
+  // Form States - YouTube
   const [currentApiKey, setCurrentApiKey] = useState('');
   const [currentChannelId, setCurrentChannelId] = useState('');
   
+  // Form States - Instagram
+  const [currentIgBusinessId, setCurrentIgBusinessId] = useState('');
+  const [currentFbPageId, setCurrentFbPageId] = useState('');
+  const [currentIgToken, setCurrentIgToken] = useState('');
+  const [currentIgUsername, setCurrentIgUsername] = useState('');
+
   // AI States
   const [aiProvider, setAiProvider] = useState<AIProvider>('gemini');
   const [currentGeminiKey, setCurrentGeminiKey] = useState('');
@@ -65,8 +72,14 @@ const Settings: React.FC = () => {
   const [currentOllamaKey, setCurrentOllamaKey] = useState('');
   const [currentAiModel, setCurrentAiModel] = useState('');
 
+  // Test States
   const [isTestingKey, setIsTestingKey] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  
+  const [isTestingIg, setIsTestingIg] = useState(false);
+  const [isDetectingIg, setIsDetectingIg] = useState(false);
+  const [igTestResult, setIgTestResult] = useState<{ success: boolean; message: string; isPartial?: boolean } | null>(null);
+
   const [isTestingAI, setIsTestingAI] = useState(false);
   const [aiTestResult, setAiTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isDetectingChannel, setIsDetectingChannel] = useState(false);
@@ -80,13 +93,8 @@ const Settings: React.FC = () => {
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [selectedRole, setSelectedRole] = useState<UserRole>('viewer');
 
-  // --- Estados de Automação (n8n) ---
-  const [webhooks, setWebhooks] = useState<N8nWebhook[]>([]);
-  const [loadingWebhooks, setLoadingWebhooks] = useState(false);
-  const [newWebhookName, setNewWebhookName] = useState('');
-  const [newWebhookUrl, setNewWebhookUrl] = useState('');
-  const [selectedWebhookId, setSelectedWebhookId] = useState<string>('');
-  
+  // --- Estados de Automação ---
+  const [productionWebhook, setProductionWebhook] = useState('');
   const [triggeringWorkflow, setTriggeringWorkflow] = useState(false);
   const [workflowResponse, setWorkflowResponse] = useState<{ success: boolean; message: string } | null>(null);
   const [currentOrigin, setCurrentOrigin] = useState('');
@@ -124,28 +132,16 @@ const Settings: React.FC = () => {
     }
   };
 
-  const fetchWebhooks = async () => {
-    if (!isAdmin) return;
-    setLoadingWebhooks(true);
-    try {
-      const { data, error } = await supabase.from('n8n_webhooks').select('*').order('created_at', { ascending: true });
-      if (error) throw error;
-      setWebhooks(data || []);
-      if (data && data.length > 0 && !selectedWebhookId) {
-        setSelectedWebhookId(data[0].id);
-      }
-    } catch (err: any) {
-      console.error("Error fetching webhooks:", err);
-    } finally {
-      setLoadingWebhooks(false);
-    }
+  const fetchAutomationConfig = () => {
+    const savedWebhook = localStorage.getItem('n8n_production_webhook');
+    if (savedWebhook) setProductionWebhook(savedWebhook);
     setCurrentOrigin(window.location.origin);
   };
 
   useEffect(() => {
     if (activeTab === 'channels') fetchSettings();
     else if (activeTab === 'users' && isAdmin) fetchUsers();
-    else if (activeTab === 'automation' && isAdmin) fetchWebhooks();
+    else if (activeTab === 'automation') fetchAutomationConfig();
   }, [activeTab, isAdmin]);
 
   // --- Handlers ---
@@ -155,15 +151,24 @@ const Settings: React.FC = () => {
     setIsEditing(null);
     setCurrentChannel('');
     setCurrentWebhook('');
+    // YouTube
     setCurrentApiKey('');
     setCurrentChannelId('');
+    // Instagram
+    setCurrentIgBusinessId('');
+    setCurrentFbPageId('');
+    setCurrentIgToken('');
+    setCurrentIgUsername('');
+    // AI
     setAiProvider('gemini');
     setCurrentGeminiKey('');
     setCurrentGroqKey('');
     setCurrentOllamaUrl('http://localhost:11434');
     setCurrentOllamaKey('');
     setCurrentAiModel('');
+    
     setTestResult(null);
+    setIgTestResult(null);
     setAiTestResult(null);
     setError(null);
   };
@@ -174,16 +179,25 @@ const Settings: React.FC = () => {
     setIsEditing(setting.id);
     setCurrentChannel(setting.channel);
     setCurrentWebhook(setting.webhook);
+    // YouTube
     setCurrentApiKey(setting.youtube_api_key || '');
     setCurrentChannelId(setting.youtube_channel_id || '');
+    // Instagram
+    setCurrentIgBusinessId(setting.instagram_business_account_id || '');
+    setCurrentFbPageId(setting.facebook_page_id || '');
+    setCurrentIgToken(setting.instagram_access_token || '');
+    setCurrentIgUsername(setting.instagram_username || '');
+    // AI
     setAiProvider(setting.ai_provider || 'gemini');
     setCurrentGeminiKey(setting.gemini_key || '');
     setCurrentGroqKey(setting.groq_key || '');
     setCurrentOllamaUrl(setting.ollama_url || 'http://localhost:11434');
     setCurrentOllamaKey(setting.ollama_key || '');
     setCurrentAiModel(setting.ai_model || '');
+    
     setIsFormOpen(true);
     setTestResult(null);
+    setIgTestResult(null);
     setAiTestResult(null);
   };
 
@@ -247,6 +261,86 @@ const Settings: React.FC = () => {
     }
   };
 
+  const handleDetectInstagram = async () => {
+    if (!currentIgToken) {
+      setIgTestResult({ success: false, message: "Cole o Token primeiro." });
+      return;
+    }
+    setIsDetectingIg(true);
+    setIgTestResult(null);
+    try {
+      // 1. Detecta os IDs
+      const config = await detectInstagramConfig(currentIgToken.trim());
+      setCurrentIgBusinessId(config.instagramId);
+      setCurrentFbPageId(config.pageId);
+
+      // 2. Tenta buscar o perfil completo imediatamente para preencher o username
+      try {
+        const profile = await fetchInstagramProfile(config.instagramId, currentIgToken.trim());
+        if (profile) {
+          const username = profile.username || '';
+          setCurrentIgUsername(username);
+          setIgTestResult({ 
+            success: true, 
+            message: `Detectado: ${profile.name} (@${username || 'sem-user'}) - ${profile.followers_count ?? 0} seg` 
+          });
+        } else {
+          // Fallback se não conseguir ler o perfil completo
+          setIgTestResult({ success: true, message: `IDs Detectados! (Perfil restrito)` });
+        }
+      } catch (innerErr) {
+        // Se falhar o perfil, mas os IDs foram detectados, ainda é um sucesso parcial
+        setIgTestResult({ success: true, message: `IDs Detectados! (Erro ao ler perfil)` });
+      }
+
+    } catch (err: any) {
+      setIgTestResult({ success: false, message: err.message });
+    } finally {
+      setIsDetectingIg(false);
+    }
+  };
+
+  const handleTestInstagram = async () => {
+    if (!currentIgToken || !currentIgBusinessId) {
+      setIgTestResult({ success: false, message: "Preencha o ID e o Token." });
+      return;
+    }
+    setIsTestingIg(true);
+    setIgTestResult(null);
+    try {
+      const profile = await fetchInstagramProfile(currentIgBusinessId.trim(), currentIgToken.trim());
+      if (profile) {
+        const username = profile.username || 'sem-user';
+        const followers = profile.followers_count !== undefined ? profile.followers_count : '?';
+        
+        // Atualiza o campo de username se estiver vazio e se tivermos recebido um
+        if (!currentIgUsername && profile.username && profile.username !== 'instagram_user') {
+          setCurrentIgUsername(profile.username);
+        }
+
+        if (profile.is_partial) {
+          setIgTestResult({ 
+            success: true, 
+            isPartial: true,
+            message: `Conexão OK! (Modo Simplificado - Igual n8n)` 
+          });
+        } else {
+          setIgTestResult({ 
+            success: true, 
+            message: `Conectado: ${profile.name} (@${username}) - ${followers} seg` 
+          });
+        }
+      } else {
+        throw new Error("Falha ao buscar perfil.");
+      }
+    } catch (err: any) {
+      // Agora mostra a mensagem real do erro
+      setIgTestResult({ success: false, message: err.message || "Token inválido ou ID incorreto." });
+    } finally {
+      setIsTestingIg(false);
+    }
+  };
+
   const handleTestAI = async () => {
     setIsTestingAI(true);
     setAiTestResult(null);
@@ -276,9 +370,22 @@ const Settings: React.FC = () => {
 
     try {
       const payload = { 
-        channel: currentChannel, webhook: currentWebhook, youtube_api_key: currentApiKey || null,
-        youtube_channel_id: currentChannelId || null, ai_provider: aiProvider, gemini_key: currentGeminiKey || null,
-        groq_key: currentGroqKey || null, ollama_url: currentOllamaUrl || null, ollama_key: currentOllamaKey || null,
+        channel: currentChannel, 
+        webhook: currentWebhook, 
+        // YouTube
+        youtube_api_key: currentApiKey ? currentApiKey.trim() : null,
+        youtube_channel_id: currentChannelId ? currentChannelId.trim() : null, 
+        // Instagram
+        instagram_business_account_id: currentIgBusinessId ? currentIgBusinessId.trim() : null,
+        facebook_page_id: currentFbPageId ? currentFbPageId.trim() : null,
+        instagram_access_token: currentIgToken ? currentIgToken.trim() : null,
+        instagram_username: currentIgUsername ? currentIgUsername.trim() : null,
+        // AI
+        ai_provider: aiProvider, 
+        gemini_key: currentGeminiKey || null,
+        groq_key: currentGroqKey || null, 
+        ollama_url: currentOllamaUrl || null, 
+        ollama_key: currentOllamaKey || null,
         ai_model: currentAiModel || null
       };
 
@@ -343,242 +450,398 @@ const Settings: React.FC = () => {
     } catch (err) { setError("Erro ao atualizar permissão."); }
   };
 
-  const handleAddWebhook = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newWebhookName || !newWebhookUrl) return;
-    try {
-      const { data, error } = await supabase.from('n8n_webhooks').insert({ name: newWebhookName, url: newWebhookUrl }).select().single();
-      if (error) throw error;
-      setWebhooks([...webhooks, data]);
-      setNewWebhookName('');
-      setNewWebhookUrl('');
-      if (webhooks.length === 0) setSelectedWebhookId(data.id);
-      setSuccessMessage("Webhook adicionado!");
-      setTimeout(() => setSuccessMessage(null), 3000);
-    } catch (err) { setError("Erro ao adicionar webhook."); }
-  };
+  // --- Handlers de Automação ---
 
-  const handleDeleteWebhook = async (id: string) => {
-    if (!window.confirm("Remover este webhook?")) return;
-    try {
-      await supabase.from('n8n_webhooks').delete().eq('id', id);
-      const updated = webhooks.filter(w => w.id !== id);
-      setWebhooks(updated);
-      if (selectedWebhookId === id) setSelectedWebhookId(updated.length > 0 ? updated[0].id : '');
-    } catch (err) { setError("Erro ao remover webhook."); }
+  const handleSaveAutomation = () => {
+    if (!productionWebhook) {
+      setError("Insira uma URL válida.");
+      return;
+    }
+    localStorage.setItem('n8n_production_webhook', productionWebhook);
+    setSuccessMessage("Webhook de produção salvo localmente!");
+    setTimeout(() => setSuccessMessage(null), 3000);
   };
 
   const handleTriggerWorkflow = async (method: 'POST' | 'GET' = 'POST') => {
-    const selectedWebhook = webhooks.find(w => w.id === selectedWebhookId);
-    if (!selectedWebhook) { setError("Selecione um webhook."); return; }
+    if (!productionWebhook) {
+      setError("Configure a URL do Webhook primeiro.");
+      return;
+    }
+
     setTriggeringWorkflow(true);
     setWorkflowResponse(null);
-    const url = selectedWebhook.url.trim();
+
+    const url = productionWebhook.trim();
+
     try {
-      const payload = { triggered_by: user?.email, timestamp: new Date().toISOString(), action: 'manual_trigger', webhook_name: selectedWebhook.name };
+      const payload = {
+        triggered_by: user?.email,
+        timestamp: new Date().toISOString(),
+        action: 'manual_trigger'
+      };
+
+      let response;
+
       if (method === 'GET') {
-        await fetch(url, { method: 'GET', mode: 'no-cors' });
-        setWorkflowResponse({ success: true, message: "Ping GET enviado!" });
+        response = await fetch(url, { method: 'GET', mode: 'no-cors' });
+        setWorkflowResponse({ success: true, message: "Ping enviado! Verifique o n8n." });
       } else if (useNoCors) {
-        await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload) });
-        setWorkflowResponse({ success: true, message: "Disparo enviado (No-CORS)." });
+        await fetch(url, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify(payload)
+        });
+        setWorkflowResponse({ success: true, message: "Disparo enviado (Modo Compatibilidade)." });
       } else {
-        const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        if (response.ok) setWorkflowResponse({ success: true, message: "Fluxo disparado!" });
-        else throw new Error(`Erro ${response.status}`);
+        response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (response.ok) {
+          setWorkflowResponse({ success: true, message: "Fluxo disparado com sucesso!" });
+        } else {
+          throw new Error(`Erro ${response.status}`);
+        }
       }
     } catch (err: any) {
-      setWorkflowResponse({ success: false, message: err.message.includes('fetch') ? "Erro de CORS/Rede." : err.message });
-    } finally { setTriggeringWorkflow(false); }
+      let msg = `Falha ao disparar: ${err.message}.`;
+      if (err.message.includes('Failed to fetch')) msg = "Erro de CORS ou Rede. Tente o 'Modo de Compatibilidade'.";
+      setWorkflowResponse({ success: false, message: msg });
+    } finally {
+      setTriggeringWorkflow(false);
+    }
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    alert("Copiado!");
   };
 
   // --- Renders ---
 
   const renderChannels = () => {
     if (loadingSettings) return <div className="flex justify-center p-12"><Loader2 className="animate-spin text-brand-500" /></div>;
+
     return (
       <div className="space-y-6 animate-fade-in">
-        <div className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-          <div><h3 className="font-bold text-gray-800 flex items-center gap-2"><Database size={20} className="text-brand-500" />Gerenciar Canais</h3></div>
-          <div className="flex gap-2">
-            {isAdmin && <button onClick={handleSyncMetadata} disabled={isSyncing} className="flex items-center gap-2 bg-indigo-50 text-indigo-700 px-4 py-2 rounded-lg hover:bg-indigo-100">{isSyncing ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}<span className="hidden sm:inline">Sincronizar</span></button>}
-            {isAdmin && !isFormOpen && <button onClick={handleAddNew} className="flex items-center gap-2 bg-brand-500 text-white px-4 py-2 rounded-lg hover:bg-brand-600"><Plus size={18} />Adicionar</button>}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+          <div>
+            <h3 className="font-bold text-gray-800 flex items-center gap-2"><Database size={20} className="text-brand-500" /> Gerenciar Canais</h3>
+            <p className="text-sm text-gray-500">Configure YouTube, Instagram e IA.</p>
+          </div>
+          <div className="flex gap-2 w-full sm:w-auto">
+            {isAdmin && (
+              <button onClick={handleSyncMetadata} disabled={isSyncing} className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-indigo-50 text-indigo-700 px-4 py-2 rounded-lg font-medium hover:bg-indigo-100 transition-colors disabled:opacity-50">
+                {isSyncing ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />} <span className="hidden sm:inline">Sincronizar</span>
+              </button>
+            )}
+            {isAdmin && !isFormOpen && (
+              <button onClick={handleAddNew} className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-brand-500 text-white px-4 py-2 rounded-lg font-medium hover:bg-brand-600 transition-colors shadow-sm">
+                <Plus size={18} /> Adicionar
+              </button>
+            )}
           </div>
         </div>
-        {syncResult && <div className="bg-indigo-50 text-indigo-700 px-4 py-3 rounded-lg flex items-center"><CheckCircle className="mr-2 h-5 w-5" />{syncResult.message}</div>}
-        
+
+        {syncResult && (
+          <div className="bg-indigo-50 border border-indigo-200 text-indigo-700 px-4 py-3 rounded-lg flex items-center">
+            <CheckCircle className="mr-2 h-5 w-5" /> <span>{syncResult.message}</span>
+          </div>
+        )}
+
         {isFormOpen && isAdmin && (
           <div className="bg-white p-6 rounded-xl shadow-md border border-gray-200 animate-slide-up">
             <form onSubmit={handleSubmit}>
-              <h2 className="text-xl font-bold mb-4">{isEditing ? 'Editar' : 'Novo'} Canal</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                <div><label className="block text-sm font-medium mb-1">Nome</label><input type="text" value={currentChannel} onChange={e => setCurrentChannel(e.target.value)} className="w-full px-3 py-2 border rounded-lg" disabled={!!isEditing} /></div>
-                <div><label className="block text-sm font-medium mb-1">Webhook Discord</label><input type="text" value={currentWebhook} onChange={e => setCurrentWebhook(e.target.value)} className="w-full px-3 py-2 border rounded-lg" /></div>
-              </div>
-              <div className="border-t pt-6 mb-6">
-                <h3 className="font-bold mb-4 flex items-center gap-2"><Youtube size={18} className="text-red-600" />YouTube</h3>
+              <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+                {isEditing ? <Edit size={20} className="text-brand-500" /> : <Plus size={20} className="text-brand-500" />}
+                {isEditing ? 'Editar Canal' : 'Novo Canal'}
+              </h2>
+              
+              <div className="grid grid-cols-1 gap-6">
+                {/* Dados Básicos */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
-                    <label className="block text-sm font-medium mb-1">ID do Canal (Trava)</label>
-                    <div className="flex gap-2"><input type="text" value={currentChannelId} onChange={e => setCurrentChannelId(e.target.value)} className="w-full px-3 py-2 border rounded-lg font-mono text-sm" /><button type="button" onClick={handleDetectChannelId} disabled={isDetectingChannel} className="px-3 py-2 bg-red-50 text-red-700 rounded-lg">{isDetectingChannel ? <Loader2 size={16} className="animate-spin" /> : <Youtube size={16} />}</button></div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Nome do Canal</label>
+                    <input type="text" value={currentChannel} onChange={(e) => setCurrentChannel(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500" placeholder="Ex: Canal Principal" disabled={!!isEditing} />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-1">API Key</label>
-                    <div className="flex gap-2"><input type="password" value={currentApiKey} onChange={e => { setCurrentApiKey(e.target.value); setTestResult(null); }} className="w-full px-3 py-2 border rounded-lg font-mono text-sm" /><button type="button" onClick={handleTestApiKey} disabled={!currentApiKey || isTestingKey} className="px-3 py-2 bg-gray-100 rounded-lg">{isTestingKey ? <Loader2 size={16} className="animate-spin" /> : 'Testar'}</button></div>
-                    {testResult && <p className={`text-xs mt-1 ${testResult.success ? 'text-green-600' : 'text-red-600'}`}>{testResult.message}</p>}
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Webhook Discord</label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Wifi size={16} className="text-gray-400" /></div>
+                      <input type="text" value={currentWebhook} onChange={(e) => setCurrentWebhook(e.target.value)} className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500" placeholder="https://discord.com/api/webhooks/..." />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Instagram & Facebook */}
+                <div className="border-t border-gray-100 pt-6">
+                  <h3 className="text-md font-bold text-gray-800 mb-4 flex items-center gap-2">
+                    <Instagram size={18} className="text-pink-600" />
+                    Instagram & Facebook
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="md:col-span-2">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Access Token (Long-Lived)</label>
+                      <div className="flex gap-2">
+                        <div className="relative flex-grow">
+                          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Key size={16} className="text-gray-400" /></div>
+                          <input type="password" value={currentIgToken} onChange={(e) => { setCurrentIgToken(e.target.value); setIgTestResult(null); }} className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-500 font-mono text-sm" placeholder="EAA..." />
+                        </div>
+                        <button type="button" onClick={handleDetectInstagram} disabled={!currentIgToken || isDetectingIg} className="px-3 py-2 bg-blue-50 text-blue-700 border border-blue-100 rounded-lg hover:bg-blue-100 transition-colors disabled:opacity-50 text-sm font-medium flex items-center gap-2 whitespace-nowrap">
+                          {isDetectingIg ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />} Detectar IDs
+                        </button>
+                        <button type="button" onClick={handleTestInstagram} disabled={!currentIgToken || !currentIgBusinessId || isTestingIg} className="px-3 py-2 bg-pink-50 text-pink-700 border border-pink-100 rounded-lg hover:bg-pink-100 transition-colors disabled:opacity-50 text-sm font-medium flex items-center gap-2">
+                          {isTestingIg ? <Loader2 size={16} className="animate-spin" /> : 'Testar'}
+                        </button>
+                      </div>
+                      {igTestResult && (
+                        <p className={`text-xs mt-2 flex items-center gap-1 ${igTestResult.success ? (igTestResult.isPartial ? 'text-yellow-600' : 'text-green-600') : 'text-red-600'}`}>
+                          {igTestResult.success ? <CheckCircle size={12} /> : <AlertCircle size={12} />} {igTestResult.message}
+                        </p>
+                      )}
+                      
+                      {/* Dica de Permissões */}
+                      <div className="mt-3 bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-800">
+                        <div className="flex items-start gap-2">
+                          <HelpCircle size={14} className="mt-0.5 flex-shrink-0" />
+                          <div>
+                            <p className="font-bold mb-1">Permissões Obrigatórias no Graph API:</p>
+                            <p>Ao gerar o token, adicione estas permissões no campo "Add a permission":</p>
+                            <ul className="list-disc list-inside mt-1 font-mono text-[10px] sm:text-xs">
+                              <li>instagram_basic</li>
+                              <li>pages_show_list</li>
+                              <li>pages_read_engagement</li>
+                            </ul>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Instagram Business ID</label>
+                      <input type="text" value={currentIgBusinessId} onChange={(e) => { setCurrentIgBusinessId(e.target.value); setIgTestResult(null); }} className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-500 font-mono text-sm" placeholder="17841..." />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Facebook Page ID</label>
+                      <input type="text" value={currentFbPageId} onChange={(e) => setCurrentFbPageId(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 font-mono text-sm" placeholder="10050..." />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Username (Opcional)</label>
+                      <input type="text" value={currentIgUsername} onChange={(e) => setCurrentIgUsername(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-500" placeholder="@usuario" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* YouTube Security */}
+                <div className="border-t border-gray-100 pt-6">
+                  <h3 className="text-md font-bold text-gray-800 mb-4 flex items-center gap-2">
+                    <Youtube size={18} className="text-red-600" />
+                    Segurança e API do YouTube
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">ID do Canal (Trava)</label>
+                      <div className="flex gap-2">
+                        <div className="relative flex-grow">
+                          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Fingerprint size={16} className="text-gray-400" /></div>
+                          <input type="text" value={currentChannelId} onChange={(e) => setCurrentChannelId(e.target.value)} className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 font-mono text-sm" placeholder="UC..." />
+                        </div>
+                        <button type="button" onClick={handleDetectChannelId} disabled={isDetectingChannel} className="px-3 py-2 bg-red-50 text-red-700 border border-red-100 rounded-lg hover:bg-red-100 transition-colors disabled:opacity-50 text-sm font-medium flex items-center gap-2">
+                          {isDetectingChannel ? <Loader2 size={16} className="animate-spin" /> : <Youtube size={16} />} Detectar
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">YouTube API Key</label>
+                      <div className="flex gap-2">
+                        <div className="relative flex-grow">
+                          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Key size={16} className="text-gray-400" /></div>
+                          <input type="password" value={currentApiKey} onChange={(e) => { setCurrentApiKey(e.target.value); setTestResult(null); }} className="w-full pl-10 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 font-mono text-sm" placeholder="AIzaSy..." />
+                        </div>
+                        <button type="button" onClick={handleTestApiKey} disabled={!currentApiKey || isTestingKey} className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 text-sm font-medium">
+                          {isTestingKey ? <Loader2 size={16} className="animate-spin" /> : 'Testar'}
+                        </button>
+                      </div>
+                      {testResult && <p className={`text-xs mt-2 flex items-center gap-1 ${testResult.success ? 'text-green-600' : 'text-red-600'}`}>{testResult.success ? <CheckCircle size={12} /> : <AlertCircle size={12} />} {testResult.message}</p>}
+                    </div>
+                  </div>
+                </div>
+
+                {/* AI Config */}
+                <div className="border-t border-gray-100 pt-6">
+                  <h3 className="text-md font-bold text-gray-800 mb-4 flex items-center gap-2"><Sparkles size={18} className="text-purple-500" /> Configuração de IA</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    <button type="button" onClick={() => setAiProvider('gemini')} className={`p-4 rounded-xl border-2 transition-all ${aiProvider === 'gemini' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200'}`}>Gemini</button>
+                    <button type="button" onClick={() => setAiProvider('groq')} className={`p-4 rounded-xl border-2 transition-all ${aiProvider === 'groq' ? 'border-orange-500 bg-orange-50 text-orange-700' : 'border-gray-200'}`}>Groq</button>
+                    <button type="button" onClick={() => setAiProvider('ollama')} className={`p-4 rounded-xl border-2 transition-all ${aiProvider === 'ollama' ? 'border-gray-800 bg-gray-100 text-gray-900' : 'border-gray-200'}`}>Ollama</button>
+                  </div>
+                  
+                  <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 space-y-4">
+                    {aiProvider === 'gemini' && <input type="password" value={currentGeminiKey} onChange={(e) => setCurrentGeminiKey(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" placeholder="Gemini API Key" />}
+                    {aiProvider === 'groq' && <input type="password" value={currentGroqKey} onChange={(e) => setCurrentGroqKey(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" placeholder="Groq API Key" />}
+                    {aiProvider === 'ollama' && (
+                      <>
+                        <input type="text" value={currentOllamaUrl} onChange={(e) => setCurrentOllamaUrl(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" placeholder="http://localhost:11434" />
+                        <input type="text" value={currentAiModel} onChange={(e) => setCurrentAiModel(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" placeholder="Modelo (ex: llama3)" />
+                      </>
+                    )}
+                    <div className="flex justify-end">
+                      <button type="button" onClick={handleTestAI} disabled={isTestingAI} className="text-sm flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
+                        {isTestingAI ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />} Testar IA
+                      </button>
+                    </div>
+                    {aiTestResult && <p className={`text-xs ${aiTestResult.success ? 'text-green-600' : 'text-red-600'}`}>{aiTestResult.message}</p>}
                   </div>
                 </div>
               </div>
-              <div className="border-t pt-6 mb-6">
-                <h3 className="font-bold mb-4 flex items-center gap-2"><Sparkles size={18} className="text-purple-500" />Inteligência Artificial</h3>
-                <div className="grid grid-cols-3 gap-4 mb-4">
-                  {['gemini', 'groq', 'ollama'].map(p => (
-                    <button key={p} type="button" onClick={() => setAiProvider(p as any)} className={`p-3 rounded-xl border-2 capitalize ${aiProvider === p ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}>{p}</button>
-                  ))}
-                </div>
-                <div className="bg-gray-50 p-4 rounded-lg border">
-                  {aiProvider === 'gemini' && <div><label className="block text-sm font-medium mb-1">Gemini Key</label><input type="password" value={currentGeminiKey} onChange={e => setCurrentGeminiKey(e.target.value)} className="w-full px-3 py-2 border rounded-lg font-mono text-sm" /></div>}
-                  {aiProvider === 'groq' && <div className="space-y-3"><div><label className="block text-sm font-medium mb-1">Groq Key</label><input type="password" value={currentGroqKey} onChange={e => setCurrentGroqKey(e.target.value)} className="w-full px-3 py-2 border rounded-lg font-mono text-sm" /></div><div><label className="block text-sm font-medium mb-1">Modelo</label><input type="text" value={currentAiModel} onChange={e => setCurrentAiModel(e.target.value)} className="w-full px-3 py-2 border rounded-lg font-mono text-sm" placeholder="llama3-70b-8192" /></div></div>}
-                  {aiProvider === 'ollama' && <div className="space-y-3"><div><label className="block text-sm font-medium mb-1">URL</label><input type="text" value={currentOllamaUrl} onChange={e => setCurrentOllamaUrl(e.target.value)} className="w-full px-3 py-2 border rounded-lg font-mono text-sm" /></div><div><label className="block text-sm font-medium mb-1">Key (Opcional)</label><input type="password" value={currentOllamaKey} onChange={e => setCurrentOllamaKey(e.target.value)} className="w-full px-3 py-2 border rounded-lg font-mono text-sm" /></div><div><label className="block text-sm font-medium mb-1">Modelo</label><input type="text" value={currentAiModel} onChange={e => setCurrentAiModel(e.target.value)} className="w-full px-3 py-2 border rounded-lg font-mono text-sm" placeholder="llama3" /></div></div>}
-                  <div className="mt-3 flex justify-end"><button type="button" onClick={handleTestAI} disabled={isTestingAI} className="text-sm px-3 py-2 bg-white border rounded-lg flex items-center gap-2">{isTestingAI ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />} Testar IA</button></div>
-                  {aiTestResult && <p className={`text-xs mt-2 ${aiTestResult.success ? 'text-green-600' : 'text-red-600'}`}>{aiTestResult.message}</p>}
-                </div>
-              </div>
-              <div className="flex justify-end gap-3">
-                <button type="button" onClick={resetForm} className="px-4 py-2 border rounded-lg hover:bg-gray-50">Cancelar</button>
-                <button type="submit" className="px-6 py-2 bg-brand-500 text-white rounded-lg hover:bg-brand-600">Salvar</button>
+
+              <div className="flex justify-end gap-3 mt-8 pt-4 border-t border-gray-100">
+                <button type="button" onClick={resetForm} className="flex items-center gap-2 bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50"><XCircle size={18} /> Cancelar</button>
+                <button type="submit" className="flex items-center gap-2 bg-brand-500 text-white px-6 py-2 rounded-lg hover:bg-brand-600"><Save size={18} /> Salvar</button>
               </div>
             </form>
           </div>
         )}
 
         <div className="grid gap-4">
-          {settings.map((s) => (
-            <div key={s.id} className="bg-white p-5 rounded-xl shadow-sm border border-gray-200 flex justify-between items-center group">
-              <div>
-                <div className="flex items-center gap-3 mb-1">
-                  <h4 className="font-bold text-lg">{s.channel}</h4>
-                  <div className="flex gap-1">
-                    {s.youtube_channel_id && <span className="px-2 py-0.5 rounded text-xs bg-green-100 text-green-800">Seguro</span>}
-                    <span className="px-2 py-0.5 rounded text-xs bg-purple-100 text-purple-800 capitalize">{s.ai_provider}</span>
+          {settings.map((setting) => (
+            <div key={setting.id} className="bg-white p-5 rounded-xl shadow-sm border border-gray-200 hover:border-brand-200 transition-all group">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div className="flex-grow min-w-0">
+                  <div className="flex items-center gap-3 mb-1">
+                    <h4 className="font-bold text-gray-800 text-lg">{setting.channel}</h4>
+                    <div className="flex gap-2">
+                      {setting.youtube_channel_id ? <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800"><Lock size={10} className="mr-1" /> Seguro</span> : <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800"><AlertCircle size={10} className="mr-1" /> Aberto</span>}
+                      {setting.instagram_business_account_id && <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-pink-100 text-pink-800"><Instagram size={10} className="mr-1" /> Insta</span>}
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800"><Sparkles size={10} className="mr-1" /> {setting.ai_provider}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-gray-500 font-mono bg-gray-50 px-2 py-1 rounded w-fit max-w-full">
+                    <Wifi size={12} /> <span className="truncate max-w-[200px] sm:max-w-md">{setting.webhook}</span>
                   </div>
                 </div>
-                <div className="text-sm text-gray-500 font-mono bg-gray-50 px-2 py-1 rounded truncate max-w-md">{s.webhook}</div>
+                {isAdmin && (
+                  <div className="flex items-center gap-2 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onClick={() => handleEdit(setting)} className="p-2 text-gray-500 hover:text-brand-600 hover:bg-brand-50 rounded-lg"><Edit size={18} /></button>
+                    <button onClick={() => handleDelete(setting.id)} className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={18} /></button>
+                  </div>
+                )}
               </div>
-              {isAdmin && <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => handleEdit(s)} className="p-2 text-gray-500 hover:text-brand-600"><Edit size={18} /></button><button onClick={() => handleDelete(s.id)} className="p-2 text-gray-500 hover:text-red-600"><Trash2 size={18} /></button></div>}
             </div>
           ))}
-          {settings.length === 0 && !isFormOpen && <div className="text-center py-12 bg-gray-50 rounded-xl border-2 border-dashed"><Database className="mx-auto h-10 w-10 text-gray-300 mb-2" /><p className="text-gray-500">Nenhum canal configurado.</p></div>}
+          {settings.length === 0 && !isFormOpen && <div className="text-center py-16 border-2 border-dashed border-gray-200 rounded-xl bg-gray-50"><Database className="mx-auto h-12 w-12 text-gray-300 mb-3" /><p className="text-gray-500">Nenhum canal configurado.</p></div>}
         </div>
       </div>
     );
   };
 
-  const renderUsers = () => {
-    if (loadingUsers) return <div className="flex justify-center p-12"><Loader2 className="animate-spin text-brand-500" /></div>;
-    return (
-      <div className="space-y-6 animate-fade-in">
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100"><h3 className="font-bold text-gray-800 flex items-center gap-2"><Users size={20} className="text-brand-500" />Gerenciar Usuários</h3></div>
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-gray-50 border-b"><tr><th className="px-6 py-4">Usuário</th><th className="px-6 py-4">Função</th><th className="px-6 py-4 text-right">Ações</th></tr></thead>
-            <tbody className="divide-y">
-              {users.map((u) => (
-                <tr key={u.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4"><div className="flex items-center gap-3"><div className="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center text-brand-600"><User size={16} /></div><span className="font-medium">{u.email}</span></div></td>
-                  <td className="px-6 py-4">
-                    {editingUserId === u.id ? (
-                      <select value={selectedRole} onChange={(e) => setSelectedRole(e.target.value as UserRole)} className="border rounded p-1"><option value="viewer">Viewer</option><option value="editor">Editor</option><option value="admin">Admin</option></select>
-                    ) : <span className={`px-2 py-1 rounded-full text-xs capitalize ${u.role === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-gray-100'}`}>{u.role}</span>}
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    {editingUserId === u.id ? (
-                      <div className="flex justify-end gap-2"><button onClick={() => handleSaveUserRole(u.id)} className="text-green-600"><CheckCircle size={18} /></button><button onClick={handleCancelEditUser} className="text-gray-400"><XCircle size={18} /></button></div>
-                    ) : <button onClick={() => handleEditUser(u)} disabled={u.role === 'admin' && u.email === 'dalexperia@gmail.com'} className="text-gray-400 hover:text-brand-600 disabled:opacity-30"><Edit size={18} /></button>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+  const renderUsers = () => (
+    <div className="space-y-6 animate-fade-in">
+      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+        <h3 className="font-bold text-gray-800 flex items-center gap-2"><Users size={20} className="text-brand-500" /> Gerenciar Usuários</h3>
       </div>
-    );
-  };
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <table className="w-full text-left text-sm">
+          <thead className="bg-gray-50 border-b border-gray-200">
+            <tr><th className="px-6 py-4">Usuário</th><th className="px-6 py-4">Função</th><th className="px-6 py-4 text-right">Ações</th></tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {users.map((u) => (
+              <tr key={u.id} className="hover:bg-gray-50">
+                <td className="px-6 py-4"><div className="flex items-center gap-3"><User size={16} /><span className="font-medium">{u.email}</span></div></td>
+                <td className="px-6 py-4">
+                  {editingUserId === u.id ? (
+                    <select value={selectedRole} onChange={(e) => setSelectedRole(e.target.value as UserRole)} className="border-gray-300 rounded-md text-sm">
+                      <option value="viewer">Viewer</option><option value="editor">Editor</option><option value="admin">Admin</option>
+                    </select>
+                  ) : <span className="bg-gray-100 px-2 py-1 rounded-full text-xs capitalize">{u.role}</span>}
+                </td>
+                <td className="px-6 py-4 text-right">
+                  {editingUserId === u.id ? (
+                    <div className="flex justify-end gap-2">
+                      <button onClick={() => handleSaveUserRole(u.id)} className="text-green-600"><CheckCircle size={18} /></button>
+                      <button onClick={() => setEditingUserId(null)} className="text-gray-400"><XCircle size={18} /></button>
+                    </div>
+                  ) : (
+                    <button onClick={() => { setEditingUserId(u.id); setSelectedRole(u.role); }} disabled={u.role === 'admin' && u.email === 'dalexperia@gmail.com'} className="text-gray-400 hover:text-brand-600 disabled:opacity-30"><Edit size={18} /></button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 
-  const renderAutomation = () => {
-    return (
-      <div className="space-y-6 animate-fade-in">
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100"><h3 className="font-bold text-gray-800 flex items-center gap-2"><Activity size={20} className="text-brand-500" />Automação (n8n)</h3></div>
-        
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Gerenciar Webhooks */}
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-            <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2"><LinkIcon size={18} className="text-gray-500" />Webhooks Cadastrados</h4>
-            <form onSubmit={handleAddWebhook} className="mb-6 flex gap-2">
-              <input type="text" placeholder="Nome (ex: Produção)" value={newWebhookName} onChange={e => setNewWebhookName(e.target.value)} className="flex-1 px-3 py-2 border rounded-lg text-sm" required />
-              <input type="text" placeholder="URL do Webhook" value={newWebhookUrl} onChange={e => setNewWebhookUrl(e.target.value)} className="flex-[2] px-3 py-2 border rounded-lg text-sm font-mono" required />
-              <button type="submit" className="bg-gray-800 text-white px-3 py-2 rounded-lg hover:bg-gray-900"><Plus size={18} /></button>
-            </form>
-            <div className="space-y-2 max-h-60 overflow-y-auto">
-              {webhooks.map(w => (
-                <div key={w.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg border border-gray-100">
-                  <div className="overflow-hidden">
-                    <p className="font-bold text-sm text-gray-700">{w.name}</p>
-                    <p className="text-xs text-gray-500 font-mono truncate" title={w.url}>{w.url}</p>
+  const renderAutomation = () => (
+    <div className="space-y-6 animate-fade-in">
+      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+        <h3 className="font-bold text-gray-800 flex items-center gap-2"><Activity size={20} className="text-brand-500" /> Automação e Produção</h3>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2"><Wifi size={18} className="text-gray-500" /> Configuração do Webhook</h4>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">URL do Webhook de Produção (n8n)</label>
+              <input type="text" value={productionWebhook} onChange={(e) => setProductionWebhook(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm" placeholder="https://seu-n8n.com/webhook/..." />
+            </div>
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+              <div className="flex items-start gap-2">
+                <Info size={16} className="mt-0.5 flex-shrink-0" />
+                <div className="flex-grow">
+                  <p className="font-bold mb-1">Atenção ao CORS</p>
+                  <div className="flex items-center gap-2 bg-white border border-amber-300 rounded px-2 py-1 font-mono text-xs">
+                    <span className="truncate">{currentOrigin}</span>
+                    <button onClick={() => copyToClipboard(currentOrigin)} className="text-amber-600 hover:text-amber-800 p-1"><Copy size={14} /></button>
                   </div>
-                  <button onClick={() => handleDeleteWebhook(w.id)} className="text-gray-400 hover:text-red-600 p-1"><Trash2 size={16} /></button>
                 </div>
-              ))}
-              {webhooks.length === 0 && <p className="text-center text-gray-400 text-sm py-4">Nenhum webhook cadastrado.</p>}
-            </div>
-            <div className="mt-4 bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
-              <p className="font-bold mb-1">CORS Info:</p>
-              <div className="flex items-center gap-2 bg-white border border-amber-300 rounded px-2 py-1 font-mono"><span className="truncate">{currentOrigin}</span><button onClick={() => copyToClipboard(currentOrigin)} className="text-amber-600"><Copy size={12} /></button></div>
-            </div>
-          </div>
-
-          {/* Disparo Manual */}
-          <div className="bg-gradient-to-br from-brand-50 to-white p-6 rounded-xl shadow-sm border border-brand-100">
-            <h4 className="font-bold text-brand-800 mb-4 flex items-center gap-2"><Play size={18} className="text-brand-600" />Disparo Manual</h4>
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Selecionar Webhook</label>
-              <select value={selectedWebhookId} onChange={e => setSelectedWebhookId(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500">
-                <option value="" disabled>Selecione...</option>
-                {webhooks.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-              </select>
-            </div>
-            <div className="flex gap-2 w-full mb-4">
-              <button onClick={() => handleTriggerWorkflow('POST')} disabled={triggeringWorkflow || !selectedWebhookId} className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-brand-600 text-white rounded-xl font-bold shadow-lg hover:bg-brand-700 disabled:opacity-50">
-                {triggeringWorkflow ? <Loader2 size={20} className="animate-spin" /> : <Zap size={20} />} INICIAR
-              </button>
-              <button onClick={() => handleTriggerWorkflow('GET')} disabled={triggeringWorkflow || !selectedWebhookId} className="px-4 py-3 bg-gray-100 text-gray-600 rounded-xl font-bold hover:bg-gray-200 disabled:opacity-50" title="Ping GET"><Wifi size={20} /></button>
-            </div>
-            <div className="flex items-center gap-2 mb-4">
-              <input type="checkbox" id="useNoCors" checked={useNoCors} onChange={(e) => setUseNoCors(e.target.checked)} className="rounded border-gray-300 text-brand-600" />
-              <label htmlFor="useNoCors" className="text-xs text-gray-600 cursor-pointer">Modo Compatibilidade (Ignorar CORS)</label>
-            </div>
-            {workflowResponse && (
-              <div className={`p-3 rounded-lg border flex items-start gap-2 text-sm ${workflowResponse.success ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
-                {workflowResponse.success ? <CheckCircle size={16} className="mt-0.5" /> : <AlertCircle size={16} className="mt-0.5" />}
-                <span>{workflowResponse.message}</span>
               </div>
-            )}
+            </div>
+            <div className="flex justify-end">
+              <button onClick={handleSaveAutomation} className="flex items-center gap-2 bg-gray-800 text-white px-4 py-2 rounded-lg font-medium hover:bg-gray-900"><Save size={16} /> Salvar URL</button>
+            </div>
           </div>
         </div>
+        <div className="bg-gradient-to-br from-brand-50 to-white p-6 rounded-xl shadow-sm border border-brand-100">
+          <h4 className="font-bold text-brand-800 mb-4 flex items-center gap-2"><Play size={18} className="text-brand-600" /> Disparo Manual</h4>
+          <div className="flex flex-col items-center justify-center p-6 bg-white rounded-xl border border-gray-200 border-dashed">
+            <div className="flex gap-2 w-full mb-4">
+              <button onClick={() => handleTriggerWorkflow('POST')} disabled={triggeringWorkflow || !productionWebhook} className="flex-1 flex items-center justify-center gap-3 px-4 py-4 bg-brand-600 text-white rounded-xl font-bold text-lg shadow-lg hover:bg-brand-700 disabled:opacity-50">
+                {triggeringWorkflow ? <Loader2 size={24} className="animate-spin" /> : <><Zap size={24} /> INICIAR (POST)</>}
+              </button>
+              <button onClick={() => handleTriggerWorkflow('GET')} disabled={triggeringWorkflow || !productionWebhook} className="flex-none flex items-center justify-center px-4 py-4 bg-gray-100 text-gray-600 rounded-xl font-bold hover:bg-gray-200 disabled:opacity-50"><Wifi size={24} /></button>
+            </div>
+            <div className="mt-4 flex items-center gap-2">
+              <input type="checkbox" id="useNoCors" checked={useNoCors} onChange={(e) => setUseNoCors(e.target.checked)} className="rounded border-gray-300 text-brand-600" />
+              <label htmlFor="useNoCors" className="text-xs text-gray-600 cursor-pointer">Modo de Compatibilidade (Ignorar CORS)</label>
+            </div>
+          </div>
+          {workflowResponse && (
+            <div className={`mt-4 p-4 rounded-lg border flex items-start gap-3 ${workflowResponse.success ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+              {workflowResponse.success ? <CheckCircle size={20} /> : <AlertCircle size={20} />}
+              <div><p className="font-bold">{workflowResponse.success ? 'Sucesso!' : 'Erro'}</p><p className="text-sm mt-1">{workflowResponse.message}</p></div>
+            </div>
+          )}
+        </div>
       </div>
-    );
-  };
+    </div>
+  );
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-5xl animate-fade-in">
-      <div className="mb-8"><h1 className="text-3xl font-extrabold text-gray-900">Configurações</h1><p className="text-gray-500">Gerencie canais, integrações e permissões.</p></div>
-      <div className="flex border-b border-gray-200 mb-8 overflow-x-auto">
-        <button onClick={() => setActiveTab('channels')} className={`pb-4 px-6 font-medium text-sm border-b-2 transition-colors ${activeTab === 'channels' ? 'border-brand-600 text-brand-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Canais</button>
-        {isAdmin && <button onClick={() => setActiveTab('users')} className={`pb-4 px-6 font-medium text-sm border-b-2 transition-colors ${activeTab === 'users' ? 'border-brand-600 text-brand-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Usuários</button>}
-        {isAdmin && <button onClick={() => setActiveTab('automation')} className={`pb-4 px-6 font-medium text-sm border-b-2 transition-colors ${activeTab === 'automation' ? 'border-brand-600 text-brand-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>Automação</button>}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+        <div><h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">Configurações</h1><p className="text-gray-500 mt-1">Gerencie canais, integrações e permissões.</p></div>
       </div>
-      {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center mb-6"><AlertCircle className="mr-2" />{error}</div>}
-      {successMessage && <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg flex items-center mb-6"><CheckCircle className="mr-2" />{successMessage}</div>}
+      <div className="flex border-b border-gray-200 mb-8 overflow-x-auto">
+        <button onClick={() => setActiveTab('channels')} className={`pb-4 px-6 font-medium text-sm transition-colors relative whitespace-nowrap ${activeTab === 'channels' ? 'text-brand-600' : 'text-gray-500 hover:text-gray-700'}`}>Canais e Integrações {activeTab === 'channels' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-brand-600 rounded-t-full" />}</button>
+        {isAdmin && <button onClick={() => setActiveTab('users')} className={`pb-4 px-6 font-medium text-sm transition-colors relative whitespace-nowrap ${activeTab === 'users' ? 'text-brand-600' : 'text-gray-500 hover:text-gray-700'}`}>Usuários {activeTab === 'users' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-brand-600 rounded-t-full" />}</button>}
+        {isAdmin && <button onClick={() => setActiveTab('automation')} className={`pb-4 px-6 font-medium text-sm transition-colors relative whitespace-nowrap ${activeTab === 'automation' ? 'text-brand-600' : 'text-gray-500 hover:text-gray-700'}`}>Automação (n8n) {activeTab === 'automation' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-brand-600 rounded-t-full" />}</button>}
+      </div>
+      {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center mb-6 animate-shake"><AlertCircle className="mr-2 flex-shrink-0" /><span>{error}</span></div>}
+      {successMessage && <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg flex items-center mb-6 animate-fade-in"><CheckCircle className="mr-2 flex-shrink-0" /><span>{successMessage}</span></div>}
       {activeTab === 'channels' && renderChannels()}
       {activeTab === 'users' && (isAdmin ? renderUsers() : <div className="p-8 text-center text-gray-500"><Lock className="mx-auto mb-2" />Acesso restrito.</div>)}
       {activeTab === 'automation' && (isAdmin ? renderAutomation() : <div className="p-8 text-center text-gray-500"><Lock className="mx-auto mb-2" />Acesso restrito.</div>)}
