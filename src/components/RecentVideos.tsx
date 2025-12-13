@@ -425,10 +425,10 @@ const RecentVideos: React.FC = () => {
         if (isScheduled) {
           await supabase.from('shorts_youtube').update({ publish_at: posting_date, status: 'Scheduled' }).eq('id', video.id);
           setVideos(prev => prev.filter(v => v.id !== video.id));
-          setNotice({ type: 'success', text: 'Vídeo agendado com sucesso!' });
+          setNotice({ type: 'success', text: `Vídeo agendado com sucesso! Canal: ${video.channel || '-'}` });
         } else {
           await supabase.from('shorts_youtube').update({ status: 'Posted', publish_at: posting_date }).eq('id', video.id);
-          setNotice({ type: 'success', text: 'Solicitação de publicação enviada!' });
+          setNotice({ type: 'success', text: `Solicitação de publicação enviada! Canal: ${video.channel || '-'}` });
         }
       } else {
         const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
@@ -470,7 +470,7 @@ const RecentVideos: React.FC = () => {
           .update({ status: options.scheduleDate ? 'Scheduled' : 'Posted', publish_at: options.scheduleDate || new Date().toISOString(), failed: false })
           .eq('id', video.id);
 
-        setNotice({ type: 'success', text: `Vídeo publicado com sucesso! ID: ${result.id}` });
+        setNotice({ type: 'success', text: `Vídeo publicado com sucesso! ID: ${result.id} | Canal: ${video.channel || '-'}` });
         setVideos(prev => prev.filter(v => v.id !== video.id));
       }
       
