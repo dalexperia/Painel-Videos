@@ -66,7 +66,7 @@ const ScheduledVideos: React.FC = () => {
         .from('shorts_youtube')
         .select('id, link_s3, title, description, publish_at, channel, youtube_id')
         .eq('failed', false)
-        .eq('status', 'Posted')
+        .eq('status', 'Scheduled')
         .not('publish_at', 'is', null)
         .gt('publish_at', new Date().toISOString())
         .order('publish_at', { ascending: true });
