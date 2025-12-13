@@ -99,12 +99,23 @@ const VideoDetailsModal: React.FC<VideoDetailsModalProps> = ({ video, onClose, o
       const basePrompt = formData.title || video.title || "Vídeo sem título";
       const results = await generateContentAI(aiConfig as any, basePrompt, field);
 
-      if (results && results.length > 0) {
-        setSuggestions(prev => ({ ...prev, [field]: results }));
-        setActiveSuggestionField(field);
-      } else {
-        throw new Error("A IA não retornou sugestões válidas.");
+      if (!results || results.length === 0) throw new Error("A IA não retornou sugestões válidas.");
+
+      // Ajusta quantidade e aplica sanitização leve para preview
+      let finalList = results.map(s => String(s).trim()).filter(Boolean);
+      if (field === 'tags') {
+        // 12–18 tags, sem espaços (usa hífen)
+        finalList = finalList
+          .map(t => t.replace(/[<>]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 30));
+        if (finalList.length < 12) finalList = finalList.slice(0, 12);
+        else finalList = finalList.slice(0, 18);
+      } else if (field === 'hashtags') {
+        // Exatamente 10
+        finalList = finalList.map(h => h.startsWith('#') ? h : `#${h}`).slice(0, 10);
       }
+
+      setSuggestions(prev => ({ ...prev, [field]: finalList }));
+      setActiveSuggestionField(field);
     } catch (err: any) {
       console.error("Erro ao gerar:", err);
       setError(err.message);
@@ -196,10 +207,24 @@ const VideoDetailsModal: React.FC<VideoDetailsModalProps> = ({ video, onClose, o
   const handleSave = async () => {
     setLoading(true);
     try {
+      // Sanitização conforme requisitos da YouTube API
+      const rawTags = formData.tags.split(',').map(t => t.trim());
+      const cleanedTags = rawTags
+        .filter(Boolean)
+        .map(t => t.replace(/[<>]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, ''))
+        .map(t => t.slice(0, 30));
+      let sum = 0;
+      const limitedTags: string[] = [];
+      for (const tag of cleanedTags) {
+        if (sum + tag.length > 500) break;
+        limitedTags.push(tag);
+        sum += tag.length;
+      }
+
       const updates = {
         title: formData.title,
         description: formData.description,
-        tags: formData.tags.split(',').map(t => t.trim()).filter(Boolean),
+        tags: limitedTags,
         hashtags: formData.hashtags.split(/[\s,]+/).map(t => t.trim()).filter(Boolean)
       };
 

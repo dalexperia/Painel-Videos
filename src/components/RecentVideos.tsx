@@ -19,6 +19,8 @@ const RecentVideos: React.FC = () => {
   const [videoToPost, setVideoToPost] = useState<Video | null>(null);
   const [isPostModalOpen, setIsPostModalOpen] = useState(false);
   const [isPosting, setIsPosting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [notice, setNotice] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -384,6 +386,8 @@ const RecentVideos: React.FC = () => {
   const openPostModal = (video: Video, e: React.MouseEvent) => {
     e.stopPropagation();
     setVideoToPost(video);
+    setUploadProgress(0);
+    setNotice(null);
     setIsPostModalOpen(true);
   };
 
@@ -421,10 +425,10 @@ const RecentVideos: React.FC = () => {
         if (isScheduled) {
           await supabase.from('shorts_youtube').update({ publish_at: posting_date, status: 'Scheduled' }).eq('id', video.id);
           setVideos(prev => prev.filter(v => v.id !== video.id));
-          alert('Vídeo agendado com sucesso!');
+          setNotice({ type: 'success', text: 'Vídeo agendado com sucesso!' });
         } else {
           await supabase.from('shorts_youtube').update({ status: 'Posted', publish_at: posting_date }).eq('id', video.id);
-          alert('Solicitação de publicação enviada!');
+          setNotice({ type: 'success', text: 'Solicitação de publicação enviada!' });
         }
       } else {
         const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
@@ -449,7 +453,8 @@ const RecentVideos: React.FC = () => {
           description: video.description || '',
           privacyStatus: (options.privacyStatus as 'private' | 'public' | 'unlisted') || 'private',
           publishAt: options.scheduleDate,
-          tags: Array.isArray(video.tags) ? video.tags : undefined
+          tags: Array.isArray(video.tags) ? video.tags : undefined,
+          onProgress: (p) => setUploadProgress(p)
         });
 
         await supabase
@@ -457,17 +462,15 @@ const RecentVideos: React.FC = () => {
           .update({ status: options.scheduleDate ? 'Scheduled' : 'Posted', publish_at: options.scheduleDate || new Date().toISOString(), failed: false })
           .eq('id', video.id);
 
-        alert(`Vídeo publicado com sucesso! ID: ${result.id}`);
+        setNotice({ type: 'success', text: `Vídeo publicado com sucesso! ID: ${result.id}` });
         setVideos(prev => prev.filter(v => v.id !== video.id));
       }
       
-      setIsPostModalOpen(false);
-      setVideoToPost(null);
-      if (selectedVideo?.id === video.id) setSelectedVideo(null);
+      // Mantém a modal aberta para exibir o aviso; usuário fecha manualmente
       
     } catch (error: any) {
       console.error('ERRO FATAL:', error);
-      alert(`Erro: ${error.message}`);
+      setNotice({ type: 'error', text: `Erro: ${error.message}` });
     } finally {
       setIsPosting(false);
     }
@@ -695,7 +698,7 @@ const RecentVideos: React.FC = () => {
         </div>
       )}
 
-      {videoToPost && <PostModal video={videoToPost} onClose={() => { setIsPostModalOpen(false); setVideoToPost(null); }} onPost={handlePost} isPosting={isPosting} />}
+      {videoToPost && <PostModal video={videoToPost} onClose={() => { setIsPostModalOpen(false); setVideoToPost(null); }} onPost={handlePost} isPosting={isPosting} uploadProgress={uploadProgress} notice={notice} />}
     </div>
   );
 };

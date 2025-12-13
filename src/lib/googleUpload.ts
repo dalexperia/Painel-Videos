@@ -113,6 +113,27 @@ export const uploadVideoToYouTube = async (
   accessToken: string,
   options: UploadOptions
 ): Promise<UploadResult> => {
+  const sanitizeTags = (tags?: string[]): string[] | undefined => {
+    if (!tags || tags.length === 0) return undefined;
+    const cleaned = tags
+      .map(t => (t ?? '').trim())
+      .filter(t => t.length > 0)
+      // remove caracteres proibidos e normaliza espaços para hífens
+      .map(t => t.replace(/[<>]/g, '').replace(/\s+/g, '-'))
+      // colapsa múltiplos hífens e remove hífens das pontas
+      .map(t => t.replace(/-+/g, '-').replace(/^-|-$/g, ''))
+      .map(t => t.slice(0, 30));
+    const totalLen = cleaned.reduce((acc, cur) => acc + cur.length, 0);
+    // Se exceder 500 chars no total, corta as últimas
+    let sum = 0;
+    const limited: string[] = [];
+    for (const tag of cleaned) {
+      if (sum + tag.length > 500) break;
+      limited.push(tag);
+      sum += tag.length;
+    }
+    return limited.length > 0 ? limited : undefined;
+  };
   const multipartUpload = async (): Promise<UploadResult> => {
     const boundary = 'foo_bar_' + Math.random().toString().slice(2);
     const delimiter = `--${boundary}`;
@@ -175,7 +196,7 @@ export const uploadVideoToYouTube = async (
     snippet: {
       title: options.title,
       description: options.description,
-      tags: options.tags,
+      tags: sanitizeTags(options.tags),
       categoryId: '22', // People & Blogs
     },
     status: (() => {

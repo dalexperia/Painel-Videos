@@ -28,9 +28,11 @@ interface PostModalProps {
     privacyStatus?: string 
   }) => void;
   isPosting: boolean;
+  uploadProgress?: number;
+  notice?: { type: 'success' | 'error' | 'info'; text: string } | null;
 }
 
-const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting }) => {
+const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting, uploadProgress = 0, notice = null }) => {
   const [activeTab, setActiveTab] = useState<'webhook' | 'api'>('webhook');
   const [webhookUrl, setWebhookUrl] = useState('');
   const [loadingConfig, setLoadingConfig] = useState(false);
@@ -306,6 +308,31 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
 
         {/* Footer Actions */}
         <div className="p-4 border-t border-gray-800 bg-[#1a1a1a] flex justify-end items-center gap-3 shrink-0 rounded-b-xl">
+          {notice && (
+            <div className={`flex-1 mr-4 p-2 rounded border text-[12px] ${
+              notice.type === 'success' 
+                ? 'bg-green-500/10 border-green-500/30 text-green-300' 
+                : notice.type === 'error' 
+                  ? 'bg-red-500/10 border-red-500/30 text-red-300' 
+                  : 'bg-blue-500/10 border-blue-500/30 text-blue-300'
+            }`}>
+              {notice.text}
+            </div>
+          )}
+          {activeTab === 'api' && isPosting && (
+            <div className="flex-1 mr-4">
+              <div className="flex justify-between text-[11px] text-gray-400 mb-1">
+                <span>Enviando para o YouTube...</span>
+                <span>{Math.round(uploadProgress)}%</span>
+              </div>
+              <div className="w-full bg-[#2a2a2a] rounded-full h-2 overflow-hidden">
+                <div 
+                  className="bg-red-600 h-2 rounded-full transition-all duration-300 ease-out" 
+                  style={{ width: `${Math.min(100, Math.max(0, uploadProgress))}%` }}
+                ></div>
+              </div>
+            </div>
+          )}
           <button
             onClick={onClose}
             className="px-4 py-2 text-sm font-medium text-gray-400 hover:text-white transition-colors rounded-md uppercase tracking-wide"

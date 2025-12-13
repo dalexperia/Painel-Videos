@@ -32,11 +32,24 @@ const getSystemInstruction = (type: GenerationType, context?: string): string =>
     
     case 'tags':
       return `${baseInstruction}
-      OBJETIVO: Gere 5 listas de tags (separadas por vírgula) para um vídeo sobre: "${context}".`;
+      OBJETIVO: Gere uma lista de tags específicas para o vídeo sobre: "${context}".
+      REGRAS:
+      - Gere entre 12 e 18 tags focadas no tema.
+      - Cada tag com no máximo 30 caracteres.
+      - Não use espaços nas tags: substitua espaços por hífens (ex: concurso-publico).
+      - Remova caracteres especiais como "<" e ">".
+      - Evite tags genéricas: ["shorts","viral","video","youtube","fyp","tiktok","capcut","dicas","tutorial"].
+      - Retorne APENAS um ARRAY JSON de strings.`;
     
     case 'hashtags':
       return `${baseInstruction}
-      OBJETIVO: Gere 5 combinações de hashtags para um vídeo sobre: "${context}".`;
+      OBJETIVO: Gere exatamente 10 hashtags relevantes para o vídeo sobre: "${context}".
+      REGRAS:
+      - Cada hashtag deve começar com "#".
+      - Sem espaços dentro das hashtags.
+      - Use letras minúsculas quando possível.
+      - Evite genéricas (#shorts #viral #fyp) a menos que não haja contexto.
+      - Retorne APENAS um ARRAY JSON de strings.`;
 
     case 'autocomplete_tags':
       return `${baseInstruction}
