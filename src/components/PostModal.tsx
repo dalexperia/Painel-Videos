@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Send, Globe, Server, Loader2, Clock, Lock, Eye, Zap, Youtube, ChevronDown, ChevronUp, Calendar as CalendarIcon } from 'lucide-react';
+import { X, Server, Loader2, Lock, Eye, Globe, Zap, Youtube, ChevronDown, ChevronUp } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 
 export interface Video {
@@ -134,201 +134,179 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fade-in">
-      <div className="bg-[#1a1a1a] w-full max-w-5xl h-[90vh] rounded-2xl shadow-2xl flex overflow-hidden border border-gray-800">
+      {/* Container Principal - Reduzido e Minimalista */}
+      <div className="bg-[#1a1a1a] w-full max-w-xl rounded-xl shadow-2xl flex flex-col border border-gray-800 max-h-[90vh]">
         
-        {/* Lado Esquerdo - Preview Imersivo */}
-        <div className="w-1/3 bg-black relative hidden md:flex items-center justify-center bg-gradient-to-b from-gray-900 to-black border-r border-gray-800">
-          <div className="relative w-full h-full max-h-full flex items-center justify-center">
-            <video 
-              src={video.link_s3} 
-              controls 
-              className="max-h-full max-w-full object-contain shadow-2xl"
-            />
-            <div className="absolute bottom-8 left-4 right-4 text-white pointer-events-none drop-shadow-md bg-gradient-to-t from-black/80 via-black/40 to-transparent p-4 rounded-xl">
-              <h3 className="font-bold text-lg line-clamp-2 mb-1">{video.title || 'Sem Título'}</h3>
-              {video.channel && (
-                <div className="flex items-center gap-2 text-sm opacity-90">
-                  <span className="w-2 h-2 rounded-full bg-red-500"></span>
-                  {video.channel}
-                </div>
-              )}
-            </div>
-          </div>
+        {/* Header */}
+        <div className="px-6 py-4 border-b border-gray-800 flex justify-between items-center shrink-0">
+          <h2 className="text-lg font-bold text-gray-100">Publicar Vídeo</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors p-1.5 hover:bg-gray-800 rounded-full">
+            <X size={20} />
+          </button>
         </div>
 
-        {/* Lado Direito - Formulário Estilo YouTube */}
-        <div className="flex-1 flex flex-col bg-[#1a1a1a] text-white">
+        {/* Conteúdo Scrollável */}
+        <div className="overflow-y-auto p-6 custom-scrollbar space-y-5">
           
-          {/* Header */}
-          <div className="px-6 py-4 border-b border-gray-800 flex justify-between items-center">
-            <h2 className="text-xl font-bold text-gray-100">Publicar Vídeo</h2>
-            <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors p-2 hover:bg-gray-800 rounded-full">
-              <X size={20} />
-            </button>
+          {/* Seletor de Método (Técnico) */}
+          <div className="bg-[#262626] p-3 rounded-lg border border-gray-700 space-y-3">
+            <div className="flex items-center gap-2 text-xs font-medium text-gray-300 uppercase tracking-wide">
+              <Server size={14} className="text-blue-400" />
+              Método de Envio
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setActiveTab('webhook')}
+                className={`flex-1 py-2 px-3 rounded-md text-sm font-medium border transition-all flex items-center justify-center gap-2 ${
+                  activeTab === 'webhook' 
+                    ? 'bg-blue-500/10 border-blue-500/50 text-blue-400' 
+                    : 'bg-[#1f1f1f] border-gray-700 text-gray-400 hover:bg-[#333]'
+                }`}
+              >
+                <Zap size={14} /> Webhook (n8n)
+              </button>
+              <button
+                onClick={() => setActiveTab('api')}
+                className={`flex-1 py-2 px-3 rounded-md text-sm font-medium border transition-all flex items-center justify-center gap-2 ${
+                  activeTab === 'api' 
+                    ? 'bg-red-500/10 border-red-500/50 text-red-400' 
+                    : 'bg-[#1f1f1f] border-gray-700 text-gray-400 hover:bg-[#333]'
+                }`}
+              >
+                <Youtube size={14} /> API Direta
+              </button>
+            </div>
+            
+            {activeTab === 'webhook' && (
+              <div className="mt-2 animate-fade-in">
+                <input
+                  type="text"
+                  value={webhookUrl}
+                  onChange={(e) => setWebhookUrl(e.target.value)}
+                  placeholder="URL do Webhook (https://...)"
+                  className="w-full bg-[#1f1f1f] border border-gray-700 rounded-md px-3 py-2 text-sm text-white focus:border-blue-500 outline-none placeholder-gray-600"
+                />
+              </div>
+            )}
           </div>
 
-          {/* Conteúdo Scrollável */}
-          <div className="flex-1 overflow-y-auto p-6 custom-scrollbar space-y-6">
+          {/* Seção Principal - Estilo YouTube Studio */}
+          <div className="space-y-3">
             
-            {/* Seletor de Método (Técnico) */}
-            <div className="bg-[#262626] p-4 rounded-xl border border-gray-700 space-y-3">
-              <div className="flex items-center gap-2 text-sm font-medium text-gray-300 mb-2">
-                <Server size={16} className="text-blue-400" />
-                Método de Envio
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setActiveTab('webhook')}
-                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium border transition-all flex items-center justify-center gap-2 ${
-                    activeTab === 'webhook' 
-                      ? 'bg-blue-500/10 border-blue-500/50 text-blue-400' 
-                      : 'bg-[#1f1f1f] border-gray-700 text-gray-400 hover:bg-[#333]'
-                  }`}
-                >
-                  <Zap size={14} /> Webhook (n8n)
-                </button>
-                <button
-                  onClick={() => setActiveTab('api')}
-                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium border transition-all flex items-center justify-center gap-2 ${
-                    activeTab === 'api' 
-                      ? 'bg-red-500/10 border-red-500/50 text-red-400' 
-                      : 'bg-[#1f1f1f] border-gray-700 text-gray-400 hover:bg-[#333]'
-                  }`}
-                >
-                  <Youtube size={14} /> API Direta
-                </button>
-              </div>
+            {/* Opção 1: Salvar ou Publicar */}
+            <div className={`border rounded-lg overflow-hidden transition-all ${publishMode === 'save' ? 'border-gray-600 bg-[#1f1f1f]' : 'border-gray-800 bg-[#1a1a1a]'}`}>
+              <button 
+                onClick={() => setPublishMode('save')}
+                className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-[#262626] transition-colors"
+              >
+                <span className="font-medium text-sm text-gray-200">Salvar ou publicar</span>
+                {publishMode === 'save' ? <ChevronUp size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
+              </button>
               
-              {activeTab === 'webhook' && (
-                <div className="mt-2">
-                  <label className="text-xs text-gray-500 mb-1 block">URL do Webhook</label>
-                  <input
-                    type="text"
-                    value={webhookUrl}
-                    onChange={(e) => setWebhookUrl(e.target.value)}
-                    placeholder="https://..."
-                    className="w-full bg-[#1f1f1f] border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 outline-none"
+              {publishMode === 'save' && (
+                <div className="px-4 pb-4 pt-1 space-y-1 animate-fade-in">
+                  <RadioOption 
+                    id="private" 
+                    label="Privado" 
+                    sublabel="Visível apenas para você"
+                    checked={visibility === 'private'} 
+                    onChange={() => setVisibility('private')}
+                    icon={Lock}
+                  />
+                  <RadioOption 
+                    id="unlisted" 
+                    label="Não listado" 
+                    sublabel="Visível com o link"
+                    checked={visibility === 'unlisted'} 
+                    onChange={() => setVisibility('unlisted')}
+                    icon={Eye}
+                  />
+                  <RadioOption 
+                    id="public" 
+                    label="Público" 
+                    sublabel="Visível para todos"
+                    checked={visibility === 'public'} 
+                    onChange={() => setVisibility('public')}
+                    icon={Globe}
                   />
                 </div>
               )}
             </div>
 
-            {/* Seção Principal - Estilo YouTube Studio */}
-            <div className="space-y-4">
-              
-              {/* Opção 1: Salvar ou Publicar */}
-              <div className={`border rounded-xl overflow-hidden transition-all ${publishMode === 'save' ? 'border-gray-600 bg-[#1f1f1f]' : 'border-gray-800 bg-[#1a1a1a]'}`}>
-                <button 
-                  onClick={() => setPublishMode('save')}
-                  className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-[#262626] transition-colors"
-                >
-                  <span className="font-medium text-sm text-gray-200">Salvar ou publicar</span>
-                  {publishMode === 'save' ? <ChevronUp size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
-                </button>
-                
-                {publishMode === 'save' && (
-                  <div className="px-4 pb-4 pt-2 space-y-1 animate-fade-in">
-                    <RadioOption 
-                      id="private" 
-                      label="Privado" 
-                      sublabel="Seu vídeo ficará visível apenas para você"
-                      checked={visibility === 'private'} 
-                      onChange={() => setVisibility('private')}
-                      icon={Lock}
-                    />
-                    <RadioOption 
-                      id="unlisted" 
-                      label="Não listado" 
-                      sublabel="Qualquer pessoa com o link do vídeo poderá vê-lo"
-                      checked={visibility === 'unlisted'} 
-                      onChange={() => setVisibility('unlisted')}
-                      icon={Eye}
-                    />
-                    <RadioOption 
-                      id="public" 
-                      label="Público" 
-                      sublabel="Todos podem ver seu vídeo"
-                      checked={visibility === 'public'} 
-                      onChange={() => setVisibility('public')}
-                      icon={Globe}
-                    />
-                  </div>
-                )}
-              </div>
+            {/* Opção 2: Programar */}
+            <div className={`border rounded-lg overflow-hidden transition-all ${publishMode === 'schedule' ? 'border-gray-600 bg-[#1f1f1f]' : 'border-gray-800 bg-[#1a1a1a]'}`}>
+              <button 
+                onClick={() => setPublishMode('schedule')}
+                className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-[#262626] transition-colors"
+              >
+                <span className="font-medium text-sm text-gray-200">Programar</span>
+                {publishMode === 'schedule' ? <ChevronUp size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
+              </button>
 
-              {/* Opção 2: Programar */}
-              <div className={`border rounded-xl overflow-hidden transition-all ${publishMode === 'schedule' ? 'border-gray-600 bg-[#1f1f1f]' : 'border-gray-800 bg-[#1a1a1a]'}`}>
-                <button 
-                  onClick={() => setPublishMode('schedule')}
-                  className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-[#262626] transition-colors"
-                >
-                  <span className="font-medium text-sm text-gray-200">Programar</span>
-                  {publishMode === 'schedule' ? <ChevronUp size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
-                </button>
-
-                {publishMode === 'schedule' && (
-                  <div className="px-4 pb-6 pt-2 animate-fade-in">
-                    <p className="text-xs text-gray-400 mb-4">
-                      Selecione uma data para tornar seu vídeo público.
-                    </p>
-                    
-                    <div className="flex gap-4">
-                      <div className="flex-1">
-                        <label className="text-xs font-medium text-gray-500 mb-1.5 block">Data</label>
-                        <input 
-                          type="date" 
-                          value={dateInput}
-                          onChange={(e) => setDateInput(e.target.value)}
-                          className="w-full bg-[#1a1a1a] border border-gray-600 rounded-sm px-3 py-2 text-sm text-white focus:border-blue-500 outline-none color-scheme-dark"
-                        />
-                      </div>
-                      <div className="w-32">
-                        <label className="text-xs font-medium text-gray-500 mb-1.5 block">Hora</label>
-                        <input 
-                          type="time" 
-                          value={timeInput}
-                          onChange={(e) => setTimeInput(e.target.value)}
-                          className="w-full bg-[#1a1a1a] border border-gray-600 rounded-sm px-3 py-2 text-sm text-white focus:border-blue-500 outline-none color-scheme-dark"
-                        />
-                      </div>
+              {publishMode === 'schedule' && (
+                <div className="px-4 pb-5 pt-2 animate-fade-in">
+                  <p className="text-xs text-gray-400 mb-4">
+                    Selecione uma data para tornar seu vídeo público.
+                  </p>
+                  
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <label className="text-xs font-medium text-gray-500 mb-1.5 block">Data</label>
+                      <input 
+                        type="date" 
+                        value={dateInput}
+                        onChange={(e) => setDateInput(e.target.value)}
+                        style={{ colorScheme: 'dark' }}
+                        className="w-full bg-[#1a1a1a] border border-gray-600 rounded-md px-3 py-2 text-sm text-white focus:border-blue-500 outline-none"
+                      />
                     </div>
-                    
-                    <div className="mt-4 text-xs text-gray-500">
-                      Fuso horário: Horário Padrão de Brasília
+                    <div className="w-32">
+                      <label className="text-xs font-medium text-gray-500 mb-1.5 block">Hora</label>
+                      <input 
+                        type="time" 
+                        value={timeInput}
+                        onChange={(e) => setTimeInput(e.target.value)}
+                        style={{ colorScheme: 'dark' }}
+                        className="w-full bg-[#1a1a1a] border border-gray-600 rounded-md px-3 py-2 text-sm text-white focus:border-blue-500 outline-none"
+                      />
                     </div>
                   </div>
-                )}
-              </div>
-
-            </div>
-          </div>
-
-          {/* Footer Actions - Alinhados à Direita */}
-          <div className="p-4 border-t border-gray-800 bg-[#1a1a1a] flex justify-end items-center gap-2">
-            <button
-              onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-gray-400 hover:text-white transition-colors rounded-sm uppercase tracking-wide"
-            >
-              Cancelar
-            </button>
-            <button
-              onClick={handleSubmit}
-              disabled={isPosting || !isFormValid()}
-              className={`px-6 py-2 text-white rounded-sm font-medium text-sm transition-all uppercase tracking-wide flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${
-                activeTab === 'api' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'
-              }`}
-            >
-              {isPosting ? (
-                <>
-                  <Loader2 size={16} className="animate-spin" /> Processando...
-                </>
-              ) : (
-                publishMode === 'schedule' ? 'Programar' : (visibility === 'public' ? 'Publicar' : 'Salvar')
+                  
+                  <div className="mt-3 text-xs text-gray-500">
+                    Fuso horário: Horário Padrão de Brasília
+                  </div>
+                </div>
               )}
-            </button>
-          </div>
+            </div>
 
+          </div>
         </div>
+
+        {/* Footer Actions - Alinhados à Direita */}
+        <div className="p-4 border-t border-gray-800 bg-[#1a1a1a] flex justify-end items-center gap-3 shrink-0 rounded-b-xl">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm font-medium text-gray-400 hover:text-white transition-colors rounded-md uppercase tracking-wide"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={isPosting || !isFormValid()}
+            className={`px-6 py-2 text-white rounded-md font-medium text-sm transition-all uppercase tracking-wide flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${
+              activeTab === 'api' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'
+            }`}
+          >
+            {isPosting ? (
+              <>
+                <Loader2 size={16} className="animate-spin" /> Processando...
+              </>
+            ) : (
+              publishMode === 'schedule' ? 'Programar' : (visibility === 'public' ? 'Publicar' : 'Salvar')
+            )}
+          </button>
+        </div>
+
       </div>
     </div>
   );
