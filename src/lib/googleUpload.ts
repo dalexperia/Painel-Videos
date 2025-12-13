@@ -96,7 +96,15 @@ export const requestGoogleAuth = async (): Promise<string> => {
         reject(resp);
       }
       // O token vem em resp.access_token
-      resolve(resp.access_token);
+      const token = resp.access_token;
+      if (!token) {
+        reject(new Error('Falha ao obter access_token do Google.'));
+        return;
+      }
+      // Verificação leve de escopo: tokens emitidos sem youtube.upload causam 400 sem CORS
+      // Não há endpoint trivial para inspecionar escopos no client; deixamos log de diagnóstico
+      console.log('Token obtido do Google Identity Services.');
+      resolve(token);
     };
 
     // Abre o popup de consentimento
@@ -122,11 +130,16 @@ export const uploadVideoToYouTube = async (
       tags: options.tags,
       categoryId: '22', // People & Blogs
     },
-    status: {
-      privacyStatus: options.privacyStatus,
-      publishAt: options.publishAt, // Só funciona se privacyStatus for 'private'
-      selfDeclaredMadeForKids: false,
-    },
+    status: (() => {
+      const s: any = {
+        privacyStatus: options.privacyStatus,
+        selfDeclaredMadeForKids: false,
+      };
+      if (options.privacyStatus === 'private' && options.publishAt) {
+        s.publishAt = options.publishAt;
+      }
+      return s;
+    })(),
   };
 
   console.log("Iniciando Resumable Upload...");
@@ -149,7 +162,7 @@ export const uploadVideoToYouTube = async (
 
   if (!initResponse.ok) {
     const errorText = await initResponse.text();
-    console.error("Erro ao iniciar upload (Init Phase):", errorText);
+    console.error("Erro ao iniciar upload (Init Phase):", initResponse.status, errorText);
     
     if (initResponse.status === 403 || errorText.includes('CORS')) {
       throw new Error('Bloqueio de Origem (CORS) ou Permissão. Verifique se a URL exata do site está no Google Cloud Console e aguarde a propagação.');

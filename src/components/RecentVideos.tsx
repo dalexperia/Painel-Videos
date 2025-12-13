@@ -4,6 +4,7 @@ import { Trash2, AlertCircle, RefreshCw, LayoutGrid, List, Download, X, Calendar
 import PostModal, { Video as PostModalVideo } from './PostModal';
 import { generateContentAI } from '../lib/ai';
 import VideoSmartPreview from './VideoSmartPreview';
+import { initializeGoogleApi, requestGoogleAuth, uploadVideoToYouTube } from '../lib/googleUpload';
 
 // Reutiliza a interface do PostModal para consistência
 type Video = PostModalVideo;
@@ -386,43 +387,78 @@ const RecentVideos: React.FC = () => {
     setIsPostModalOpen(true);
   };
 
-  const handlePost = async (video: PostModalVideo, options: { scheduleDate?: string; webhookUrl: string }) => {
+  const handlePost = async (video: PostModalVideo, options: { scheduleDate?: string; webhookUrl?: string; apiKey?: string; method: 'webhook' | 'api'; privacyStatus?: string }) => {
     setIsPosting(true);
     try {
-      if (!options.webhookUrl) throw new Error('URL do Webhook não está definida.');
-      const isScheduled = !!options.scheduleDate;
-      let privacy_status = isScheduled ? 'private' : 'public';
-      let posting_date = isScheduled ? options.scheduleDate! : new Date().toISOString();
+      if (options.method === 'webhook') {
+        if (!options.webhookUrl) throw new Error('URL do Webhook não está definida.');
+        const isScheduled = !!options.scheduleDate;
+        const privacy_status = isScheduled ? 'private' : (options.privacyStatus || 'public');
+        const posting_date = isScheduled ? options.scheduleDate! : new Date().toISOString();
 
-      const payload = {
-        link_drive: video.link_drive || "",
-        link_s3: video.link_s3,
-        title: video.title,
-        description: video.description || "",
-        hashtags: Array.isArray(video.hashtags) ? video.hashtags : [],
-        tags: Array.isArray(video.tags) ? video.tags : [],
-        channel: video.channel || "",
-        baserow_id: video.baserow_id || 0,
-        id: video.id,
-        privacy_status: privacy_status,
-        posting_date: posting_date
-      };
+        const payload = {
+          link_drive: video.link_drive || "",
+          link_s3: video.link_s3,
+          title: video.title,
+          description: video.description || "",
+          hashtags: Array.isArray(video.hashtags) ? video.hashtags : [],
+          tags: Array.isArray(video.tags) ? video.tags : [],
+          channel: video.channel || "",
+          baserow_id: video.baserow_id || 0,
+          id: video.id,
+          privacy_status,
+          posting_date
+        };
 
-      const response = await fetch(options.webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+        const response = await fetch(options.webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
 
-      if (!response.ok) throw new Error(`Erro no Webhook: ${response.status}`);
-      
-      if (isScheduled) {
-        await supabase.from('shorts_youtube').update({ publish_at: posting_date }).eq('id', video.id);
-        // O Realtime vai atualizar a lista, mas removemos localmente para feedback imediato
-        setVideos(prev => prev.filter(v => v.id !== video.id));
-        alert('Vídeo agendado com sucesso!');
+        if (!response.ok) throw new Error(`Erro no Webhook: ${response.status}`);
+        
+        if (isScheduled) {
+          await supabase.from('shorts_youtube').update({ publish_at: posting_date, status: 'Scheduled' }).eq('id', video.id);
+          setVideos(prev => prev.filter(v => v.id !== video.id));
+          alert('Vídeo agendado com sucesso!');
+        } else {
+          await supabase.from('shorts_youtube').update({ status: 'Posted', publish_at: posting_date }).eq('id', video.id);
+          alert('Solicitação de publicação enviada!');
+        }
       } else {
-        alert('Solicitação de publicação enviada!');
+        const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+        if (!clientId) throw new Error('VITE_GOOGLE_CLIENT_ID não está configurado.');
+        await initializeGoogleApi(clientId);
+        const accessToken = await requestGoogleAuth();
+
+        let videoBlob: Blob;
+        try {
+          const vidResponse = await fetch(video.link_s3);
+          if (!vidResponse.ok) throw new Error(`Erro ao baixar vídeo: ${vidResponse.status} ${vidResponse.statusText}`);
+          videoBlob = await vidResponse.blob();
+        } catch (fetchError: any) {
+          if (fetchError.message === 'Failed to fetch') {
+            throw new Error('Falha ao baixar o vídeo (CORS). Configure o CORS do bucket para permitir esta origem.');
+          }
+          throw fetchError;
+        }
+
+        const result = await uploadVideoToYouTube(videoBlob, accessToken, {
+          title: video.title,
+          description: video.description || '',
+          privacyStatus: (options.privacyStatus as 'private' | 'public' | 'unlisted') || 'private',
+          publishAt: options.scheduleDate,
+          tags: Array.isArray(video.tags) ? video.tags : undefined
+        });
+
+        await supabase
+          .from('shorts_youtube')
+          .update({ status: options.scheduleDate ? 'Scheduled' : 'Posted', publish_at: options.scheduleDate || new Date().toISOString(), failed: false })
+          .eq('id', video.id);
+
+        alert(`Vídeo publicado com sucesso! ID: ${result.id}`);
+        setVideos(prev => prev.filter(v => v.id !== video.id));
       }
       
       setIsPostModalOpen(false);
