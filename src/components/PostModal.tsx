@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { X, Server, Loader2, Lock, Eye, Globe, Zap, Youtube, ChevronDown, ChevronUp } from 'lucide-react';
+import { X, Server, Loader2, Lock, Eye, Globe, Zap, Youtube, ChevronDown, ChevronUp, ShieldCheck } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
+import { CustomDatePicker, CustomTimePicker } from './ui/DateTimeInputs';
 
 export interface Video {
   id: string | number;
@@ -19,7 +20,13 @@ export interface Video {
 interface PostModalProps {
   video: Video;
   onClose: () => void;
-  onPost: (video: Video, options: { scheduleDate?: string; webhookUrl?: string; method: 'webhook' | 'api'; privacyStatus?: string }) => void;
+  onPost: (video: Video, options: { 
+    scheduleDate?: string; 
+    webhookUrl?: string; 
+    apiKey?: string;
+    method: 'webhook' | 'api'; 
+    privacyStatus?: string 
+  }) => void;
   isPosting: boolean;
 }
 
@@ -32,7 +39,7 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
   const [publishMode, setPublishMode] = useState<'save' | 'schedule'>('save');
   const [visibility, setVisibility] = useState<'private' | 'unlisted' | 'public'>('private');
   
-  // Data e Hora separados para inputs nativos
+  // Data e Hora
   const [dateInput, setDateInput] = useState('');
   const [timeInput, setTimeInput] = useState('');
 
@@ -44,7 +51,7 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
     setTimeInput('10:00');
   }, []);
 
-  // Busca a configuração do canal
+  // Busca apenas o Webhook da configuração do canal
   useEffect(() => {
     const fetchChannelConfig = async () => {
       if (!video.channel) return;
@@ -69,7 +76,13 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
   }, [video.channel]);
 
   const handleSubmit = () => {
-    if (activeTab === 'webhook' && !webhookUrl) return;
+    // Validações
+    if (activeTab === 'webhook' && !webhookUrl) {
+      alert("Por favor, configure a URL do Webhook.");
+      return;
+    }
+    
+    // Para API Direta, não validamos API Key pois usa OAuth (Client ID do .env)
     
     let finalScheduleDate: string | undefined = undefined;
 
@@ -79,16 +92,22 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
       finalScheduleDate = combined.toISOString();
     }
 
+    // Define uma URL de webhook "dummy" se for API, para passar pela validação do pai
+    // Isso resolve o erro "URL do Webhook não está definida"
+    const effectiveWebhookUrl = activeTab === 'webhook' ? webhookUrl : 'https://oauth.google/placeholder';
+
     onPost(video, {
       scheduleDate: finalScheduleDate,
-      webhookUrl: activeTab === 'webhook' ? webhookUrl : undefined,
+      webhookUrl: effectiveWebhookUrl,
+      apiKey: undefined, // Não usamos API Key para upload
       method: activeTab,
-      privacyStatus: publishMode === 'save' ? visibility : 'private' // Se agendado, o vídeo sobe como privado inicialmente
+      privacyStatus: publishMode === 'save' ? visibility : 'private'
     });
   };
 
   const isFormValid = () => {
     if (activeTab === 'webhook' && !webhookUrl) return false;
+    // API Direta é sempre válida aqui, pois a auth é feita no clique
     if (publishMode === 'schedule' && (!dateInput || !timeInput)) return false;
     return true;
   };
@@ -134,7 +153,7 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fade-in">
-      {/* Container Principal - Reduzido e Minimalista */}
+      {/* Container Principal */}
       <div className="bg-[#1a1a1a] w-full max-w-xl rounded-xl shadow-2xl flex flex-col border border-gray-800 max-h-[90vh]">
         
         {/* Header */}
@@ -148,7 +167,7 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
         {/* Conteúdo Scrollável */}
         <div className="overflow-y-auto p-6 custom-scrollbar space-y-5">
           
-          {/* Seletor de Método (Técnico) */}
+          {/* Seletor de Método */}
           <div className="bg-[#262626] p-3 rounded-lg border border-gray-700 space-y-3">
             <div className="flex items-center gap-2 text-xs font-medium text-gray-300 uppercase tracking-wide">
               <Server size={14} className="text-blue-400" />
@@ -186,6 +205,15 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
                   placeholder="URL do Webhook (https://...)"
                   className="w-full bg-[#1f1f1f] border border-gray-700 rounded-md px-3 py-2 text-sm text-white focus:border-blue-500 outline-none placeholder-gray-600"
                 />
+              </div>
+            )}
+
+            {activeTab === 'api' && (
+              <div className="mt-2 animate-fade-in">
+                 <div className="text-xs flex items-center gap-2 p-2 rounded border bg-red-500/10 border-red-500/30 text-red-400">
+                    <ShieldCheck size={14} />
+                    <span>Usa autenticação segura do Google (OAuth). Você fará login na próxima etapa.</span>
+                 </div>
               </div>
             )}
           </div>
@@ -234,10 +262,10 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
             </div>
 
             {/* Opção 2: Programar */}
-            <div className={`border rounded-lg overflow-hidden transition-all ${publishMode === 'schedule' ? 'border-gray-600 bg-[#1f1f1f]' : 'border-gray-800 bg-[#1a1a1a]'}`}>
+            <div className={`border rounded-lg transition-all ${publishMode === 'schedule' ? 'border-gray-600 bg-[#1f1f1f] overflow-visible' : 'border-gray-800 bg-[#1a1a1a] overflow-hidden'}`}>
               <button 
                 onClick={() => setPublishMode('schedule')}
-                className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-[#262626] transition-colors"
+                className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-[#262626] transition-colors rounded-t-lg"
               >
                 <span className="font-medium text-sm text-gray-200">Programar</span>
                 {publishMode === 'schedule' ? <ChevronUp size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
@@ -252,22 +280,16 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
                   <div className="flex gap-3">
                     <div className="flex-1">
                       <label className="text-xs font-medium text-gray-500 mb-1.5 block">Data</label>
-                      <input 
-                        type="date" 
-                        value={dateInput}
-                        onChange={(e) => setDateInput(e.target.value)}
-                        style={{ colorScheme: 'dark' }}
-                        className="w-full bg-[#1a1a1a] border border-gray-600 rounded-md px-3 py-2 text-sm text-white focus:border-blue-500 outline-none"
+                      <CustomDatePicker 
+                        value={dateInput} 
+                        onChange={setDateInput} 
                       />
                     </div>
                     <div className="w-32">
                       <label className="text-xs font-medium text-gray-500 mb-1.5 block">Hora</label>
-                      <input 
-                        type="time" 
-                        value={timeInput}
-                        onChange={(e) => setTimeInput(e.target.value)}
-                        style={{ colorScheme: 'dark' }}
-                        className="w-full bg-[#1a1a1a] border border-gray-600 rounded-md px-3 py-2 text-sm text-white focus:border-blue-500 outline-none"
+                      <CustomTimePicker 
+                        value={timeInput} 
+                        onChange={setTimeInput} 
                       />
                     </div>
                   </div>
@@ -282,7 +304,7 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
           </div>
         </div>
 
-        {/* Footer Actions - Alinhados à Direita */}
+        {/* Footer Actions */}
         <div className="p-4 border-t border-gray-800 bg-[#1a1a1a] flex justify-end items-center gap-3 shrink-0 rounded-b-xl">
           <button
             onClick={onClose}
