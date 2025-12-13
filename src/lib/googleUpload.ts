@@ -51,7 +51,7 @@ export const initializeGoogleApi = async (clientId: string): Promise<void> => {
       // @ts-ignore
       tokenClient = window.google.accounts.oauth2.initTokenClient({
         client_id: clientId,
-        scope: 'https://www.googleapis.com/auth/youtube.upload',
+        scope: 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/youtube.force-ssl',
         callback: '', // Será sobrescrito na chamada
       });
       gisInited = true;
@@ -96,19 +96,11 @@ export const requestGoogleAuth = async (): Promise<string> => {
         reject(resp);
       }
       // O token vem em resp.access_token
-      const token = resp.access_token;
-      if (!token) {
-        reject(new Error('Falha ao obter access_token do Google.'));
-        return;
-      }
-      // Verificação leve de escopo: tokens emitidos sem youtube.upload causam 400 sem CORS
-      // Não há endpoint trivial para inspecionar escopos no client; deixamos log de diagnóstico
-      console.log('Token obtido do Google Identity Services.');
-      resolve(token);
+      resolve(resp.access_token);
     };
 
     // Abre o popup de consentimento
-    tokenClient.requestAccessToken({ prompt: '' });
+    tokenClient.requestAccessToken({ prompt: 'select_account' });
   });
 };
 
@@ -121,7 +113,63 @@ export const uploadVideoToYouTube = async (
   accessToken: string,
   options: UploadOptions
 ): Promise<UploadResult> => {
-  
+  const multipartUpload = async (): Promise<UploadResult> => {
+    const boundary = 'foo_bar_' + Math.random().toString().slice(2);
+    const delimiter = `--${boundary}`;
+    const closeDelimiter = `--${boundary}--`;
+    const metadataJson = JSON.stringify({
+      snippet: {
+        title: options.title,
+        description: options.description,
+        tags: options.tags,
+        categoryId: '22',
+      },
+      status: (() => {
+        const s: any = {
+          privacyStatus: options.privacyStatus,
+          selfDeclaredMadeForKids: false,
+        };
+        if (options.privacyStatus === 'private' && options.publishAt) {
+          s.publishAt = options.publishAt;
+        }
+        return s;
+      })(),
+    });
+
+    const multipartBody = new Blob(
+      [
+        `${delimiter}\r\n`,
+        'Content-Type: application/json; charset=UTF-8\r\n\r\n',
+        metadataJson,
+        '\r\n',
+        `${delimiter}\r\n`,
+        `Content-Type: ${videoBlob.type || 'video/mp4'}\r\n\r\n`,
+        videoBlob,
+        '\r\n',
+        `${closeDelimiter}\r\n`,
+      ],
+      { type: 'multipart/related; boundary=' + boundary }
+    );
+
+    const resp = await fetch(
+      'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=multipart&part=snippet,status',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': `multipart/related; boundary=${boundary}`,
+        },
+        body: multipartBody,
+      }
+    );
+    if (!resp.ok) {
+      const txt = await resp.text();
+      throw new Error(`Falha no upload multipart (${resp.status}): ${txt}`);
+    }
+    const json = await resp.json();
+    return { id: json.id, etag: json.etag };
+  };
+
   // 1. Preparar Metadados
   const metadata = {
     snippet: {
@@ -146,19 +194,23 @@ export const uploadVideoToYouTube = async (
 
   // 2. Passo 1: Iniciar Sessão de Upload (POST para obter URL de upload)
   // Isso envia apenas os metadados primeiro.
-  const initResponse = await fetch(
-    'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-        'X-Upload-Content-Length': videoBlob.size.toString(),
-        'X-Upload-Content-Type': videoBlob.type || 'video/mp4'
-      },
-      body: JSON.stringify(metadata)
-    }
-  );
+  let initResponse: Response;
+  try {
+    initResponse = await fetch(
+      'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(metadata)
+      }
+    );
+  } catch (networkErr: any) {
+    console.error('Init Phase falhou por rede/CORS. Tentando multipart...', networkErr?.message || networkErr);
+    return await multipartUpload();
+  }
 
   if (!initResponse.ok) {
     const errorText = await initResponse.text();
@@ -167,7 +219,9 @@ export const uploadVideoToYouTube = async (
     if (initResponse.status === 403 || errorText.includes('CORS')) {
       throw new Error('Bloqueio de Origem (CORS) ou Permissão. Verifique se a URL exata do site está no Google Cloud Console e aguarde a propagação.');
     }
-    throw new Error(`Erro na inicialização do upload: ${initResponse.statusText}`);
+    // Fallback para multipart quando a inicialização é rejeitada
+    console.warn('Init Phase rejeitada. Executando fallback multipart...');
+    return await multipartUpload();
   }
 
   // O Google retorna a URL de upload no header 'Location'
