@@ -448,9 +448,17 @@ const RecentVideos: React.FC = () => {
           throw fetchError;
         }
 
+        const hashtagsText = Array.isArray(video.hashtags)
+          ? video.hashtags.map(h => {
+              const s = String(h || '').trim();
+              const t = s.startsWith('#') ? s : `#${s}`;
+              return t.replace(/\s+/g, '');
+            }).filter(Boolean)
+          : [];
+        const finalDescription = `${video.description || ''}${hashtagsText.length ? `\n\n${hashtagsText.join(' ')}` : ''}`;
         const result = await uploadVideoToYouTube(videoBlob, accessToken, {
           title: video.title,
-          description: video.description || '',
+          description: finalDescription,
           privacyStatus: (options.privacyStatus as 'private' | 'public' | 'unlisted') || 'private',
           publishAt: options.scheduleDate,
           tags: Array.isArray(video.tags) ? video.tags : undefined,

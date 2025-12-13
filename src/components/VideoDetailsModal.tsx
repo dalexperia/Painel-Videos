@@ -58,6 +58,19 @@ const VideoDetailsModal: React.FC<VideoDetailsModalProps> = ({ video, onClose, o
     }
   }, [video]);
 
+  // Sincroniza hashtags no final da descrição automaticamente
+  useEffect(() => {
+    const hashtagsArray = formData.hashtags.split(/[\s,]+/).map(t => t.trim()).filter(Boolean);
+    const normalizedHashtags = hashtagsArray.map(h => (h.startsWith('#') ? h : `#${h}`)).map(h => h.replace(/\s+/g, ''));
+    const joined = normalizedHashtags.join(' ');
+    setFormData(prev => {
+      const base = prev.description.replace(/(?:\n\n#\S+(?:\s#\S+)*)$/, '');
+      const nextDesc = joined.length ? `${base}\n\n${joined}` : base;
+      if (nextDesc === prev.description) return prev;
+      return { ...prev, description: nextDesc };
+    });
+  }, [formData.hashtags]);
+
   // Fecha sugestões ao clicar fora
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -116,6 +129,24 @@ const VideoDetailsModal: React.FC<VideoDetailsModalProps> = ({ video, onClose, o
 
       setSuggestions(prev => ({ ...prev, [field]: finalList }));
       setActiveSuggestionField(field);
+      
+      // Atualiza os campos diretamente para refletir no preview
+      if (field === 'tags') {
+        const joined = finalList.join(', ');
+        setFormData(prev => ({ ...prev, tags: joined }));
+      } else if (field === 'hashtags') {
+        const normalized = finalList.map(h => (h.startsWith('#') ? h : `#${h}`)).map(h => h.replace(/\s+/g, ''));
+        const joined = normalized.join(' ');
+        setFormData(prev => {
+          const base = prev.description.replace(/(?:\n\n#\S+(?:\s#\S+)*)$/, '');
+          const desc = joined.length ? `${base}\n\n${joined}` : base;
+          return { ...prev, hashtags: joined, description: desc };
+        });
+      } else if (field === 'title' || field === 'description') {
+        if (finalList.length > 0) {
+          setFormData(prev => ({ ...prev, [field]: finalList[0] }));
+        }
+      }
     } catch (err: any) {
       console.error("Erro ao gerar:", err);
       setError(err.message);
@@ -221,11 +252,17 @@ const VideoDetailsModal: React.FC<VideoDetailsModalProps> = ({ video, onClose, o
         sum += tag.length;
       }
 
+      const hashtagsInline = limitedTags.length > 0 ? [] : []; // placeholder to keep diff tidy
+      const hashtagsArray = formData.hashtags.split(/[\s,]+/).map(t => t.trim()).filter(Boolean);
+      const normalizedHashtags = hashtagsArray.map(h => (h.startsWith('#') ? h : `#${h}`)).map(h => h.replace(/\s+/g, ''));
+
+      const descriptionWithHashtags = `${formData.description}${normalizedHashtags.length ? `\n\n${normalizedHashtags.join(' ')}` : ''}`;
+
       const updates = {
         title: formData.title,
-        description: formData.description,
+        description: descriptionWithHashtags,
         tags: limitedTags,
-        hashtags: formData.hashtags.split(/[\s,]+/).map(t => t.trim()).filter(Boolean)
+        hashtags: normalizedHashtags
       };
 
       const { error } = await supabase
@@ -320,6 +357,19 @@ const VideoDetailsModal: React.FC<VideoDetailsModalProps> = ({ video, onClose, o
               autoComplete="off"
             />
           )}
+          {field === 'tags' && (
+            <div className="mt-1 text-[11px] text-gray-500">
+              {(formData.tags ? formData.tags.split(',').map(t => t.trim()).filter(Boolean).length : 0)} tags
+            </div>
+          )}
+          {field === 'hashtags' && (
+            <div className="mt-1 text-[11px] text-gray-500 flex items-center gap-2">
+              <span>{(formData.hashtags ? formData.hashtags.split(/\s+/).filter(Boolean).length : 0)} hashtags</span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/30">
+                Inseridas na descrição
+              </span>
+            </div>
+          )}
 
           {/* Dropdown de Sugestões */}
           {isOpen && hasSuggestions && (
@@ -404,8 +454,21 @@ const VideoDetailsModal: React.FC<VideoDetailsModalProps> = ({ video, onClose, o
               </div>
             )}
 
-            {renderFieldWithSuggestions('title', 'Título', 'input', 'Digite um título chamativo...')}
-            {renderFieldWithSuggestions('description', 'Descrição', 'textarea', 'Sobre o que é este vídeo?')}
+            {(() => {
+              const hashtagsArray = formData.hashtags.split(/[\s,]+/).map(t => t.trim()).filter(Boolean);
+              const normalizedHashtags = hashtagsArray.map(h => (h.startsWith('#') ? h : `#${h}`)).map(h => h.replace(/\s+/g, ''));
+              const descriptionPreview = `${formData.description}${normalizedHashtags.length ? `\n\n${normalizedHashtags.join(' ')}` : ''}`;
+              return (
+                <>
+                  {renderFieldWithSuggestions('title', 'Título', 'input', 'Digite um título chamativo...')}
+                  {renderFieldWithSuggestions('description', 'Descrição', 'textarea', 'Sobre o que é este vídeo?')}
+                  <div className="bg-[#191919] border border-gray-800 rounded-lg p-4">
+                    <div className="text-xs font-semibold text-gray-400 uppercase mb-2">Pré-visualização da descrição</div>
+                    <pre className="whitespace-pre-wrap text-sm text-gray-200">{descriptionPreview}</pre>
+                  </div>
+                </>
+              );
+            })()}
             {renderFieldWithSuggestions('tags', 'Tags', 'textarea', 'shorts, viral, youtube...')}
             {renderFieldWithSuggestions('hashtags', 'Hashtags', 'input', '#shorts #viral')}
 
