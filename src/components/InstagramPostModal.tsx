@@ -65,7 +65,8 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
   
   // Prompt Enhancement State
   const [isEnhancing, setIsEnhancing] = useState(false);
-  const [enhancedPrompts, setEnhancedPrompts] = useState<string[]>([]);
+  const [enhancedPrompts, setEnhancedPrompts] = useState<Array<{ pt: string; en: string }>>([]);
+  const [selectedEnglishPromptForWebhook, setSelectedEnglishPromptForWebhook] = useState<string>('');
   const [channelSettings, setChannelSettings] = useState<ChannelSettings | null>(null);
 
   // Gallery State
@@ -119,10 +120,15 @@ const fetchChannelSettings = async () => {
 
 
 
-      const systemPrompt = `You are a creative AI assistant. Given a prompt idea, generate 3 more detailed and creative variations that can be used to generate images. Each variation should be separated by "---". The variations must be in English.`;
       const enhanced = await generateContentAI(aiConfig, prompt, 'image_prompt');
       
-      setEnhancedPrompts(enhanced);
+      // A IA agora retorna um array de objetos { pt: string, en: string }
+      if (Array.isArray(enhanced) && enhanced.every(item => typeof item === 'object' && item !== null && 'pt' in item && 'en' in item)) {
+        setEnhancedPrompts(enhanced as Array<{ pt: string; en: string }>);
+      } else {
+        // Fallback caso a IA retorne um formato inesperado (ex: array de strings)
+        setEnhancedPrompts(enhanced.map(item => ({ pt: String(item), en: String(item) })));
+      }
 
     } catch (error: any) {
       console.error('Erro ao aprimorar prompt:', error);
@@ -259,11 +265,11 @@ const fetchChannelSettings = async () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          id: record.id,
-          prompt: prompt,
-          channel: channelConfig.name,
-          format: imageFormat
-        })
+      id: record.id,
+      prompt: selectedEnglishPromptForWebhook || prompt,
+      channel: channelConfig.name,
+      format: imageFormat
+    })
       });
 
       if (!response.ok) throw new Error('Erro ao iniciar geração no n8n');
@@ -531,20 +537,25 @@ const fetchChannelSettings = async () => {
 
                 {/* Enhanced Suggestions */}
                 {enhancedPrompts.length > 0 && (
-                  <div className="mt-3 space-y-2 animate-fade-in">
-                    <p className="text-xs font-bold text-gray-500 flex items-center gap-1">
-                      <Lightbulb size={12} /> Sugestões:
+                  <div className="mt-4 p-4 bg-purple-50 rounded-lg border border-purple-200 animate-fade-in">
+                    <p className="text-sm font-semibold text-purple-800 mb-3 flex items-center gap-2">
+                      <Lightbulb size={16} /> Sugestões:
                     </p>
-                    {enhancedPrompts.map((suggestion, idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => setPrompt(suggestion)}
-                        className="w-full text-left text-xs p-2 bg-purple-50 hover:bg-purple-100 text-purple-800 rounded border border-purple-100 transition-colors"
-                      >
-                        {suggestion}
-                      </button>
-                    ))}
+                    <div className="space-y-2">
+                      {enhancedPrompts.map((suggestion, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            setPrompt(suggestion.pt);
+                            setSelectedEnglishPromptForWebhook(suggestion.en);
+                          }}
+                          className="w-full text-left text-xs p-2 bg-purple-100 hover:bg-purple-200 text-purple-800 rounded border border-purple-200 transition-colors"
+                        >
+                          {suggestion.pt}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

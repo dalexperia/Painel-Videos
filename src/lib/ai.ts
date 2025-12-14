@@ -68,8 +68,14 @@ const getSystemInstruction = (type: GenerationType, context?: string): string =>
       OBJETIVO: Você é um Engenheiro de Prompt (Prompt Engineer) especialista em Midjourney e DALL-E 3.
       TAREFA: Melhore a ideia básica do usuário para criar uma imagem visualmente impressionante.
       CONTEXTO: O usuário quer uma imagem sobre: "${context}".
-      SAÍDA: Gere 3 variações de prompts detalhados, em INGLÊS (pois as IAs de imagem entendem melhor), focando em iluminação, estilo, câmera e detalhes artísticos.
-      Retorne APENAS um ARRAY JSON de strings.`;
+      SAÍDA: Gere 3 variações de prompts detalhados. Para cada variação, forneça duas versões: uma no mesmo idioma do CONTEXTO e outra em INGLÊS. Foque em iluminação, estilo, câmera e detalhes artísticos.
+          Retorne APENAS um ARRAY JSON de OBJETOS, onde cada objeto tem as chaves "pt" (para o prompt no idioma do CONTEXTO) e "en" (para o prompt em INGLÊS).
+          Exemplo de formato de saída:
+          [
+            { "pt": "Prompt detalhado em português 1", "en": "Detailed prompt in English 1" },
+            { "pt": "Prompt detalhado em português 2", "en": "Detailed prompt in English 2" },
+            { "pt": "Prompt detalhado em português 3", "en": "Detailed prompt in English 3" }
+          ]`;;
     
     default:
       return baseInstruction;
@@ -77,33 +83,56 @@ const getSystemInstruction = (type: GenerationType, context?: string): string =>
 };
 
 // --- Parsers e Limpeza ---
-const parseAIResponse = (text: string): string[] => {
+const parseAIResponse = (text: string, type: GenerationType): Array<string | { pt: string; en: string }> => {
   try {
-    // CORREÇÃO: Remover uso de RegExp com template literals
     let cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
     
-    const firstBracket = cleanText.indexOf('[');
-    const lastBracket = cleanText.lastIndexOf(']');
-    
-    if (firstBracket !== -1 && lastBracket !== -1) {
-      cleanText = cleanText.substring(firstBracket, lastBracket + 1);
+    // Attempt to find the actual JSON array part more robustly
+    const jsonMatch = cleanText.match(/\[\\s*\\{[\s\S]*\\}\\s*\\]/);
+    if (jsonMatch && jsonMatch[0]) {
+      cleanText = jsonMatch[0];
+    } else {
+      // Fallback to original bracket finding if regex fails
+      const firstBracket = cleanText.indexOf('[');
+      const lastBracket = cleanText.lastIndexOf(']');
+      if (firstBracket !== -1 && lastBracket !== -1) {
+        cleanText = cleanText.substring(firstBracket, lastBracket + 1);
+      }
     }
 
     const parsed = JSON.parse(cleanText);
 
-    if (typeof parsed === 'object' && parsed !== null && 'prompts' in parsed && Array.isArray(parsed.prompts)) {
-      return parsed.prompts.map(item => String(item).trim()).filter(item => item.length > 0);
-    } else if (Array.isArray(parsed)) {
-      return parsed.map(item => String(item).trim()).filter(item => item.length > 0);
+    if (type === 'image_prompt') {
+      if (Array.isArray(parsed) && parsed.every(item => typeof item === 'object' && item !== null && 'pt' in item && 'en' in item)) {
+        return parsed.map(item => ({ pt: String(item.pt).trim(), en: String(item.en).trim() }));
+      }
+      // Fallback for image_prompt if AI returns a simple array of strings (old format)
+      if (Array.isArray(parsed) && parsed.every(item => typeof item === 'string')) {
+        return parsed.map(item => ({ pt: String(item).trim(), en: String(item).trim() })); // Treat as both pt and en
+      }
+      // Fallback for image_prompt if AI returns object with 'prompts' key (old format)
+      if (typeof parsed === 'object' && parsed !== null && 'prompts' in parsed && Array.isArray(parsed.prompts)) {
+        return parsed.prompts.map(item => ({ pt: String(item).trim(), en: String(item).trim() }));
+      }
+      throw new Error("Resposta para image_prompt não é um array de objetos com 'pt' e 'en' ou um array de strings.");
+    } else {
+      if (typeof parsed === 'object' && parsed !== null && 'prompts' in parsed && Array.isArray(parsed.prompts)) {
+        return parsed.prompts.map(item => String(item).trim()).filter(item => item.length > 0);
+      } else if (Array.isArray(parsed)) {
+        return parsed.map(item => String(item).trim()).filter(item => item.length > 0);
+      }
+      throw new Error("Resposta não é um array ou objeto com chave 'prompts'.");
     }
-    
-    throw new Error("Resposta não é um array ou objeto com chave 'prompts'.");
 
   } catch (e) {
     console.warn("Falha ao fazer parse do JSON da IA. Tentando fallback manual.", e);
+    // This fallback is for when JSON.parse fails completely.
+    // It tries to extract lines that look like prompts.
+    // For image_prompt, this fallback might not be ideal if we expect objects.
+    // However, it's a last resort.
     return text
-      .split('\n')
-      .map(l => l.replace(/^\d+\.|-|\*|"|,|\[|\]/g, '').trim())
+      .split('\\n')
+      .map(l => l.replace(/^\\d+\\.|-|\\*|"|,|\\[|\\]/g, '').trim())
       .filter(l => l.length > 1);
   }
 };
@@ -146,7 +175,7 @@ export const generateContentAI = async (
   prompt: string,
   type: GenerationType,
   extraContext?: string
-): Promise<string[]> => {
+): Promise<Array<string | { pt: string; en: string }>> => {
   
   let finalPrompt = prompt;
   let contextForSystem = prompt;
@@ -184,7 +213,7 @@ export const generateContentAI = async (
     }
 
     console.log("Raw AI Result:", rawResult);
-    const variations = parseAIResponse(rawResult);
+    const variations = parseAIResponse(rawResult, type);
     return variations;
 
   } catch (error: any) {
