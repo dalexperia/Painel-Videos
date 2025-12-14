@@ -1,13 +1,12 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import Groq from "groq-sdk";
 
-export type AIProvider = 'gemini' | 'groq' | 'ollama';
+export type AIProvider = 'gemini' | 'groq';
 export type GenerationType = 'title' | 'description' | 'tags' | 'hashtags' | 'autocomplete_tags' | 'autocomplete_hashtags' | 'image_prompt';
 
 interface AIConfig {
   provider: AIProvider;
   apiKey?: string;
-  url?: string;
   model?: string;
 }
 
@@ -70,7 +69,7 @@ const getSystemInstruction = (type: GenerationType, context?: string): string =>
       TAREFA: Melhore a ideia básica do usuário para criar uma imagem visualmente impressionante.
       CONTEXTO: O usuário quer uma imagem sobre: "${context}".
       SAÍDA: Gere 3 variações de prompts detalhados, em INGLÊS (pois as IAs de imagem entendem melhor), focando em iluminação, estilo, câmera e detalhes artísticos.
-      Exemplo de Saída: ["A cinematic shot of a black cat, golden eyes, neon lighting, cyberpunk city background, 8k resolution", "Oil painting of a black cat sleeping on a vintage rug, cozy atmosphere, warm lighting"]`;
+      Retorne APENAS um ARRAY JSON de strings.`;
     
     default:
       return baseInstruction;
@@ -80,6 +79,7 @@ const getSystemInstruction = (type: GenerationType, context?: string): string =>
 // --- Parsers e Limpeza ---
 const parseAIResponse = (text: string): string[] => {
   try {
+    // CORREÇÃO: Remover uso de RegExp com template literals
     let cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
     
     const firstBracket = cleanText.indexOf('[');
@@ -91,11 +91,13 @@ const parseAIResponse = (text: string): string[] => {
 
     const parsed = JSON.parse(cleanText);
 
-    if (Array.isArray(parsed)) {
+    if (typeof parsed === 'object' && parsed !== null && 'prompts' in parsed && Array.isArray(parsed.prompts)) {
+      return parsed.prompts.map(item => String(item).trim()).filter(item => item.length > 0);
+    } else if (Array.isArray(parsed)) {
       return parsed.map(item => String(item).trim()).filter(item => item.length > 0);
     }
     
-    throw new Error("Resposta não é um array.");
+    throw new Error("Resposta não é um array ou objeto com chave 'prompts'.");
 
   } catch (e) {
     console.warn("Falha ao fazer parse do JSON da IA. Tentando fallback manual.", e);
@@ -130,37 +132,13 @@ const generateGroq = async (apiKey: string, prompt: string, type: GenerationType
       { role: "user", content: "Gere o JSON agora." }
     ],
     model: modelId,
-    temperature: 0.7, // Temperatura um pouco maior para criatividade nos prompts
+    temperature: 0.7,
     response_format: { type: "json_object" }
   });
 
   return completion.choices[0]?.message?.content || "[]";
 };
 
-const generateOllama = async (url: string, apiKey: string | undefined, prompt: string, type: GenerationType, modelId: string = 'llama3') => {
-  const baseUrl = url.replace(/\/$/, '');
-  const endpoint = `${baseUrl}/api/generate`;
-  
-  const fullPrompt = `${getSystemInstruction(type, prompt)}\nResponda apenas com o JSON.`;
-
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (apiKey && apiKey.trim() !== '') headers['Authorization'] = `Bearer ${apiKey}`;
-
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ 
-      model: modelId, 
-      prompt: fullPrompt, 
-      stream: false,
-      format: "json"
-    })
-  });
-
-  if (!response.ok) throw new Error(`Erro Ollama: ${response.statusText}`);
-  const data = await response.json();
-  return data.response;
-};
 
 // --- Função Principal ---
 export const generateContentAI = async (
@@ -200,14 +178,12 @@ export const generateContentAI = async (
         if (!cleanApiKey) throw new Error("Chave Groq não configurada.");
         rawResult = await generateGroq(cleanApiKey, effectivePrompt, type, config.model || 'llama3-70b-8192');
         break;
-      case 'ollama':
-        if (!config.url) throw new Error("URL do Ollama não configurada.");
-        rawResult = await generateOllama(config.url, cleanApiKey, effectivePrompt, type, config.model || 'llama3');
-        break;
+      
       default:
         throw new Error("Provedor desconhecido.");
     }
 
+    console.log("Raw AI Result:", rawResult);
     const variations = parseAIResponse(rawResult);
     return variations;
 

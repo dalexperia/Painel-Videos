@@ -3,6 +3,7 @@ import { X, Image as ImageIcon, Film, History, Send, Loader2, AlertCircle, Check
 import { publishToInstagram } from '../lib/instagram';
 import { supabase } from '../lib/supabaseClient';
 import { generateContentAI, AIProvider, AIConfig } from '../lib/ai';
+import { toast } from 'sonner';
 
 interface InstagramPostModalProps {
   isOpen: boolean;
@@ -24,8 +25,6 @@ interface ChannelSettings {
   ai_provider: AIProvider;
   gemini_key?: string;
   groq_key?: string;
-  ollama_url?: string;
-  ollama_key?: string;
   ai_model?: string;
 }
 
@@ -39,6 +38,7 @@ interface GeneratedImage {
   format?: string;
   channel?: string;
 }
+
 
 const WEBHOOK_URL = 'https://n8n-main.oficinadamultape.com.br/webhook/gerar-imagens-insta';
 
@@ -57,7 +57,7 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
   // Status State
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<'idle' | 'processing' | 'publishing' | 'success' | 'error'>('idle');
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
   
   // Generation State
   const [generationId, setGenerationId] = useState<string | null>(null);
@@ -71,6 +71,66 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
   // Gallery State
   const [galleryImages, setGalleryImages] = useState<GeneratedImage[]>([]);
   const [loadingGallery, setLoadingGallery] = useState(false);
+
+const fetchChannelSettings = async () => {
+    if (!channelConfig) return;
+    try {
+      const { data, error } = await supabase
+        .from('shorts_settings')
+        .select('ai_provider, gemini_key, groq_key, ai_model')
+        .eq('channel', channelConfig.name)
+        .single();
+
+      if (error) throw error;
+      setChannelSettings(data || null);
+      console.log('Channel Settings Loaded:', data);
+    } catch (err: any) {
+      console.error('Erro ao carregar configurações do canal:', err);
+    } finally {
+      
+    }
+  };
+
+  const handleEnhancePrompt = async () => {
+    setIsEnhancing(true);
+    setEnhancedPrompts([]); // Limpa prompts anteriores
+
+    if (!prompt.trim()) {
+      toast.error('Por favor, insira um prompt para aprimorar.');
+      setIsEnhancing(false);
+      return;
+    }
+
+    if (!channelSettings) {
+      toast.error('Configurações de IA não carregadas. Tente novamente mais tarde.');
+      setIsEnhancing(false);
+      return;
+    }
+
+    try {
+      const aiConfig: AIConfig = {
+        provider: channelSettings.ai_provider,
+        apiKey: channelSettings.ai_provider === 'groq' ? channelSettings.groq_key : channelSettings.gemini_key,
+        model: channelSettings.ai_model,
+      };
+
+      console.log('Prompt para aprimorar:', prompt);
+      console.log('Channel Settings para AI:', channelSettings);
+
+
+
+      const systemPrompt = `You are a creative AI assistant. Given a prompt idea, generate 3 more detailed and creative variations that can be used to generate images. Each variation should be separated by "---". The variations must be in English.`;
+      const enhanced = await generateContentAI(aiConfig, prompt, 'image_prompt');
+      
+      setEnhancedPrompts(enhanced);
+
+    } catch (error: any) {
+      console.error('Erro ao aprimorar prompt:', error);
+      toast.error(error.message || 'Erro ao aprimorar o prompt.');
+    } finally {
+      setIsEnhancing(false);
+    }
+  };
 
   // Reset state when modal opens/closes
   useEffect(() => {
@@ -121,7 +181,7 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
             clearInterval(interval);
           } else if (data.status === 'failed') {
             setGenerationStatus('failed');
-            setErrorMessage('Falha na geração da imagem.');
+            toast.error('Falha na geração da imagem.');
             clearInterval(interval);
           }
         } catch (err) {
@@ -135,22 +195,7 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
     };
   }, [generationId, generationStatus]);
 
-  const fetchChannelSettings = async () => {
-    if (!channelConfig) return;
-    try {
-      const { data, error } = await supabase
-        .from('shorts_settings')
-        .select('ai_provider, gemini_key, groq_key, ollama_url, ollama_key, ai_model')
-        .eq('channel', channelConfig.name)
-        .single();
-      
-      if (data) {
-        setChannelSettings(data as ChannelSettings);
-      }
-    } catch (err) {
-      console.error("Erro ao carregar configurações do canal:", err);
-    }
-  };
+
 
   const fetchGalleryImages = async () => {
     if (!channelConfig) return;
@@ -184,40 +229,14 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
     setInputMode('UPLOAD'); // Vai para a tela de preview/post
   };
 
-  const handleEnhancePrompt = async () => {
-    if (!prompt.trim() || !channelSettings) return;
-    
-    setIsEnhancing(true);
-    try {
-      const config: AIConfig = {
-        provider: channelSettings.ai_provider,
-        apiKey: channelSettings.ai_provider === 'gemini' ? channelSettings.gemini_key : 
-                channelSettings.ai_provider === 'groq' ? channelSettings.groq_key : undefined,
-        baseUrl: channelSettings.ollama_url,
-        model: channelSettings.ai_model
-      };
 
-      const systemPrompt = `Você é um especialista em criar prompts detalhados para geradores de imagem IA (como Midjourney/DALL-E). 
-      Melhore o prompt do usuário para criar uma imagem de alta qualidade, fotorealista e impressionante.
-      Retorne APENAS 3 variações do prompt melhorado, separadas por '|||'. Não inclua introduções.`;
-
-      const enhanced = await generateContentAI(prompt, config, systemPrompt);
-      const suggestions = enhanced.split('|||').map(s => s.trim()).filter(s => s.length > 0);
-      setEnhancedPrompts(suggestions);
-    } catch (error) {
-      console.error('Erro ao melhorar prompt:', error);
-      setErrorMessage('Não foi possível melhorar o prompt. Verifique as configurações de IA.');
-    } finally {
-      setIsEnhancing(false);
-    }
-  };
 
   const handleGenerateImage = async () => {
     if (!prompt.trim() || !channelConfig) return;
 
     setLoading(true);
     setGenerationStatus('pending');
-    setErrorMessage(null);
+
 
     try {
       // 1. Criar registro no Supabase
@@ -251,7 +270,7 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
 
     } catch (error: any) {
       console.error(error);
-      setErrorMessage(error.message || 'Erro ao iniciar geração.');
+    toast.error(error.message || 'Erro ao iniciar geração.');
       setGenerationStatus('failed');
       setLoading(false);
     }
@@ -263,7 +282,7 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
 
     setLoading(true);
     setStatus('processing');
-    setErrorMessage(null);
+
 
     try {
       if (!mediaUrl) throw new Error('A URL da mídia é obrigatória.');
@@ -285,7 +304,7 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
 
     } catch (error: any) {
       console.error(error);
-      setErrorMessage(error.message || 'Erro ao publicar no Instagram.');
+      toast.error(error.message || 'Erro ao publicar no Instagram.');
       setStatus('error');
     } finally {
       setLoading(false);
@@ -622,12 +641,7 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
               )}
 
               {/* Error Message */}
-              {errorMessage && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-sm text-red-700 animate-shake">
-                  <AlertCircle size={16} className="shrink-0 mt-0.5" />
-                  <span>{errorMessage}</span>
-                </div>
-              )}
+
 
               {/* Success Message */}
               {status === 'success' && (

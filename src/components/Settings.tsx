@@ -20,8 +20,7 @@ interface Setting {
   ai_provider: AIProvider;
   gemini_key?: string;
   groq_key?: string;
-  ollama_url?: string;
-  ollama_key?: string;
+
   ai_model?: string;
   // Instagram Fields
   instagram_business_account_id?: string;
@@ -68,8 +67,7 @@ const Settings: React.FC = () => {
   const [aiProvider, setAiProvider] = useState<AIProvider>('gemini');
   const [currentGeminiKey, setCurrentGeminiKey] = useState('');
   const [currentGroqKey, setCurrentGroqKey] = useState('');
-  const [currentOllamaUrl, setCurrentOllamaUrl] = useState('http://localhost:11434');
-  const [currentOllamaKey, setCurrentOllamaKey] = useState('');
+
   const [currentAiModel, setCurrentAiModel] = useState('');
 
   // Test States
@@ -163,8 +161,7 @@ const Settings: React.FC = () => {
     setAiProvider('gemini');
     setCurrentGeminiKey('');
     setCurrentGroqKey('');
-    setCurrentOllamaUrl('http://localhost:11434');
-    setCurrentOllamaKey('');
+
     setCurrentAiModel('');
     
     setTestResult(null);
@@ -191,8 +188,7 @@ const Settings: React.FC = () => {
     setAiProvider(setting.ai_provider || 'gemini');
     setCurrentGeminiKey(setting.gemini_key || '');
     setCurrentGroqKey(setting.groq_key || '');
-    setCurrentOllamaUrl(setting.ollama_url || 'http://localhost:11434');
-    setCurrentOllamaKey(setting.ollama_key || '');
+
     setCurrentAiModel(setting.ai_model || '');
     
     setIsFormOpen(true);
