@@ -295,3 +295,39 @@ export const uploadVideoToYouTube = async (
     xhr.send(videoBlob);
   });
 };
+
+/**
+ * Busca o nome do canal associado a um vídeo pelo seu ID.
+ */
+export const getChannelNameByVideoId = async (
+  accessToken: string,
+  videoId: string
+): Promise<string | undefined> => {
+  try {
+    const response = await fetch(
+      `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${videoId}`,
+      {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`Erro ao buscar detalhes do vídeo (${response.status}):`, errorText);
+      return undefined;
+    }
+
+    const data = await response.json();
+    if (data.items && data.items.length > 0) {
+      return data.items[0].snippet.channelTitle;
+    }
+    return undefined;
+  } catch (error) {
+    console.error('Erro de rede ao buscar nome do canal:', error);
+    return undefined;
+  }
+};

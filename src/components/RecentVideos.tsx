@@ -3,13 +3,20 @@ import { supabase } from '../lib/supabaseClient';
 import { Trash2, AlertCircle, RefreshCw, LayoutGrid, List, Download, X, Calendar, Sparkles, Tv, Edit2, Save, XCircle, Hash, Tag, Search, Loader2 } from 'lucide-react';
 import PostModal, { Video as PostModalVideo } from './PostModal';
 import { generateContentAI } from '../lib/ai';
+import { initializeGoogleApi, requestGoogleAuth, uploadVideoToYouTube, getChannelNameByVideoId } from '../lib/googleUpload';
 import VideoSmartPreview from './VideoSmartPreview';
-import { initializeGoogleApi, requestGoogleAuth, uploadVideoToYouTube } from '../lib/googleUpload';
 
 // Reutiliza a interface do PostModal para consistência
 type Video = PostModalVideo;
 
 type ViewMode = 'grid' | 'list';
+
+interface PostStatus {
+  type: 'success' | 'error' | 'info';
+  message: string;
+  videoId?: string;
+  channelName?: string;
+}
 
 const RecentVideos: React.FC = () => {
   const [videos, setVideos] = useState<Video[]>([]);
@@ -19,8 +26,9 @@ const RecentVideos: React.FC = () => {
   const [videoToPost, setVideoToPost] = useState<Video | null>(null);
   const [isPostModalOpen, setIsPostModalOpen] = useState(false);
   const [isPosting, setIsPosting] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<number>(0);
-  const [notice, setNotice] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [postStatus, setPostStatus] = useState<PostStatus | null>(null);
+  const [channelName, setChannelName] = useState<string | undefined>(undefined);
 
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -75,6 +83,16 @@ const RecentVideos: React.FC = () => {
     };
   }, []);
 
+  // Inicializa a API do Google ao carregar a página
+  useEffect(() => {
+    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+    if (clientId) {
+      initializeGoogleApi(clientId).catch(err => console.error("Falha ao iniciar Google API:", err));
+    } else {
+      console.warn("VITE_GOOGLE_CLIENT_ID não encontrado no .env");
+    }
+  }, []);
+
   // Resetar formulário de edição quando um vídeo é selecionado
   useEffect(() => {
     if (selectedVideo) {
@@ -100,6 +118,18 @@ const RecentVideos: React.FC = () => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Efeito para fechar o modal após exibir o postStatus
+  useEffect(() => {
+    if (postStatus) {
+      const timer = setTimeout(() => {
+        setIsPostModalOpen(false);
+        setVideoToPost(null);
+        setPostStatus(null); // Limpa o status após fechar
+      }, 3000); // Exibe o status por 3 segundos
+      return () => clearTimeout(timer);
+    }
+  }, [postStatus]);
 
   const fetchRecentVideos = async () => {
     // Não ativamos setLoading(true) aqui para evitar "piscar" a tela em atualizações automáticas
@@ -386,19 +416,20 @@ const RecentVideos: React.FC = () => {
   const openPostModal = (video: Video, e: React.MouseEvent) => {
     e.stopPropagation();
     setVideoToPost(video);
-    setUploadProgress(0);
-    setNotice(null);
+    setUploadProgress(0); // Resetar o progresso ao abrir o modal
     setIsPostModalOpen(true);
   };
 
-  const handlePost = async (video: PostModalVideo, options: { scheduleDate?: string; webhookUrl?: string; apiKey?: string; method: 'webhook' | 'api'; privacyStatus?: string }) => {
+  const handlePost = async (video: PostModalVideo, options: { scheduleDate?: string; webhookUrl?: string; method: 'webhook' | 'api'; privacyStatus?: string }) => {
     setIsPosting(true);
     try {
-      if (options.method === 'webhook') {
-        if (!options.webhookUrl) throw new Error('URL do Webhook não está definida.');
-        const isScheduled = !!options.scheduleDate;
-        const privacy_status = isScheduled ? 'private' : (options.privacyStatus || 'public');
-        const posting_date = isScheduled ? options.scheduleDate! : new Date().toISOString();
+      const { scheduleDate, webhookUrl, method, privacyStatus } = options;
+
+      if (method === 'webhook') {
+        if (!webhookUrl) throw new Error('URL do Webhook não está definida.');
+        const isScheduled = !!scheduleDate;
+        let finalPrivacyStatus = isScheduled ? 'private' : (privacyStatus || 'private');
+        let posting_date = isScheduled ? scheduleDate! : new Date().toISOString();
 
         const payload = {
           link_drive: video.link_drive || "",
@@ -410,75 +441,91 @@ const RecentVideos: React.FC = () => {
           channel: video.channel || "",
           baserow_id: video.baserow_id || 0,
           id: video.id,
-          privacy_status,
-          posting_date
+          privacy_status: finalPrivacyStatus,
+          posting_date: posting_date
         };
 
-        const response = await fetch(options.webhookUrl, {
+        const response = await fetch(webhookUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
 
         if (!response.ok) throw new Error(`Erro no Webhook: ${response.status}`);
-        
+
         if (isScheduled) {
           await supabase.from('shorts_youtube').update({ publish_at: posting_date, status: 'Scheduled' }).eq('id', video.id);
           setVideos(prev => prev.filter(v => v.id !== video.id));
-          setNotice({ type: 'success', text: `Vídeo agendado com sucesso! Canal: ${video.channel || '-'}` });
+          setPostStatus({ type: 'success', message: 'Vídeo agendado com sucesso!' });
         } else {
-          await supabase.from('shorts_youtube').update({ status: 'Posted', publish_at: posting_date }).eq('id', video.id);
-          setNotice({ type: 'success', text: `Solicitação de publicação enviada! Canal: ${video.channel || '-'}` });
+          setPostStatus({ type: 'success', message: 'Solicitação de publicação enviada!' });
         }
-      } else {
+      } else if (method === 'api') {
         const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-        if (!clientId) throw new Error('VITE_GOOGLE_CLIENT_ID não está configurado.');
-        await initializeGoogleApi(clientId);
+        if (!clientId) {
+          throw new Error("VITE_GOOGLE_CLIENT_ID não configurado no arquivo .env");
+        }
+
+        console.log("Solicitando autenticação Google...");
         const accessToken = await requestGoogleAuth();
 
-        let videoBlob: Blob;
-        try {
-          const vidResponse = await fetch(video.link_s3);
-          if (!vidResponse.ok) throw new Error(`Erro ao baixar vídeo: ${vidResponse.status} ${vidResponse.statusText}`);
-          videoBlob = await vidResponse.blob();
-        } catch (fetchError: any) {
-          if (fetchError.message === 'Failed to fetch') {
-            throw new Error('Falha ao baixar o vídeo (CORS). Configure o CORS do bucket para permitir esta origem.');
-          }
-          throw fetchError;
+        console.log("Baixando vídeo do S3 para upload...");
+        const videoResponse = await fetch(video.link_s3);
+        if (!videoResponse.ok) throw new Error("Não foi possível baixar o vídeo original para upload.");
+        const videoBlob = await videoResponse.blob();
+
+        console.log("Iniciando upload para o YouTube...");
+
+        let publishAtUTC: string | undefined;
+        if (options.scheduleDate) {
+          const date = new Date(options.scheduleDate);
+          const localTimezoneOffset = date.getTimezoneOffset();
+          const recifeOffsetMinutes = 180; 
+          const offsetCorrection = localTimezoneOffset - recifeOffsetMinutes;
+          date.setMinutes(date.getMinutes() + offsetCorrection);
+          publishAtUTC = date.toISOString();
         }
 
-        const hashtagsText = Array.isArray(video.hashtags)
-          ? video.hashtags.map(h => {
-              const s = String(h || '').trim();
-              const t = s.startsWith('#') ? s : `#${s}`;
-              return t.replace(/\s+/g, '');
-            }).filter(Boolean)
-          : [];
-        const finalDescription = `${video.description || ''}${hashtagsText.length ? `\n\n${hashtagsText.join(' ')}` : ''}`;
-        const result = await uploadVideoToYouTube(videoBlob, accessToken, {
-          title: video.title,
-          description: finalDescription,
-          privacyStatus: (options.privacyStatus as 'private' | 'public' | 'unlisted') || 'private',
-          publishAt: options.scheduleDate,
-          tags: Array.isArray(video.tags) ? video.tags : undefined,
-          onProgress: (p) => setUploadProgress(p)
-        });
+        const uploadOptions = {
+          title: video.title || '',
+          description: video.description || '',
+          privacyStatus: (privacyStatus as 'private' | 'public' | 'unlisted') || 'private',
+          publishAt: publishAtUTC,
+          tags: video.tags,
+          onProgress: (progress) => {
+            setUploadProgress(Math.floor(progress));
+          }
+        };
+
+        const result = await uploadVideoToYouTube(videoBlob, accessToken, uploadOptions);
+
+        console.log("Upload via API concluído com sucesso! ID:", result.id);
 
         await supabase
           .from('shorts_youtube')
-          .update({ status: options.scheduleDate ? 'Scheduled' : 'Posted', publish_at: options.scheduleDate || new Date().toISOString(), failed: false })
+          .update({
+            status: scheduleDate ? 'Scheduled' : 'Posted',
+            publish_at: scheduleDate || new Date().toISOString(),
+            youtube_id: result.id,
+            failed: false
+          })
           .eq('id', video.id);
+// 6. Exibir sucesso
+      const fetchedChannelName = await getChannelNameByVideoId(accessToken, result.id);
 
-        setNotice({ type: 'success', text: `Vídeo publicado com sucesso! ID: ${result.id} | Canal: ${video.channel || '-'}` });
-        setVideos(prev => prev.filter(v => v.id !== video.id));
+      setPostStatus({
+        type: 'success',
+        message: `Vídeo publicado com sucesso! ID: ${result.id}`,
+        videoId: result.id,
+        channelName: fetchedChannelName || video.channel, // Usa o nome do canal buscado ou o placeholder
+      });
       }
-      
-      // Mantém a modal aberta para exibir o aviso; usuário fecha manualmente
-      
+
+
+
     } catch (error: any) {
       console.error('ERRO FATAL:', error);
-      setNotice({ type: 'error', text: `Erro: ${error.message}` });
+      setPostStatus({ type: 'error', message: `Erro: ${error.message}` });
     } finally {
       setIsPosting(false);
     }
@@ -706,7 +753,7 @@ const RecentVideos: React.FC = () => {
         </div>
       )}
 
-      {videoToPost && <PostModal video={videoToPost} onClose={() => { setIsPostModalOpen(false); setVideoToPost(null); }} onPost={handlePost} isPosting={isPosting} uploadProgress={uploadProgress} notice={notice} />}
+      {videoToPost && <PostModal video={videoToPost} onClose={() => { setIsPostModalOpen(false); setVideoToPost(null); setPostStatus(null); }} onPost={handlePost} isPosting={isPosting} uploadProgress={uploadProgress} notice={postStatus} />}
     </div>
   );
 };

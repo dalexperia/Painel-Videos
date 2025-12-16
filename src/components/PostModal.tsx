@@ -316,7 +316,7 @@ const PostModal: React.FC<PostModalProps> = ({ video, onClose, onPost, isPosting
                   ? 'bg-red-500/10 border-red-500/30 text-red-300' 
                   : 'bg-blue-500/10 border-blue-500/30 text-blue-300'
             }`}>
-              {notice.text}
+              {notice.message}
             </div>
           )}
           {activeTab === 'api' && isPosting && (

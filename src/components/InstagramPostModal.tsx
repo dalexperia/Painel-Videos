@@ -3,7 +3,6 @@ import { X, Image as ImageIcon, Film, History, Send, Loader2, AlertCircle, Check
 import { publishToInstagram } from '../lib/instagram';
 import { supabase } from '../lib/supabaseClient';
 import { generateContentAI, AIProvider, AIConfig } from '../lib/ai';
-import { toast } from 'sonner';
 
 interface InstagramPostModalProps {
   isOpen: boolean;
@@ -25,6 +24,8 @@ interface ChannelSettings {
   ai_provider: AIProvider;
   gemini_key?: string;
   groq_key?: string;
+  ollama_url?: string;
+  ollama_key?: string;
   ai_model?: string;
 }
 
@@ -38,7 +39,6 @@ interface GeneratedImage {
   format?: string;
   channel?: string;
 }
-
 
 const WEBHOOK_URL = 'https://n8n-main.oficinadamultape.com.br/webhook/gerar-imagens-insta';
 
@@ -57,7 +57,7 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
   // Status State
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<'idle' | 'processing' | 'publishing' | 'success' | 'error'>('idle');
-
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   
   // Generation State
   const [generationId, setGenerationId] = useState<string | null>(null);
@@ -65,78 +65,14 @@ const InstagramPostModal: React.FC<InstagramPostModalProps> = ({ isOpen, onClose
   
   // Prompt Enhancement State
   const [isEnhancing, setIsEnhancing] = useState(false);
-  const [enhancedPrompts, setEnhancedPrompts] = useState<Array<{ pt: string; en: string }>>([]);
-  const [selectedEnglishPromptForWebhook, setSelectedEnglishPromptForWebhook] = useState<string>('');
+  const [enhancedPrompts, setEnhancedPrompts] = useState<{ pt: string; en: string }[]>([]);
+  const [isEnhancingCaption, setIsEnhancingCaption] = useState(false);
+  const [enhancedCaptions, setEnhancedCaptions] = useState<string[]>([]);
   const [channelSettings, setChannelSettings] = useState<ChannelSettings | null>(null);
 
   // Gallery State
   const [galleryImages, setGalleryImages] = useState<GeneratedImage[]>([]);
   const [loadingGallery, setLoadingGallery] = useState(false);
-
-const fetchChannelSettings = async () => {
-    if (!channelConfig) return;
-    try {
-      const { data, error } = await supabase
-        .from('shorts_settings')
-        .select('ai_provider, gemini_key, groq_key, ai_model')
-        .eq('channel', channelConfig.name)
-        .single();
-
-      if (error) throw error;
-      setChannelSettings(data || null);
-      console.log('Channel Settings Loaded:', data);
-    } catch (err: any) {
-      console.error('Erro ao carregar configurações do canal:', err);
-    } finally {
-      
-    }
-  };
-
-  const handleEnhancePrompt = async () => {
-    setIsEnhancing(true);
-    setEnhancedPrompts([]); // Limpa prompts anteriores
-
-    if (!prompt.trim()) {
-      toast.error('Por favor, insira um prompt para aprimorar.');
-      setIsEnhancing(false);
-      return;
-    }
-
-    if (!channelSettings) {
-      toast.error('Configurações de IA não carregadas. Tente novamente mais tarde.');
-      setIsEnhancing(false);
-      return;
-    }
-
-    try {
-      const aiConfig: AIConfig = {
-        provider: channelSettings.ai_provider,
-        apiKey: channelSettings.ai_provider === 'groq' ? channelSettings.groq_key : channelSettings.gemini_key,
-        model: channelSettings.ai_model,
-      };
-
-      console.log('Prompt para aprimorar:', prompt);
-      console.log('Channel Settings para AI:', channelSettings);
-
-
-
-      const enhanced = await generateContentAI(aiConfig, prompt, 'image_prompt');
-      
-      // A IA agora retorna um array de objetos { pt: string, en: string }
-      if (Array.isArray(enhanced) && enhanced.every(item => typeof item === 'object' && item !== null && 'pt' in item && 'en' in item)) {
-        setEnhancedPrompts(enhanced as Array<{ pt: string; en: string }>);
-      } else {
-        // Fallback caso a IA retorne um formato inesperado (ex: array de strings)
-        setEnhancedPrompts(enhanced.map(item => ({ pt: String(item), en: String(item) })));
-      }
-
-    } catch (error: any) {
-      console.error('Erro ao aprimorar prompt:', error);
-      toast.error(error.message || 'Erro ao aprimorar o prompt.');
-    } finally {
-      setIsEnhancing(false);
-    }
-  };
 
   // Reset state when modal opens/closes
   useEffect(() => {
@@ -184,10 +120,11 @@ const fetchChannelSettings = async () => {
             setMediaUrl(data.image_url);
             if (data.description) setCaption(data.description);
             setInputMode('UPLOAD'); // Switch to upload/preview mode
+            setLoading(false); // Reset loading state
             clearInterval(interval);
           } else if (data.status === 'failed') {
             setGenerationStatus('failed');
-            toast.error('Falha na geração da imagem.');
+            setErrorMessage('Falha na geração da imagem.');
             clearInterval(interval);
           }
         } catch (err) {
@@ -201,7 +138,22 @@ const fetchChannelSettings = async () => {
     };
   }, [generationId, generationStatus]);
 
-
+  const fetchChannelSettings = async () => {
+    if (!channelConfig) return;
+    try {
+      const { data, error } = await supabase
+        .from('shorts_settings')
+        .select('ai_provider, gemini_key, groq_key, ollama_url, ollama_key, ai_model')
+        .eq('channel', channelConfig.name)
+        .single();
+      
+      if (data) {
+        setChannelSettings(data as ChannelSettings);
+      }
+    } catch (err) {
+      console.error("Erro ao carregar configurações do canal:", err);
+    }
+  };
 
   const fetchGalleryImages = async () => {
     if (!channelConfig) return;
@@ -235,14 +187,56 @@ const fetchChannelSettings = async () => {
     setInputMode('UPLOAD'); // Vai para a tela de preview/post
   };
 
+  const handleEnhancePrompt = async () => {
+    if (!prompt.trim() || !channelSettings) return;
+    setIsEnhancing(true);
+    try {
+      const config: AIConfig = {
+        provider: channelSettings.ai_provider,
+        apiKey: channelSettings.ai_provider === 'gemini' ? channelSettings.gemini_key : 
+                channelSettings.ai_provider === 'groq' ? channelSettings.groq_key : undefined,
+        baseUrl: channelSettings.ollama_url,
+        model: channelSettings.ai_model
+      };
 
+      const enhanced = await generateContentAI(config, prompt, 'image_prompt');
+      setEnhancedPrompts(enhanced as { pt: string; en: string }[]);
+    } catch (error) {
+      console.error('Erro ao melhorar prompt:', error);
+      setErrorMessage('Não foi possível melhorar o prompt. Verifique as configurações de IA.');
+    } finally {
+      setIsEnhancing(false);
+    }
+  };
+
+  const handleEnhanceCaption = async () => {
+    if (!caption.trim() || !channelSettings) return;
+    setIsEnhancingCaption(true);
+    try {
+      const config: AIConfig = {
+        provider: channelSettings.ai_provider,
+        apiKey: channelSettings.ai_provider === 'gemini' ? channelSettings.gemini_key :
+                channelSettings.ai_provider === 'groq' ? channelSettings.groq_key : undefined,
+        baseUrl: channelSettings.ollama_url,
+        model: channelSettings.ai_model
+      };
+
+      const enhanced = await generateContentAI(config, caption, 'caption');
+      setEnhancedCaptions(enhanced as string[]);
+    } catch (error) {
+      console.error('Erro ao gerar legenda:', error);
+      setErrorMessage('Não foi possível gerar a legenda. Verifique as configurações de IA.');
+    } finally {
+      setIsEnhancingCaption(false);
+    }
+  };
 
   const handleGenerateImage = async () => {
     if (!prompt.trim() || !channelConfig) return;
 
     setLoading(true);
     setGenerationStatus('pending');
-
+    setErrorMessage(null);
 
     try {
       // 1. Criar registro no Supabase
@@ -265,18 +259,18 @@ const fetchChannelSettings = async () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-      id: record.id,
-      prompt: selectedEnglishPromptForWebhook || prompt,
-      channel: channelConfig.name,
-      format: imageFormat
-    })
+          id: record.id,
+          prompt: prompt,
+          channel: channelConfig.name,
+          format: imageFormat
+        })
       });
 
       if (!response.ok) throw new Error('Erro ao iniciar geração no n8n');
 
     } catch (error: any) {
       console.error(error);
-    toast.error(error.message || 'Erro ao iniciar geração.');
+      setErrorMessage(error.message || 'Erro ao iniciar geração.');
       setGenerationStatus('failed');
       setLoading(false);
     }
@@ -288,7 +282,7 @@ const fetchChannelSettings = async () => {
 
     setLoading(true);
     setStatus('processing');
-
+    setErrorMessage(null);
 
     try {
       if (!mediaUrl) throw new Error('A URL da mídia é obrigatória.');
@@ -310,12 +304,65 @@ const fetchChannelSettings = async () => {
 
     } catch (error: any) {
       console.error(error);
-      toast.error(error.message || 'Erro ao publicar no Instagram.');
+      setErrorMessage(error.message || 'Erro ao publicar no Instagram.');
       setStatus('error');
     } finally {
       setLoading(false);
     }
   };
+
+  const clearCaptionOnly = () => {
+    setCaption('');
+    setEnhancedCaptions([]);
+  };
+
+  const clearUploadMode = () => {
+    setMediaUrl('');
+    setCaption('');
+    setEnhancedCaptions([]);
+    setErrorMessage(null);
+  };
+
+  const clearGenerateMode = () => {
+    setPrompt('');
+    setEnhancedPrompts([]);
+    setGenerationId(null);
+    setGenerationStatus('idle');
+    setErrorMessage(null);
+  };
+
+  const clearGalleryMode = () => {
+    setGalleryImages([]);
+    setErrorMessage(null);
+  };
+
+  // Clear state when inputMode changes
+  useEffect(() => {
+    if (!isOpen) return; // Only clear if modal is open
+
+    switch (inputMode) {
+      case 'UPLOAD':
+        clearGenerateMode();
+        clearGalleryMode();
+        break;
+      case 'GENERATE':
+        clearUploadMode();
+        clearGalleryMode();
+        break;
+      case 'GALLERY':
+        clearUploadMode();
+        clearGenerateMode();
+        break;
+      default:
+        break;
+    }
+  }, [inputMode, isOpen]);
+
+  // Clear mediaUrl and caption when postType changes
+  useEffect(() => {
+    if (!isOpen) return; // Only clear if modal is open
+    clearUploadMode();
+  }, [postType, isOpen]);
 
   if (!isOpen) return null;
 
@@ -418,6 +465,13 @@ const fetchChannelSettings = async () => {
                   <ImageIcon size={16} className="text-blue-500" />
                   Imagens Geradas para {channelConfig?.name}
                 </h3>
+                <button
+                  type="button"
+                  onClick={clearGalleryMode}
+                  className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1 mr-4"
+                >
+                  <RefreshCw size={12} /> Limpar
+                </button>
                 <button 
                   onClick={fetchGalleryImages} 
                   className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
@@ -507,8 +561,15 @@ const fetchChannelSettings = async () => {
               {/* Prompt Input */}
               <div>
                 <div className="flex justify-between items-center mb-1">
-                  <label className="block text-sm font-medium text-gray-700">Prompt da Imagem</label>
-                  {channelSettings?.ai_provider && (
+  <label className="block text-sm font-medium text-gray-700">Prompt da Imagem</label>
+  <button
+    type="button"
+    onClick={clearGenerateMode}
+    className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1 mr-4"
+  >
+    <RefreshCw size={12} /> Limpar
+  </button>
+  {channelSettings?.ai_provider && (
                     <span className="text-[10px] bg-gray-100 px-2 py-0.5 rounded-full text-gray-500 flex items-center gap-1">
                       <Bot size={10} /> IA: {channelSettings.ai_provider.toUpperCase()}
                     </span>
@@ -537,25 +598,20 @@ const fetchChannelSettings = async () => {
 
                 {/* Enhanced Suggestions */}
                 {enhancedPrompts.length > 0 && (
-                  <div className="mt-4 p-4 bg-purple-50 rounded-lg border border-purple-200 animate-fade-in">
-                    <p className="text-sm font-semibold text-purple-800 mb-3 flex items-center gap-2">
-                      <Lightbulb size={16} /> Sugestões:
+                  <div className="mt-3 space-y-2 animate-fade-in">
+                    <p className="text-xs font-bold text-gray-500 flex items-center gap-1">
+                      <Lightbulb size={12} /> Sugestões:
                     </p>
-                    <div className="space-y-2">
-                      {enhancedPrompts.map((suggestion, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => {
-                            setPrompt(suggestion.pt);
-                            setSelectedEnglishPromptForWebhook(suggestion.en);
-                          }}
-                          className="w-full text-left text-xs p-2 bg-purple-100 hover:bg-purple-200 text-purple-800 rounded border border-purple-200 transition-colors"
-                        >
-                          {suggestion.pt}
-                        </button>
-                      ))}
-                    </div>
+                    {enhancedPrompts.map((suggestion, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setPrompt(suggestion.en)}
+                        className="w-full text-left text-xs p-2 bg-purple-50 hover:bg-purple-100 text-purple-800 rounded border border-purple-100 transition-colors"
+                      >
+                        {suggestion.pt}
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
@@ -631,9 +687,29 @@ const fetchChannelSettings = async () => {
               {/* Caption Input (Hidden for Stories) */}
               {postType !== 'STORIES' && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Legenda
-                  </label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-sm font-medium text-gray-700">Legenda</label>
+                    <button
+                      type="button"
+                      onClick={clearCaptionOnly}
+                      className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1 mr-4"
+                    >
+                      <RefreshCw size={12} /> Limpar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleEnhanceCaption}
+                      disabled={isEnhancingCaption || !caption.trim()}
+                      className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
+                    >
+                      {isEnhancingCaption ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        <Sparkles size={12} />
+                      )} 
+                      Melhorar com IA
+                    </button>
+                  </div>
                   <textarea
                     rows={4}
                     value={caption}
@@ -641,6 +717,23 @@ const fetchChannelSettings = async () => {
                     placeholder="Escreva sua legenda aqui... #hashtags"
                     className="block w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-500 focus:border-transparent transition-all text-sm resize-none"
                   />
+                  {enhancedCaptions.length > 0 && (
+                    <div className="mt-3 space-y-2 animate-fade-in">
+                      <p className="text-xs font-bold text-gray-500 flex items-center gap-1">
+                        <Lightbulb size={12} /> Sugestões de Legenda:
+                      </p>
+                      {enhancedCaptions.map((suggestion, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => setCaption(suggestion)}
+                          className="w-full text-left text-xs p-2 bg-purple-50 hover:bg-purple-100 text-purple-800 rounded border border-purple-100 transition-colors"
+                        >
+                          {suggestion}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -652,7 +745,12 @@ const fetchChannelSettings = async () => {
               )}
 
               {/* Error Message */}
-
+              {errorMessage && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-sm text-red-700 animate-shake">
+                  <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
 
               {/* Success Message */}
               {status === 'success' && (

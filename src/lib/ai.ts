@@ -1,12 +1,13 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import Groq from "groq-sdk";
 
-export type AIProvider = 'gemini' | 'groq';
-export type GenerationType = 'title' | 'description' | 'tags' | 'hashtags' | 'autocomplete_tags' | 'autocomplete_hashtags' | 'image_prompt';
+export type AIProvider = 'gemini' | 'groq' | 'ollama';
+export type GenerationType = 'title' | 'description' | 'tags' | 'hashtags' | 'autocomplete_tags' | 'autocomplete_hashtags' | 'image_prompt' | 'caption';
 
 interface AIConfig {
   provider: AIProvider;
   apiKey?: string;
+  url?: string;
   model?: string;
 }
 
@@ -31,24 +32,11 @@ const getSystemInstruction = (type: GenerationType, context?: string): string =>
     
     case 'tags':
       return `${baseInstruction}
-      OBJETIVO: Gere uma lista de tags específicas para o vídeo sobre: "${context}".
-      REGRAS:
-      - Gere entre 12 e 18 tags focadas no tema.
-      - Cada tag com no máximo 30 caracteres.
-      - Não use espaços nas tags: substitua espaços por hífens (ex: concurso-publico).
-      - Remova caracteres especiais como "<" e ">".
-      - Evite tags genéricas: ["shorts","viral","video","youtube","fyp","tiktok","capcut","dicas","tutorial"].
-      - Retorne APENAS um ARRAY JSON de strings.`;
+      OBJETIVO: Gere 5 listas de tags (separadas por vírgula) para um vídeo sobre: "${context}".`;
     
     case 'hashtags':
       return `${baseInstruction}
-      OBJETIVO: Gere exatamente 10 hashtags relevantes para o vídeo sobre: "${context}".
-      REGRAS:
-      - Cada hashtag deve começar com "#".
-      - Sem espaços dentro das hashtags.
-      - Use letras minúsculas quando possível.
-      - Evite genéricas (#shorts #viral #fyp) a menos que não haja contexto.
-      - Retorne APENAS um ARRAY JSON de strings.`;
+      OBJETIVO: Gere 5 combinações de hashtags para um vídeo sobre: "${context}".`;
 
     case 'autocomplete_tags':
       return `${baseInstruction}
@@ -68,14 +56,18 @@ const getSystemInstruction = (type: GenerationType, context?: string): string =>
       OBJETIVO: Você é um Engenheiro de Prompt (Prompt Engineer) especialista em Midjourney e DALL-E 3.
       TAREFA: Melhore a ideia básica do usuário para criar uma imagem visualmente impressionante.
       CONTEXTO: O usuário quer uma imagem sobre: "${context}".
-      SAÍDA: Gere 3 variações de prompts detalhados. Para cada variação, forneça duas versões: uma no mesmo idioma do CONTEXTO e outra em INGLÊS. Foque em iluminação, estilo, câmera e detalhes artísticos.
-          Retorne APENAS um ARRAY JSON de OBJETOS, onde cada objeto tem as chaves "pt" (para o prompt no idioma do CONTEXTO) e "en" (para o prompt em INGLÊS).
-          Exemplo de formato de saída:
-          [
-            { "pt": "Prompt detalhado em português 1", "en": "Detailed prompt in English 1" },
-            { "pt": "Prompt detalhado em português 2", "en": "Detailed prompt in English 2" },
-            { "pt": "Prompt detalhado em português 3", "en": "Detailed prompt in English 3" }
-          ]`;;
+      SAÍDA: Gere 3 variações de prompts detalhados. Para cada variação, forneça a versão em INGLÊS (para a IA de imagem) e uma tradução correspondente em PORTUGUÊS (para exibição ao usuário).
+      Formato de Saída: Um array de objetos, onde cada objeto tem as chaves 'pt' e 'en'.
+      Exemplo de Saída: [{"pt": "Um gato preto místico, cercado por um halo de luz suave e etérea, em um cenário de floresta iluminada pela lua, com detalhes e texturas intrincados, no estilo de uma ilustração de fantasia, resolução 4k", "en": "A mystical black cat, surrounded by a halo of soft, ethereal light, set against a backdrop of a moonlit forest, with intricate details and textures, in the style of a fantasy illustration, 4k resolution"}]`;
+    
+    case 'caption':
+      return `${baseInstruction}
+      OBJETIVO: Você é um especialista em marketing de conteúdo para Instagram.
+      TAREFA: Gere exatamente 3 sugestões de legendas criativas, detalhadas e envolventes para um post no Instagram.
+      CONTEXTO: O post é sobre: "${context}".
+      SAÍDA: As legendas devem ser em português, ter um bom tamanho (2-3 frases), incluir emojis relevantes e uma variedade de hashtags populares e específicas (5-10 hashtags por sugestão).
+      Formato de Saída: Um array de strings.
+      Exemplo de Saída: ["Descubra a sabedoria de Marco Aurélio! 💡 Filósofo e imperador romano, suas palavras ainda nos inspiram hoje a viver com propósito e resiliência. Uma verdadeira fonte de inspiração para a vida moderna. #MarcoAurelio #FilosofiaEstóica #SabedoriaAntiga #InspiraçãoDiária #PensamentosProfundos", "A vida é um presente, aproveite cada momento! 😊 Marco Aurélio nos lembra da importância de viver no presente, valorizando cada instante e buscando a serenidade em meio aos desafios. Viva intensamente! #Inspiração #Motivação #VivaOAgora #Gratidão #Mindfulness #DesenvolvimentoPessoal", "A força vem da calma e da determinação. 🙏 Marco Aurélio nos ensina a encontrar a força interior para superar obstáculos, mantendo a mente tranquila e o foco nos objetivos. A verdadeira resiliência nasce da paz interior. #Autoajuda #DesenvolvimentoPessoal #ForçaInterior #Resiliência #PazDeEspírito #FocoNoObjetivo"]`;
     
     default:
       return baseInstruction;
@@ -83,21 +75,15 @@ const getSystemInstruction = (type: GenerationType, context?: string): string =>
 };
 
 // --- Parsers e Limpeza ---
-const parseAIResponse = (text: string, type: GenerationType): Array<string | { pt: string; en: string }> => {
+const parseAIResponse = (text: string, type: GenerationType): string[] | { pt: string; en: string }[] => {
   try {
     let cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
     
-    // Attempt to find the actual JSON array part more robustly
-    const jsonMatch = cleanText.match(/\[\\s*\\{[\s\S]*\\}\\s*\\]/);
-    if (jsonMatch && jsonMatch[0]) {
-      cleanText = jsonMatch[0];
-    } else {
-      // Fallback to original bracket finding if regex fails
-      const firstBracket = cleanText.indexOf('[');
-      const lastBracket = cleanText.lastIndexOf(']');
-      if (firstBracket !== -1 && lastBracket !== -1) {
-        cleanText = cleanText.substring(firstBracket, lastBracket + 1);
-      }
+    const firstBracket = cleanText.indexOf('[');
+    const lastBracket = cleanText.lastIndexOf(']');
+    
+    if (firstBracket !== -1 && lastBracket !== -1) {
+      cleanText = cleanText.substring(firstBracket, lastBracket + 1);
     }
 
     const parsed = JSON.parse(cleanText);
@@ -106,34 +92,32 @@ const parseAIResponse = (text: string, type: GenerationType): Array<string | { p
       if (Array.isArray(parsed) && parsed.every(item => typeof item === 'object' && item !== null && 'pt' in item && 'en' in item)) {
         return parsed.map(item => ({ pt: String(item.pt).trim(), en: String(item.en).trim() }));
       }
-      // Fallback for image_prompt if AI returns a simple array of strings (old format)
+      throw new Error("Resposta não é um array de objetos com chaves 'pt' e 'en'.");
+    } else if (type === 'caption') {
       if (Array.isArray(parsed) && parsed.every(item => typeof item === 'string')) {
-        return parsed.map(item => ({ pt: String(item).trim(), en: String(item).trim() })); // Treat as both pt and en
+        return parsed.map(item => String(item).trim());
       }
-      // Fallback for image_prompt if AI returns object with 'prompts' key (old format)
-      if (typeof parsed === 'object' && parsed !== null && 'prompts' in parsed && Array.isArray(parsed.prompts)) {
-        return parsed.prompts.map(item => ({ pt: String(item).trim(), en: String(item).trim() }));
-      }
-      throw new Error("Resposta para image_prompt não é um array de objetos com 'pt' e 'en' ou um array de strings.");
+      throw new Error("Resposta não é um array de strings para legenda.");
     } else {
-      if (typeof parsed === 'object' && parsed !== null && 'prompts' in parsed && Array.isArray(parsed.prompts)) {
-        return parsed.prompts.map(item => String(item).trim()).filter(item => item.length > 0);
-      } else if (Array.isArray(parsed)) {
-        return parsed.map(item => String(item).trim()).filter(item => item.length > 0);
+      // Para outros tipos que esperam array de strings
+      if (Array.isArray(parsed) && parsed.every(item => typeof item === 'string')) {
+        return parsed.map(item => String(item).trim());
       }
-      throw new Error("Resposta não é um array ou objeto com chave 'prompts'.");
+      throw new Error("Resposta não é um array de strings.");
     }
 
   } catch (e) {
     console.warn("Falha ao fazer parse do JSON da IA. Tentando fallback manual.", e);
-    // This fallback is for when JSON.parse fails completely.
-    // It tries to extract lines that look like prompts.
-    // For image_prompt, this fallback might not be ideal if we expect objects.
-    // However, it's a last resort.
-    return text
-      .split('\\n')
-      .map(l => l.replace(/^\\d+\\.|-|\\*|"|,|\\[|\\]/g, '').trim())
+    const lines = text
+      .split('\n')
+      .map(l => l.replace(/^\d+\.|-|\*|"|,|\[|\]/g, '').trim())
       .filter(l => l.length > 1);
+    
+    if (type === 'image_prompt') {
+      return lines.map(line => ({ pt: line, en: line }));
+    } else {
+      return lines;
+    }
   }
 };
 
@@ -161,13 +145,37 @@ const generateGroq = async (apiKey: string, prompt: string, type: GenerationType
       { role: "user", content: "Gere o JSON agora." }
     ],
     model: modelId,
-    temperature: 0.7,
+    temperature: 0.7, // Temperatura um pouco maior para criatividade nos prompts
     response_format: { type: "json_object" }
   });
 
   return completion.choices[0]?.message?.content || "[]";
 };
 
+const generateOllama = async (url: string, apiKey: string | undefined, prompt: string, type: GenerationType, modelId: string = 'llama3') => {
+  const baseUrl = url.replace(/\/$/, '');
+  const endpoint = `${baseUrl}/api/generate`;
+  
+  const fullPrompt = `${getSystemInstruction(type, prompt)}\nResponda apenas com o JSON.`;
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (apiKey && apiKey.trim() !== '') headers['Authorization'] = `Bearer ${apiKey}`;
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ 
+      model: modelId, 
+      prompt: fullPrompt, 
+      stream: false,
+      format: "json"
+    })
+  });
+
+  if (!response.ok) throw new Error(`Erro Ollama: ${response.statusText}`);
+  const data = await response.json();
+  return data.response;
+};
 
 // --- Função Principal ---
 export const generateContentAI = async (
@@ -175,7 +183,7 @@ export const generateContentAI = async (
   prompt: string,
   type: GenerationType,
   extraContext?: string
-): Promise<Array<string | { pt: string; en: string }>> => {
+): Promise<string[] | { pt: string; en: string }[]> => {
   
   let finalPrompt = prompt;
   let contextForSystem = prompt;
@@ -207,12 +215,14 @@ export const generateContentAI = async (
         if (!cleanApiKey) throw new Error("Chave Groq não configurada.");
         rawResult = await generateGroq(cleanApiKey, effectivePrompt, type, config.model || 'llama3-70b-8192');
         break;
-      
+      case 'ollama':
+        if (!config.url) throw new Error("URL do Ollama não configurada.");
+        rawResult = await generateOllama(config.url, cleanApiKey, effectivePrompt, type, config.model || 'llama3');
+        break;
       default:
         throw new Error("Provedor desconhecido.");
     }
 
-    console.log("Raw AI Result:", rawResult);
     const variations = parseAIResponse(rawResult, type);
     return variations;
 
